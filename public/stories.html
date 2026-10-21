@@ -1,0 +1,2392 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#101419">
+  <title>Historias</title>
+  <link rel="stylesheet" href="/css/theme.css">
+  <link rel="stylesheet" href="/css/popmenu.css?v=1">
+  <script src="/js/transport-crypto.js"></script>
+  <script src="/js/transport.js"></script>
+  <script>
+    /* Aplica el acento cacheado del usuario antes de pintar para que no parpadee */
+    try {
+      var hint = JSON.parse(localStorage.getItem('chatlocal_appearance_hint') || 'null'), ok = function (c) { return /^#[0-9a-f]{6}$/i.test(c || ''); };
+      if (hint && ok(hint.sender)) {
+        var ink = ok(hint.senderText) ? hint.senderText : '#101318', other = ok(hint.receiver) ? hint.receiver : '#171b21', r = document.documentElement.style;
+        r.setProperty('--accent', hint.sender);
+        r.setProperty('--accent-ink', ink);
+        r.setProperty('--accent-secondary', other);
+        r.setProperty('--accent-hover', 'color-mix(in srgb, ' + hint.sender + ' 88%, ' + ink + ')');
+        r.setProperty('--accent-soft', 'color-mix(in srgb, ' + hint.sender + ' 18%, transparent)');
+      }
+    } catch (e) { }
+  </script>
+
+  <style>
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+      -webkit-touch-callout: none
+    }
+
+    html,
+    body,
+    body * {
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none
+    }
+
+    input,
+    textarea,
+    [contenteditable="true"] {
+      user-select: text;
+      -webkit-user-select: text;
+      -webkit-touch-callout: default
+    }
+
+    body {
+      margin: 0;
+      background: #111b21;
+      color: #e9edef;
+      font-family: 'Segoe UI', Helvetica, Arial, sans-serif;
+      min-height: 100vh
+    }
+
+    button,
+    input,
+    textarea {
+      font: inherit
+    }
+
+    button {
+      color: inherit;
+      cursor: pointer
+    }
+
+    .page {
+      width: min(760px, 100%);
+      min-height: 100vh;
+      margin: auto;
+      background: #111b21
+    }
+
+    header {
+      height: 60px;
+      position: sticky;
+      top: 0;
+      z-index: 3;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 0 20px;
+      background: #202c33
+    }
+
+    header .back {
+      width: 40px;
+      height: 40px;
+      padding: 0;
+      border: 0;
+      border-radius: 50%;
+      background: #171b21;
+      color: inherit;
+      display: grid;
+      place-items: center
+    }
+
+    header .back svg {
+      width: 22px;
+      height: 22px;
+      fill: currentColor
+    }
+
+    header b {
+      font-size: 17px
+    }
+
+    main {
+      padding: 18px;
+      display: grid;
+      gap: 16px
+    }
+
+    .manager {
+      border: 1px solid #ffffff12;
+      border-radius: 16px;
+      background: #202c33
+    }
+
+    .primary,
+    .secondary,
+    .danger {
+      border: 0;
+      border-radius: 12px;
+      padding: 12px;
+      background: #2a3942;
+      color: #e9edef
+    }
+
+    .primary {
+      background: var(--accent);
+      color: var(--accent-ink)
+    }
+
+    .manager {
+      padding: 16px
+    }
+
+    .managerHead {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 14px
+    }
+
+    .managerHead div {
+      flex: 1
+    }
+
+    .managerHead h2 {
+      font-size: 16px;
+      margin: 0 0 3px
+    }
+
+    .muted,
+    .managerHead p {
+      font-size: 12px;
+      color: #8696a0;
+      margin: 0
+    }
+
+    .cards {
+      display: grid;
+      gap: 10px
+    }
+
+    .card {
+      position: relative;
+      z-index: 0;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px;
+      border-radius: 12px;
+      background: #172127;
+      min-width: 0;
+      border: 1px solid #ffffff0a;
+      transition: background .18s ease, border-color .18s ease
+    }
+
+    .card:hover {
+      background: #1b292f;
+      border-color: #ffffff20
+    }
+
+    .card.menuOpen {
+      z-index: 10
+    }
+
+    .preview {
+      position: relative;
+      width: 68px;
+      height: 68px;
+      flex: none;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      border: 0;
+      border-radius: 10px;
+      background: #0c1114;
+      padding: 0;
+      color: #d6e4e9;
+      transition: filter .18s ease, transform .18s ease
+    }
+
+    .preview:hover {
+      filter: brightness(1.12);
+      transform: scale(1.03)
+    }
+
+    .preview:focus-visible,
+    .cardMenuToggle:focus-visible,
+    .managerHead button:focus-visible {
+      outline: 2px solid #00d9a5;
+      outline-offset: 2px
+    }
+
+    .preview img,
+    .preview video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover
+    }
+
+    .preview .textPreview {
+      display: grid;
+      place-items: center;
+      width: 100%;
+      height: 100%;
+      padding: 5px;
+      color: white;
+      font-size: 10px;
+      overflow: hidden
+    }
+
+    .preview .audioType {
+      display: grid;
+      justify-items: center;
+      gap: 3px;
+      color: #b9f3e3;
+      font-size: 10px;
+      font-weight: 700
+    }
+
+    .preview .audioType svg {
+      width: 24px;
+      height: 24px;
+      fill: currentColor
+    }
+
+    .preview .kindIcon {
+      display: grid;
+      place-items: center;
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: #ffffff18;
+      color: #fff
+    }
+
+    .preview .kindIcon svg {
+      width: 24px;
+      height: 24px;
+      fill: currentColor
+    }
+
+    .details {
+      min-width: 0;
+      flex: 1
+    }
+
+    .details b {
+      font-size: 14px
+    }
+
+    .details .muted {
+      margin-top: 5px;
+      line-height: 1.4
+    }
+
+    .cardMenu {
+      position: relative;
+      flex: none
+    }
+
+    .cardMenuToggle {
+      display: grid;
+      place-items: center;
+      width: 38px;
+      height: 38px;
+      padding: 0;
+      border: 0;
+      border-radius: 50%;
+      background: transparent;
+      color: #b9c7ce;
+      transition: color .18s ease
+    }
+
+    .cardMenuToggle:hover,
+    .cardMenuToggle[aria-expanded="true"] {
+      background: transparent;
+      color: #fff
+    }
+
+    .cardMenuToggle svg circle:first-child {
+      transform: translate(7px, -7px)
+    }
+
+    .cardMenuToggle svg circle:last-child {
+      transform: translate(-7px, 7px)
+    }
+
+    .cardMenuToggle:focus-visible,
+    .cardMenuToggle svg {
+      width: 22px;
+      height: 22px;
+      fill: currentColor
+    }
+
+    .uploadStatus {
+      position: fixed;
+      left: 50%;
+      bottom: max(20px, env(safe-area-inset-bottom));
+      z-index: 7;
+      width: min(460px, calc(100% - 32px));
+      padding: 12px 16px;
+      transform: translateX(-50%);
+      border: 1px solid #ffffff18;
+      border-radius: 14px;
+      background: #202c33f2;
+      color: #e9edef;
+      font-size: 13px;
+      box-shadow: 0 8px 28px #0008;
+      backdrop-filter: blur(14px)
+    }
+
+
+    @keyframes story-menu-enter {
+      from { opacity: 0; transform: translateY(-4px) scale(.98) }
+      to { opacity: 1; transform: translateY(0) scale(1) }
+    }
+
+
+
+
+    @media (prefers-reduced-motion: reduce) {
+    }
+
+    .empty {
+      padding: 24px 10px;
+      text-align: center;
+      color: #aebac1;
+      font-size: 13px
+    }
+
+    .editor {
+      position: fixed;
+      inset: 0;
+      z-index: 8;
+      display: none;
+      flex-direction: column;
+      background: radial-gradient(ellipse at 50% 0, #172127 0, #090c0f 58%)
+    }
+
+    .editor.on {
+      display: flex;
+      animation: editor-enter .2s ease-out both
+    }
+
+    @keyframes editor-enter {
+      from { opacity: 0; transform: translateY(8px) }
+      to { opacity: 1; transform: translateY(0) }
+    }
+
+    .editorTop {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 58px;
+      padding: 8px 14px;
+      background: #111b21cc;
+      border-bottom: 1px solid #ffffff0d;
+      backdrop-filter: blur(16px)
+    }
+
+    .editorTop b {
+      font-size: 15px;
+      font-weight: 650;
+      letter-spacing: .01em
+    }
+
+    .spacer {
+      flex: 1
+    }
+
+    .iconBtn {
+      flex: none;
+      width: 40px;
+      height: 40px;
+      padding: 0;
+      border: 0;
+      border-radius: 50%;
+      background: #202a30;
+      color: #dce5e9;
+      display: grid;
+      place-items: center;
+      transition: background .16s, color .16s, transform .16s
+    }
+
+    .iconBtn:hover {
+      background: #2a3942;
+      color: #fff
+    }
+
+    .iconBtn:active {
+      transform: scale(.94)
+    }
+
+    .iconBtn.on {
+      background: var(--accent-soft);
+      color: var(--accent)
+    }
+
+    .iconBtn:focus-visible,
+    .tools button:focus-visible,
+    .textColors button:focus-visible,
+    .recordHold:focus-visible {
+      outline: 2px solid #00d9a5;
+      outline-offset: 3px
+    }
+
+    .iconBtn svg {
+      width: 21px;
+      height: 21px;
+      fill: currentColor
+    }
+
+    .tools {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      padding: 9px 12px;
+      color: #c4d0d5
+    }
+
+    .tools.on {
+      display: flex
+    }
+
+    .tools button,
+    .tools input[type=color] {
+      width: 40px;
+      height: 40px;
+      padding: 8px;
+      border: 1px solid #ffffff33;
+      border-radius: 50%;
+      background: #202a30;
+      color: #e9edef;
+      cursor: pointer;
+      transition: background .16s, transform .16s
+    }
+
+    .tools button:hover {
+      background: #2a3942
+    }
+
+    .tools button:active {
+      transform: scale(.94)
+    }
+
+    .tools button:disabled {
+      opacity: .38;
+      cursor: default;
+      transform: none
+    }
+
+    .tools button.on {
+      outline: 2px solid white
+    }
+
+    .tools svg {
+      width: 20px;
+      height: 20px;
+      fill: currentColor
+    }
+
+    .tools input[type=color] {
+      padding: 4px
+    }
+
+    .tools .toolLabel {
+      color: #aebac1;
+      font-size: 12px
+    }
+
+    .editorBody {
+      flex: 1;
+      min-height: 0;
+      display: grid;
+      place-items: center;
+      overflow: auto;
+      padding: 20px 16px
+    }
+
+    .imageEditor {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      max-width: 100%;
+      max-height: 100%
+    }
+
+    .imageStage {
+      position: relative;
+      display: grid;
+      place-items: center;
+      max-width: 100%;
+      max-height: calc(100dvh - 290px)
+    }
+
+    .imageEditor .editorTip {
+      max-width: min(560px, 92vw);
+      color: #aebac1;
+      font-size: 12px;
+      text-align: center
+    }
+
+    .imageStage img {
+      display: block;
+      width: auto;
+      height: auto;
+      max-width: min(100%, calc(100vw - 32px));
+      max-height: calc(100dvh - 250px);
+      object-fit: contain;
+      border-radius: 12px;
+      box-shadow: 0 16px 48px #0008
+    }
+
+    .drawCanvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      touch-action: none
+    }
+
+    .overlayText {
+      position: absolute;
+      left: 8%;
+      top: 50%;
+      width: 84%;
+      max-height: 75%;
+      overflow: auto;
+      transform: translateY(-50%);
+      padding: 8px;
+      border: 1px dashed #ffffff66;
+      border-radius: 8px;
+      background: #0006;
+      color: #fff;
+      font-size: clamp(22px, 6vw, 38px);
+      font-weight: 700;
+      text-align: center;
+      text-shadow: 0 2px 7px #000;
+      outline: none;
+      overflow-wrap: anywhere
+    }
+
+    .textEditor {
+      width: min(580px, 100%);
+      height: min(680px, 100%);
+      min-height: min(440px, 64vh);
+      display: grid;
+      grid-template-rows: 1fr auto;
+      gap: 14px;
+      padding: clamp(20px, 5vw, 38px);
+      border: 1px solid #ffffff20;
+      border-radius: 24px;
+      box-shadow: 0 20px 60px #0006;
+      transition: background .18s ease
+    }
+
+    .textEditor .textEntry {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      min-height: 0;
+      gap: 14px
+    }
+
+    .textEditor .textPrompt {
+      color: #ffffffb5;
+      font-size: 13px;
+      font-weight: 600;
+      text-align: center
+    }
+
+    .textEditor textarea {
+      width: 100%;
+      min-height: 0;
+      height: 100%;
+      padding: 0;
+      resize: none;
+      border: 0;
+      outline: none;
+      background: transparent;
+      color: #fff;
+      text-align: center;
+      font-size: clamp(20px, 5vw, 30px);
+      line-height: 1.25;
+      font-weight: 650;
+      text-shadow: 0 2px 10px #0004;
+      overflow-wrap: anywhere;
+      overflow-x: hidden;
+      overflow-y: auto
+    }
+
+    .textEditor textarea::placeholder {
+      color: #ffffffa0
+    }
+
+    .textEditor .textFoot {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      color: #ffffffb5;
+      font-size: 12px;
+      font-variant-numeric: tabular-nums
+    }
+
+    #textCount.near-limit {
+      color: #ffca75
+    }
+
+    .blankCanvasWrap {
+      position: relative;
+      width: min(560px, 92vw);
+      height: min(70vh, 680px);
+      overflow: hidden;
+      border: 1px solid #ffffff24;
+      border-radius: 20px;
+      background: #7b61ff;
+      box-shadow: 0 18px 54px #0007
+    }
+
+    .blankCanvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      touch-action: none
+    }
+
+    .audioPanel {
+      width: min(460px, 100%);
+      padding: clamp(20px, 5vw, 30px);
+      border: 1px solid #ffffff14;
+      border-radius: 24px;
+      background: linear-gradient(155deg, #171b21, #101419);
+      text-align: center;
+      box-shadow: 0 20px 60px #0006
+    }
+
+    .audioMicIcon {
+      display: grid;
+      place-items: center;
+      width: 56px;
+      height: 56px;
+      margin: 0 auto 14px;
+      border: 1px solid #ffffff18;
+      border-radius: 50%;
+      background: #d3dbe11a;
+      color: #d3dbe1
+    }
+
+    .audioMicIcon svg {
+      width: 30px;
+      height: 30px;
+      fill: currentColor
+    }
+
+    .audioPanel h2 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 650
+    }
+
+    .audioPanel p {
+      min-height: 24px;
+      margin: 8px 0 12px;
+      color: #aebac1;
+      font-size: 13px;
+      line-height: 1.5
+    }
+
+    .recordWave {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      height: 118px;
+      margin: 18px 0 16px;
+      color: #d3dbe1
+    }
+
+    .recordWave span {
+      width: 5px;
+      height: var(--wave-height, 24px);
+      border-radius: 99px;
+      background: currentColor;
+      opacity: .64;
+      transition: opacity .2s ease, transform .2s ease
+    }
+
+    .audioPanel.is-recording .recordWave span {
+      opacity: 1;
+      animation: record-wave .55s ease-in-out infinite alternate;
+      animation-delay: var(--wave-delay, 0ms)
+    }
+
+    @keyframes record-wave {
+      to { transform: scaleY(.55); opacity: .55 }
+    }
+
+    .audioControls {
+      display: flex;
+      justify-content: center;
+      margin: 12px auto 8px
+    }
+
+    .recordHold {
+      display: grid;
+      justify-items: center;
+      gap: 12px;
+      min-width: 130px;
+      min-height: 110px;
+      border: 0;
+      border-radius: 0;
+      padding: 4px 12px;
+      background: transparent;
+      color: #d5dce2;
+      font-size: 13px;
+      font-weight: 500;
+      user-select: none;
+      transition: transform .16s, color .16s
+    }
+
+    .recordHold svg {
+      width: 76px;
+      height: 76px;
+      padding: 22px;
+      border: 0;
+      border-radius: 50%;
+      background: var(--accent);
+      color: var(--accent-ink);
+      fill: currentColor;
+      box-shadow: 0 8px 32px color-mix(in srgb, var(--accent) 28%, transparent);
+      transition: transform .18s ease, background .18s ease, box-shadow .18s ease
+    }
+
+    .recordHold:hover {
+      color: #fff;
+    }
+
+    .recordHold:hover svg {
+      transform: scale(1.06);
+      background: var(--accent-hover)
+    }
+
+    .recordHold:active,
+    .recordHold.is-recording {
+      transform: scale(.96);
+      color: #fff
+    }
+
+    .recordHold.is-recording svg {
+      background: #d9444a;
+      box-shadow: 0 0 0 8px #d9444a24
+    }
+
+    .recordHint {
+      display: block;
+      color: #8696a0;
+      font-size: 12px
+    }
+
+    .audioPlayback {
+      width: 100%;
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid #ffffff12
+    }
+
+    .audioPlayback[hidden] {
+      display: none
+    }
+
+    .audioPlayback audio {
+      display: none
+    }
+
+    .audioPlaybackWave {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      height: 36px;
+      margin-bottom: 14px;
+      color: var(--accent)
+    }
+
+    .audioPlaybackWave span {
+      width: 3px;
+      height: var(--wave-height, 12px);
+      border-radius: 99px;
+      background: currentColor;
+      opacity: .68
+    }
+
+    .audioPlayback.is-playing .audioPlaybackWave span {
+      animation: story-audio-wave .75s ease-in-out infinite alternate;
+      animation-delay: var(--wave-delay, 0ms)
+    }
+
+    @keyframes story-audio-wave {
+      to { transform: scaleY(.3); opacity: .45 }
+    }
+
+    .audioPlaybackControls {
+      display: grid;
+      grid-template-columns: 52px minmax(0, 1fr);
+      align-items: center;
+      gap: 12px
+    }
+
+    .audioPlaybackPlay {
+      display: grid;
+      place-items: center;
+      width: 52px;
+      height: 52px;
+      padding: 15px;
+      border: 0;
+      border-radius: 50%;
+      background: var(--accent);
+      color: var(--accent-ink);
+      box-shadow: 0 8px 24px color-mix(in srgb, var(--accent) 22%, transparent)
+    }
+
+    .audioPlaybackPlay:hover {
+      background: var(--accent-hover)
+    }
+
+    .audioPlaybackPlay svg {
+      width: 100%;
+      height: 100%;
+      fill: currentColor
+    }
+
+    .audioPlaybackTrack {
+      display: grid;
+      gap: 8px;
+      min-width: 0
+    }
+
+    .audioPlaybackTrack input {
+      width: 100%;
+      height: 5px;
+      margin: 0;
+      padding: 0;
+      border: 0;
+      border-radius: 99px;
+      appearance: none;
+      background: linear-gradient(to right, #00d9a5 var(--audio-progress, 0%), #ffffff38 var(--audio-progress, 0%));
+      cursor: pointer
+    }
+
+    .audioPlaybackTrack input::-webkit-slider-thumb {
+      width: 12px;
+      height: 12px;
+      appearance: none;
+      border: 0;
+      border-radius: 50%;
+      background: #00d9a5
+    }
+
+    .audioPlaybackTrack input::-moz-range-thumb {
+      width: 12px;
+      height: 12px;
+      border: 0;
+      border-radius: 50%;
+      background: #00d9a5
+    }
+
+    .audioPlaybackTimes {
+      display: flex;
+      justify-content: space-between;
+      color: #aebac1;
+      font-size: 11px;
+      font-variant-numeric: tabular-nums
+    }
+
+    .recordStatus {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px
+    }
+
+    .recordStatus.is-recording::before {
+      content: '';
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #f05258;
+      box-shadow: 0 0 0 4px #f0525824;
+      animation: record-pulse 1.2s ease-in-out infinite
+    }
+
+    @keyframes record-pulse {
+      50% { opacity: .45; transform: scale(.8) }
+    }
+
+    .audioPanel audio {
+      display: none;
+      width: 100%;
+      height: 42px;
+      margin-top: 20px;
+      accent-color: #d3dbe1
+    }
+
+    .audioPanel audio.ready {
+      display: block
+    }
+
+    .storyAudioCard {
+      display: grid;
+      grid-template-columns: 54px minmax(0, 1fr);
+      align-items: center;
+      gap: 12px;
+      width: min(460px, 92vw);
+      padding: 18px;
+      border: 1px solid #ffffff20;
+      border-radius: 18px;
+      background: linear-gradient(145deg, #202a30, #11171b);
+      color: #e9edef;
+      box-shadow: 0 16px 48px #0006
+    }
+
+    .storyAudioPlay {
+      width: 52px;
+      height: 52px;
+      display: grid;
+      place-items: center;
+      border: 0;
+      border-radius: 50%;
+      background: var(--accent);
+      color: var(--accent-ink)
+    }
+
+    .storyAudioPlay svg {
+      width: 24px;
+      height: 24px;
+      fill: currentColor
+    }
+
+    .storyAudioInfo {
+      min-width: 0
+    }
+
+    .storyAudioInfo b {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 14px
+    }
+
+    .storyAudioInfo .muted {
+      margin-top: 4px
+    }
+
+    .storyAudioProgress {
+      height: 5px;
+      margin-top: 12px;
+      overflow: hidden;
+      border-radius: 5px;
+      background: #ffffff32;
+      cursor: pointer;
+      touch-action: none
+    }
+
+    .storyAudioProgress span {
+      display: block;
+      width: 0;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--accent)
+    }
+
+    .storyAudioTime {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 5px;
+      color: #aebac1;
+      font-size: 11px
+    }
+
+    .textColors {
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+      gap: 10px;
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      overscroll-behavior-x: contain;
+      scrollbar-width: thin;
+      padding: 12px 16px;
+      border-top: 1px solid #ffffff0d;
+      background: #111b21a8
+    }
+
+    .textColors .paletteLabel {
+      flex: none;
+      margin-right: 2px;
+      color: #aebac1;
+      font-size: 12px;
+      font-weight: 600
+    }
+
+    .textColors button {
+      flex: 0 0 30px;
+      display: grid;
+      place-items: center;
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      border: 2px solid #ffffff50;
+      border-radius: 50%
+    }
+
+    .textColors input[type="color"] {
+      flex: 0 0 34px;
+      width: 34px;
+      height: 34px;
+      padding: 2px;
+      border: 1px solid #ffffff50;
+      border-radius: 50%;
+      background: transparent;
+      cursor: pointer
+    }
+
+    .textColors button[aria-pressed="true"] {
+      border: 2px solid #fff;
+      box-shadow: 0 0 0 2px var(--accent)
+    }
+
+    .textColors button svg {
+      width: 15px;
+      height: 15px;
+      fill: none;
+      stroke: #fff;
+      stroke-width: 2.5;
+      filter: drop-shadow(0 1px 2px #000)
+    }
+
+    .editorBottom {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-height: 72px;
+      padding: 12px 16px max(12px, env(safe-area-inset-bottom));
+      border-top: 1px solid #ffffff0d;
+      background: #111b21cc;
+      backdrop-filter: blur(16px)
+    }
+
+    .editorBottom .hint {
+      flex: 1;
+      color: #aebac1;
+      font-size: 12px;
+      line-height: 1.45
+    }
+
+    .editorBottom button {
+      min-width: 54px;
+      min-height: 48px;
+      padding: 0 24px;
+      border: 0;
+      border-radius: 26px;
+      background: var(--accent);
+      color: var(--accent-ink);
+      font-weight: 600
+    }
+
+    .editorBottom button:disabled {
+      opacity: .45
+    }
+
+    .editorBottom .skipPhoto {
+      min-width: 0;
+      padding: 0 16px;
+      border: 1px solid #ffffff24;
+      background: #202a30;
+      color: #d5dce2
+    }
+
+    .editorBottom .skipPhoto:hover {
+      background: #2a3942
+    }
+
+    @media (max-width: 560px) {
+      .editorBody {
+        padding: 14px 12px
+      }
+
+      .textEditor {
+        min-height: min(440px, 58vh);
+        border-radius: 20px
+      }
+
+      .blankCanvasWrap {
+        width: min(100%, 520px);
+        height: min(66vh, 620px)
+      }
+
+      .textColors {
+        justify-content: center;
+        gap: 9px;
+        padding: 10px 12px
+      }
+
+      .textColors .paletteLabel {
+        width: 100%;
+        text-align: center
+      }
+
+      .editorBottom {
+        min-height: 68px;
+        padding-inline: 14px
+      }
+
+      .editorBottom button {
+        min-width: 112px
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .editor.on,
+      .recordStatus.is-recording::before,
+      .audioPanel.is-recording .recordWave span,
+      .audioPlaybackWave span {
+        animation: none
+      }
+
+      .iconBtn,
+      .tools button,
+      .recordHold {
+        transition: none
+      }
+    }
+
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: 24px;
+      z-index: 20;
+      transform: translateX(-50%);
+      max-width: calc(100% - 32px);
+      padding: 11px 16px;
+      border-radius: 12px;
+      background: #303b42;
+      color: white;
+      font-size: 13px;
+      box-shadow: 0 5px 24px #0008
+    }
+
+    .hidden {
+      display: none !important
+    }
+
+    @media(max-width:560px) {
+      main {
+        padding: 12px
+      }
+
+      .card {
+        gap: 8px;
+        padding: 8px
+      }
+
+      .preview {
+        width: 56px;
+        height: 56px
+      }
+
+      .editorTop {
+        padding-inline: 10px
+      }
+
+      .editorBottom {
+        padding-inline: 12px
+      }
+    }
+
+    body.page-stories {
+      min-height: 100vh;
+      min-height: 100dvh;
+      background-color: var(--page);
+      color: var(--text)
+    }
+
+    body.page-stories .page {
+      width: min(720px, 100%);
+      min-height: 100vh;
+      min-height: 100dvh;
+      border-inline: 1px solid var(--line);
+      background: transparent
+    }
+
+    body.page-stories .page > header {
+      min-height: 64px;
+      height: auto;
+      gap: 12px;
+      padding: 8px max(16px, env(safe-area-inset-left));
+      padding-top: max(8px, env(safe-area-inset-top));
+      background: var(--surface);
+      border-bottom: 1px solid var(--line);
+      backdrop-filter: blur(18px)
+    }
+
+    body.page-stories .page > header .back {
+      width: 42px;
+      height: 42px;
+      flex: none;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      color: var(--text)
+    }
+
+    body.page-stories .page > header .back:hover {
+      background: transparent;
+      color: #fff
+    }
+
+    body.page-stories .page > header b {
+      font-size: 17px;
+      font-weight: 650;
+      letter-spacing: .01em
+    }
+
+    body.page-stories main {
+      gap: 14px;
+      padding: clamp(14px, 3vw, 24px);
+      padding-bottom: max(104px, calc(env(safe-area-inset-bottom) + 84px))
+    }
+
+    body.page-stories .manager {
+      padding: 0;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      color: var(--text);
+      box-shadow: none
+    }
+
+    body.page-stories .managerHead {
+      margin-bottom: 14px;
+      padding: 2px 2px 14px;
+      border-bottom: 1px solid var(--line)
+    }
+
+    body.page-stories .managerHead h2 {
+      margin-bottom: 4px;
+      font-size: 16px;
+      font-weight: 650
+    }
+
+    body.page-stories .managerHead p,
+    body.page-stories .muted {
+      color: var(--muted)
+    }
+
+    body.page-stories .cards {
+      gap: 0
+    }
+
+    body.page-stories .card {
+      gap: 0;
+      padding: 0;
+      border: 0;
+      border-bottom: 1px solid var(--line);
+      border-radius: 0;
+      background: transparent;
+      color: var(--text)
+    }
+
+    body.page-stories .card:hover {
+      border-color: var(--line);
+      background: var(--surface-hover)
+    }
+
+    body.page-stories .preview {
+      color: var(--text)
+    }
+
+    body.page-stories .storyOpen {
+      display: flex;
+      align-items: center;
+      gap: 13px;
+      flex: 1;
+      min-width: 0;
+      padding: 11px 4px;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      color: inherit;
+      text-align: left
+    }
+
+    body.page-stories .storyOpen:hover,
+    body.page-stories .storyOpen:active {
+      background: transparent
+    }
+
+    body.page-stories .storyOpen:hover .preview {
+      filter: brightness(1.08)
+    }
+
+    body.page-stories .details {
+      display: grid;
+      gap: 5px;
+      min-width: 0
+    }
+
+    body.page-stories .storyHeadline {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      min-width: 0;
+      color: var(--text);
+      font-size: 14px;
+      font-weight: 600
+    }
+
+    body.page-stories .storyViews,
+    body.page-stories .storyLikes {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      white-space: nowrap
+    }
+
+    body.page-stories .storyLikes {
+      color: #fa7483;
+      font-size: 13px;
+      font-variant-numeric: tabular-nums
+    }
+
+    body.page-stories .storyLikes svg {
+      width: 16px;
+      height: 16px;
+      fill: currentColor
+    }
+
+    body.page-stories .storyTime {
+      overflow: hidden;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 400;
+      text-overflow: ellipsis;
+      white-space: nowrap
+    }
+
+    body.page-stories .cardMenuToggle {
+      width: 40px;
+      height: 40px;
+      border: 0;
+      border-radius: 12px;
+      background: transparent;
+      color: var(--muted)
+    }
+
+    body.page-stories .cardMenuToggle:hover,
+    body.page-stories .cardMenuToggle[aria-expanded="true"] {
+      border-color: transparent;
+      background: transparent;
+      color: var(--text)
+    }
+
+    /* Ítems como los menús del chat: solo texto, sin fondo ni borde. */
+    body.page-stories .empty {
+      padding: 24px 14px;
+      border: 1px dashed #414955;
+      border-radius: 13px;
+      color: var(--muted);
+      text-align: center;
+      line-height: 1.5
+    }
+
+    body.page-stories .storyFab {
+      position: fixed;
+      right: max(22px, calc((100vw - 720px) / 2 + 22px));
+      bottom: calc(22px + env(safe-area-inset-bottom));
+      z-index: 7;
+      display: grid;
+      place-items: center;
+      cursor: pointer
+    }
+
+    body.page-stories .storyFab[aria-expanded="true"] svg {
+      transform: rotate(45deg)
+    }
+
+    body.page-stories .storyFab svg {
+      width: 28px;
+      height: 28px;
+      fill: currentColor;
+      transition: transform .18s ease
+    }
+
+    body.page-stories .createStoryHead {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 14px
+    }
+
+    body.page-stories .createStoryHead h2 {
+      margin: 0 0 4px;
+      font-size: 17px;
+      font-weight: 650
+    }
+
+    body.page-stories .createStoryHead p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px
+    }
+
+    body.page-stories .createStoryClose {
+      display: grid;
+      place-items: center;
+      width: 38px;
+      height: 38px;
+      flex: none;
+      padding: 0;
+      border: 0;
+      border-radius: 50%;
+      background: transparent;
+      color: var(--muted)
+    }
+
+    body.page-stories .createStoryClose:hover {
+      background: var(--surface-hover);
+      color: var(--text)
+    }
+
+    body.page-stories .createStoryClose svg {
+      width: 21px;
+      height: 21px;
+      fill: currentColor
+    }
+
+    body.page-stories .createStoryOptions {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 9px
+    }
+
+    body.page-stories .createStoryOptions button {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      min-height: 62px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--surface-raised);
+      color: var(--text);
+      text-align: left;
+      font-size: 12px;
+      font-weight: 600;
+      line-height: 1.35
+    }
+
+    body.page-stories .createStoryOptions button:hover {
+      border-color: #414955;
+      background: var(--surface-hover)
+    }
+
+    body.page-stories .createStoryOptions .actionIcon {
+      display: grid;
+      place-items: center;
+      width: 38px;
+      height: 38px;
+      flex: none;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--surface);
+      color: var(--accent)
+    }
+
+    body.page-stories .createStoryOptions .actionIcon svg {
+      width: 20px;
+      height: 20px;
+      fill: currentColor
+    }
+
+    body.page-stories .uploadStatus,
+    body.page-stories .toast {
+      border: 1px solid var(--line);
+      background: #171b21f2;
+      color: var(--text);
+      box-shadow: 0 12px 36px #0008;
+      backdrop-filter: blur(18px)
+    }
+
+    body.page-stories .editorTop,
+    body.page-stories .tools,
+    body.page-stories .textColors,
+    body.page-stories .editorBottom {
+      border-color: var(--line);
+      background-color: #101419ed
+    }
+
+    body.page-stories .editorTop {
+      padding-top: max(8px, env(safe-area-inset-top))
+    }
+
+    body.page-stories .iconBtn,
+    body.page-stories .tools button {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--surface-raised);
+      color: var(--text)
+    }
+
+    body.page-stories .iconBtn:hover,
+    body.page-stories .tools button:hover:not(:disabled) {
+      background: var(--surface-hover)
+    }
+
+    body.page-stories .iconBtn.on {
+      border-color: #596472;
+      background: #d3dbe11a;
+      color: var(--accent)
+    }
+
+    body.page-stories .audioPanel {
+      border-color: var(--line);
+      background: linear-gradient(155deg, var(--surface-raised), var(--surface));
+      color: var(--text)
+    }
+
+    body.page-stories .audioPanel p,
+    body.page-stories .textColors .paletteLabel {
+      color: var(--muted)
+    }
+
+    body.page-stories .audioPanel {
+      border-color: var(--line);
+      background: linear-gradient(145deg, var(--surface-raised), var(--surface))
+    }
+
+    body.page-stories .audioMicIcon {
+      background: #d3dbe11a;
+      color: var(--accent)
+    }
+
+    body.page-stories .recordWave {
+      color: var(--accent)
+    }
+
+    body.page-stories .recordHold {
+      color: var(--text)
+    }
+
+    body.page-stories .recordHold svg {
+      border: 0;
+      background: var(--accent);
+      color: var(--accent-ink)
+    }
+
+    body.page-stories .recordHold.is-recording svg {
+      background: #d9444a;
+      color: #fff
+    }
+
+    body.page-stories .audioPlaybackWave,
+    body.page-stories .audioPlaybackPlay {
+      color: var(--accent)
+    }
+
+    body.page-stories .audioPlaybackPlay {
+      background: var(--accent);
+      color: var(--accent-ink)
+    }
+
+    body.page-stories .audioPlaybackTrack input {
+      accent-color: var(--accent)
+    }
+
+    body.page-stories .textEditor textarea:focus,
+    body.page-stories .textEditor textarea:focus-visible {
+      border: 0;
+      outline: 0;
+      box-shadow: none
+    }
+
+    body.page-stories .storyAudioCard {
+      border-color: var(--line);
+      background: linear-gradient(145deg, var(--surface-raised), var(--surface));
+      color: var(--text)
+    }
+
+    body.page-stories .storyAudioPlay,
+    body.page-stories .editorBottom button:not(.skipPhoto) {
+      background: var(--accent);
+      color: var(--accent-ink)
+    }
+
+    body.page-stories .storyAudioPlay:hover,
+    body.page-stories .editorBottom button:not(.skipPhoto):hover:not(:disabled) {
+      background: #eef2f5
+    }
+
+    body.page-stories .storyAudioProgress,
+    body.page-stories .textColors input[type="color"] {
+      accent-color: var(--accent)
+    }
+
+    body.page-stories .storyAudioProgress span {
+      background: var(--accent)
+    }
+
+    body.page-stories .audioPanel audio {
+      accent-color: var(--accent)
+    }
+
+    body.page-stories .textColors button[aria-pressed="true"] {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px #d3dbe180
+    }
+
+    body.page-stories .editorBottom .skipPhoto {
+      border-color: var(--line);
+      background: var(--surface-raised);
+      color: var(--text)
+    }
+
+    body.page-stories .editorBottom .skipPhoto:hover {
+      background: var(--surface-hover)
+    }
+
+    body.page-stories :is(button, input, textarea, [contenteditable="true"]):focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 3px
+    }
+
+    @media (max-width: 560px) {
+      body.page-stories .page {
+        border-inline: 0
+      }
+
+      body.page-stories .page > header {
+        padding-right: max(14px, env(safe-area-inset-right));
+        padding-left: max(14px, env(safe-area-inset-left))
+      }
+
+      body.page-stories .card {
+        gap: 0;
+        padding: 0
+      }
+
+      body.page-stories .preview {
+        width: 56px;
+        height: 56px
+      }
+
+      body.page-stories .storyOpen {
+        gap: 11px;
+        padding-block: 10px
+      }
+
+      body.page-stories .storyHeadline {
+        font-size: 13px
+      }
+
+      body.page-stories .storyTime {
+        font-size: 11px
+      }
+
+      body.page-stories .editorBottom {
+        padding-bottom: max(12px, env(safe-area-inset-bottom))
+      }
+
+      body.page-stories .editorBottom button {
+        min-width: 96px;
+        padding-inline: 16px
+      }
+
+      body.page-stories .storyFab {
+        right: max(20px, env(safe-area-inset-right));
+        bottom: calc(20px + env(safe-area-inset-bottom))
+      }
+
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      body.page-stories *,
+      body.page-stories *::before,
+      body.page-stories *::after {
+        scroll-behavior: auto !important;
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .01ms !important
+      }
+    }
+  </style>
+</head>
+
+<body class="page-stories">
+  <div class="page">
+    <header><button class="back" type="button" aria-label="Volver al chat" onclick="goBack()"><svg viewBox="0 0 24 24">
+          <path d="M20 11H7.8l5.6-5.6L12 4l-8 8 8 8 1.4-1.4L7.8 13H20v-2z" />
+        </svg></button><b>Historias</b><span class="spacer"></span></header>
+    <main>
+      <section class="manager">
+        <div class="managerHead">
+          <div>
+            <h2 id="managerTitle">Tus historias</h2>
+          </div>
+        </div>
+        <div id="storyList" class="cards">
+          <div class="empty">Cargando historias…</div>
+        </div>
+      </section>
+      <div id="uploadStatus" class="uploadStatus hidden" role="status" aria-live="polite"></div>
+    </main>
+  </div>
+  <input id="storyFiles" class="hidden" type="file" accept="image/*,video/*" multiple>
+  <button id="storyFab" class="storyFab" type="button" aria-label="Crear historia" aria-haspopup="dialog"
+    onclick="openCreateMenu()">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6z"/></svg>
+  </button>
+  <section id="editor" class="editor" aria-label="Editor de historias">
+    <div class="editorTop">
+      <button class="iconBtn" type="button" aria-label="Cerrar editor" onclick="closeEditor()"><svg viewBox="0 0 24 24">
+          <path d="M18.3 5.7 12 12l6.3 6.3-1.4 1.4-6.3-6.3-6.3 6.3-1.4-1.4 6.3-6.3-6.3-6.3 1.4-1.4 6.3 6.3 6.3-6.3z" />
+        </svg></button>
+      <b id="editorTitle">Editar historia</b><span class="spacer"></span>
+      <button id="textTool" class="iconBtn hidden" type="button" title="Añadir texto" aria-label="Añadir texto a la foto" onclick="toggleImageText()"><svg
+          viewBox="0 0 24 24">
+          <path d="M3 4v4h2V6h5v12H7v2h10v-2h-3V6h5v2h2V4z" />
+        </svg></button>
+      <button id="drawTool" class="iconBtn hidden" type="button" title="Dibujar" aria-label="Dibujar sobre la foto" onclick="toggleDrawing()"><svg
+          viewBox="0 0 24 24">
+          <path
+            d="m3 17.25 9.06-9.06 3.75 3.75L6.75 21H3zm17.71-10.04a1 1 0 0 0 0-1.42l-2.5-2.5a1 1 0 0 0-1.42 0l-1.83 1.83 3.75 3.75z" />
+        </svg></button>
+    </div>
+    <div id="editorBody" class="editorBody"></div>
+    <div id="drawTools" class="tools"><span class="toolLabel">Trazo</span><input id="drawColor" type="color" value="#ffffff"
+        aria-label="Color del trazo"><button id="undoStrokeButton" type="button" title="Deshacer trazo" aria-label="Deshacer trazo" onclick="undoStroke()"><svg
+          viewBox="0 0 24 24">
+          <path d="M12 5a7 7 0 0 1 6.93 6h2.02A9 9 0 0 0 5.64 6.64L3 4v7h7L7.06 8.06A6.96 6.96 0 0 1 12 5z" />
+        </svg></button><button id="clearStrokesButton" type="button" title="Borrar todos los trazos" aria-label="Borrar todos los trazos" onclick="clearStrokes()" disabled><svg viewBox="0 0 24 24"><path d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14z"/></svg></button><span id="strokeCount" class="toolLabel">0 trazos</span></div>
+    <div id="colorPalette" class="textColors"></div>
+    <div class="editorBottom"><span id="editorHint" class="hint"></span><button id="skipPhotoButton" class="skipPhoto hidden" type="button" onclick="skipCurrentPhoto()">Descartar foto</button><button id="publishButton" type="button"
+        onclick="publishCurrent()">Publicar</button></div>
+  </section>
+  <div id="toast" class="toast hidden" role="status"></div>
+  <script>
+    'use strict';
+    const COLORS = ['#f07a6b', '#7b61ff', '#009688', '#3b82f6', '#111b21', '#eab308', '#ec4899', '#7c3aed', '#0f766e', '#c2410c', '#1d4ed8', '#475569'];
+    /* El fondo se sortea en cada historia nueva para que no salga siempre el mismo color */
+    const randomBackgroundColor = (avoid) => {
+      const pool = COLORS.filter(color => color !== avoid);
+      return (pool.length ? pool : COLORS)[Math.floor(Math.random() * (pool.length || COLORS.length))];
+    };
+    const storyFallbackColor = ts => COLORS[Math.abs(Number(ts) || 0) % COLORS.length];
+    let me = null, queue = [], queueProcessing = false, currentFile = null, mode = '', imageElement = null, drawCanvas = null, drawContext = null, strokes = [], drawing = false, drawEnabled = false, textEnabled = false, previewUrl = '', recorder = null, recorderStream = null, recorderChunks = [], recordInterval = null, recordLimitTimer = null, recordedUrl = '', recordHoldActive = false, recordPending = false, recordFinalizing = false, recordStopWhenReady = false, recordRequestVersion = 0, selectedBackground = COLORS[0], toastTimer = null, storyAudioTimer = null, storyAudioDragging = false, storyAudioMaxDurationMs = 60_000, storyTtlMs = 86_400_000, storyTextMaxCharacters = 140;
+    const $ = id => document.getElementById(id);
+    const escapeHtml = value => String(value == null ? '' : value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+    document.addEventListener('contextmenu', event => event.preventDefault());
+    document.addEventListener('dragstart', event => event.preventDefault());
+    document.addEventListener('selectstart', event => { if (!event.target.closest('input,textarea,[contenteditable="true"]')) event.preventDefault(); });
+    function goBack() { if (window.parent !== window) { try { if (typeof window.parent.closeStoriesRoute === 'function') { window.parent.closeStoriesRoute(); return; } } catch (error) { console.error('[stories] No se pudo volver a la aplicación:', error); } } if (history.length > 1) history.back(); else location.replace('/'); }
+    /* "Crear historia" usa el MISMO pop-menu que el resto de la app (el de
+       los tres puntos, el del grupo, el de la lista de contactos). */
+    function openCreateMenu() {
+      const fab = $('storyFab');
+      if (window.ZlapyPopMenu && ZlapyPopMenu.isOpen()) { ZlapyPopMenu.close(); return; }
+      fab.setAttribute('aria-expanded', 'true');
+      ZlapyPopMenu.open({
+        anchor: fab,
+        align: 'right',
+        items: [
+          { id: 'text', label: 'Texto', icon: 'edit' },
+          { id: 'media', label: 'Fotos y videos', icon: 'camera' },
+          { id: 'draw', label: 'Dibujo libre', icon: 'star' },
+          { id: 'audio', label: 'Grabar audio', icon: 'phone' }
+        ],
+        onSelect: action => {
+          fab.setAttribute('aria-expanded', 'false');
+          if (action === 'text') startTextStory();
+          else if (action === 'media') $('storyFiles').click();
+          else if (action === 'draw') startBlankDrawing();
+          else if (action === 'audio') startAudioStory();
+        }
+      });
+    }
+    function closeCreateMenu(restoreFocus = true) { if (window.ZlapyPopMenu) ZlapyPopMenu.close(); $('storyFab').setAttribute('aria-expanded', 'false'); if (restoreFocus) $('storyFab').focus({ preventScroll: true }); }
+    function notify(message) { const box = $('toast'); box.textContent = message; box.classList.remove('hidden'); clearTimeout(toastTimer); toastTimer = setTimeout(() => box.classList.add('hidden'), 3500); }
+    function formatStoryTime(timestamp) { const date = new Date(timestamp), now = new Date(), sameDay = date.toDateString() === now.toDateString(), yesterday = new Date(now); yesterday.setDate(now.getDate() - 1); const day = sameDay ? 'Hoy' : date.toDateString() === yesterday.toDateString() ? 'Ayer' : new Intl.DateTimeFormat('es-ES', { day: 'numeric', month: 'short' }).format(date); const time = new Intl.DateTimeFormat('es-ES', { hour: 'numeric', minute: '2-digit' }).format(date); return `${day}, ${time}`; }
+    async function requestJson(url, options) { const response = await fetch(url, options); let result; try { result = await response.json(); } catch { throw new Error('El servidor devolvió una respuesta inválida.'); } if (!response.ok) throw new Error(result.error || `Error HTTP ${response.status}`); return result; }
+    async function initialize() { try { const config = await requestJson('/config', { cache: 'no-store' }); if (Number.isSafeInteger(config.maxAudioDurationMs) && config.maxAudioDurationMs >= 1000) storyAudioMaxDurationMs = config.maxAudioDurationMs; if (Number.isSafeInteger(config.storyTtlMs) && config.storyTtlMs > 0) storyTtlMs = config.storyTtlMs; if (Number.isSafeInteger(config.storyCharacters) && config.storyCharacters > 0) storyTextMaxCharacters = config.storyCharacters; const session = await requestJson('/auth/session', { cache: 'no-store' }); if (!session.authenticated) { location.href = '/'; return; } me = session.user; renderPalette(); bindStoryMenus(); $('storyFiles').addEventListener('change', event => queueSelectedFiles(event.target.files)); const resizeTextInput = () => { const input = $('storyText'); if (mode === 'text' && input) fitTextInput(input); }; window.addEventListener('resize', resizeTextInput); window.visualViewport?.addEventListener('resize', resizeTextInput); await loadStories(); } catch (error) { console.error('[stories] No se pudo iniciar la página:', error); $('storyList').innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`; } }
+    function closeStoryMenus() { if (window.ZlapyPopMenu) ZlapyPopMenu.close(); document.querySelectorAll('.cardMenuToggle[aria-expanded="true"]').forEach(button => button.setAttribute('aria-expanded', 'false')); }
+    /* Menu de la historia: el mismo pop-menu que el resto de la app, con
+       icono en cada opcion y cierre al tocar fuera. */
+    function toggleStoryMenu(event, button) {
+      event.preventDefault();
+      event.stopPropagation();
+      const ts = Number(button.dataset.storyTs);
+      const kind = button.dataset.storyKind || 'text';
+      const items = [
+        { id: 'view', label: 'Ver historia', icon: 'eye' },
+        ...(kind === 'text' ? [{ id: 'edit', label: 'Editar texto', icon: 'edit' }] : []),
+        { id: 'delete', label: 'Eliminar historia', icon: 'trash', danger: true }
+      ];
+      ZlapyPopMenu.open({
+        anchor: button,
+        align: 'right',
+        items,
+        onSelect: action => {
+          if (action === 'view') openOwnStory(ts);
+          else if (action === 'edit') editTextStory(ts);
+          else if (action === 'delete') deleteStory(ts);
+        }
+      });
+    }
+    /* El pop-menu compartido ya se cierra solo al tocar fuera y con Escape. */
+    function bindStoryMenus() { }
+    function renderPalette() {
+      const label = mode === 'drawing' ? 'Fondo del lienzo' : 'Color de fondo';
+      $('colorPalette').innerHTML = `<span class="paletteLabel">${label}</span>` + COLORS.map((color, index) => `<button type="button" title="Fondo ${index + 1}" aria-label="Elegir fondo ${index + 1}" aria-pressed="${color === selectedBackground}" data-color="${color}" style="background:${color}">${color === selectedBackground ? '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4 10 4 4 8-8"/></svg>' : ''}</button>`).join('') + `<input id="customBackground" type="color" value="${/^#[0-9a-f]{6}$/i.test(selectedBackground) ? selectedBackground : '#202a30'}" aria-label="Elegir color de fondo personalizado" title="Color personalizado">`;
+      $('colorPalette').querySelectorAll('button').forEach(button => button.addEventListener('click', () => {
+        selectBackground(button.dataset.color);
+      }));
+      $('customBackground').addEventListener('input', event => selectBackground(event.target.value));
+    }
+    function selectBackground(color) {
+      selectedBackground = color;
+      $('colorPalette').querySelectorAll('button').forEach(button => {
+        const selected = button.dataset.color === selectedBackground;
+        button.setAttribute('aria-pressed', String(selected));
+        button.innerHTML = selected ? '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4 10 4 4 8-8"/></svg>' : '';
+      });
+      const custom = $('customBackground');
+      if (custom && /^#[0-9a-f]{6}$/i.test(color)) custom.value = color;
+      const text = $('textCanvas');
+      if (text) text.style.background = selectedBackground;
+      const blank = $('blankCanvasWrap');
+      if (blank) blank.style.background = selectedBackground;
+    }
+    async function loadStories() { try { const { stories = [] } = await requestJson('/stories', { cache: 'no-store' }); let own = stories.filter(story => story.from === me.username && Date.now() - Number(story.ts) < storyTtlMs).sort((a, b) => b.ts - a.ts); own = await Promise.all(own.map(async story => { if (story.kind === 'text' || story.kind === 'audio' || story.data || !story.hash) return story; try { const response = await fetch('/blob/' + encodeURIComponent(story.hash)); if (!response.ok) throw new Error(`Error HTTP ${response.status}`); return { ...story, data: await response.text() }; } catch (error) { console.error('[stories] No se pudo cargar la vista previa:', error); return { ...story, previewError: true }; } })); $('managerTitle').textContent = 'Tus historias'; $('storyList').innerHTML = own.length ? own.map(storyCard).join('') : '<div class="empty">Tus historias publicadas aparecerán aquí.</div>'; } catch (error) { console.error('[stories] No se pudieron cargar las historias:', error); $('managerTitle').textContent = 'No se pudieron cargar'; $('storyList').innerHTML = '<div class="empty">Comprueba tu conexión e inténtalo de nuevo.</div>'; } }
+    function storyCard(story) {
+      const ts = Number(story.ts), elapsed = Math.max(0, Date.now() - ts), remaining = Math.max(0, storyTtlMs - elapsed);
+      const left = remaining < 3600000 ? `${Math.max(1, Math.ceil(remaining / 60000))} min restantes` : `${Math.ceil(remaining / 3600000)} h restantes`;
+      const type = { image: 'Foto', video: 'Video', audio: 'Audio', text: 'Texto' }[story.kind] || 'Historia';
+      let preview;
+      if (story.kind === 'text') preview = `<span class="textPreview" style="background:${/^#[0-9a-f]{6}$/i.test(story.bg || '') ? story.bg : storyFallbackColor(ts)}">${escapeHtml((story.text || '').slice(0, 30))}</span>`;
+      else if (story.kind === 'audio') preview = '<span class="audioType" aria-label="Audio"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zm7 9h-2a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V22h2v-3.08A7 7 0 0 0 19 12z"/></svg></span>';
+      else if (story.previewError || !story.data) preview = `<span class="kindIcon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="${story.kind === 'video' ? 'M17 10.5V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3.5l5 5v-13z' : 'M21 19V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2zM8.5 13.5l2.5 3 3.5-4.5 4.5 6H5zM8 10a2 2 0 1 1 0-4 2 2 0 0 1 0 4z'}"/></svg></span>`;
+      else if (story.kind === 'video') preview = `<video src="${escapeHtml(story.data)}" muted playsinline preload="metadata"></video>`;
+      else preview = `<img src="${escapeHtml(story.data)}" alt="Vista previa de historia" loading="lazy">`;
+      const views = Array.isArray(story.viewers) ? story.viewers.length : 0, likes = Array.isArray(story.likes) ? story.likes.length : 0;
+      const storyTime = formatStoryTime(ts);
+      return `<article class="card"><button class="storyOpen" type="button" aria-label="Ver historia ${type}. Visto por ${views}. ${likes} me gusta. ${storyTime}" onclick="openOwnStory(${ts})"><span class="preview" aria-hidden="true">${preview}</span><span class="details"><span class="storyHeadline"><span class="storyViews">Visto por ${views}</span><span aria-hidden="true">·</span><span class="storyLikes" aria-label="${likes} me gusta"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21.35 10.55 20C5.4 15.36 2 12.28 2 8.5A5.5 5.5 0 0 1 7.5 3c1.74 0 3.41.81 4.5 2.09A5.99 5.99 0 0 1 16.5 3 5.5 5.5 0 0 1 22 8.5c0 3.78-3.4 6.86-8.55 11.51L12 21.35z"/></svg>${likes}</span></span><time class="storyTime" datetime="${new Date(ts).toISOString()}">${storyTime} · ${type} · ${left}</time></span></button><div class="cardMenu"><button class="cardMenuToggle" type="button" data-story-ts="${ts}" data-story-kind="${escapeHtml(story.kind || 'text')}" aria-label="Más opciones para historia ${type}" aria-haspopup="menu" aria-expanded="false" onclick="toggleStoryMenu(event,this)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg></button></div></article>`;
+    }
+    function openOwnStory(ts) { if (window.parent !== window) { try { if (typeof window.parent.openStoryFromStories === 'function') { window.parent.openStoryFromStories(ts); return; } } catch (error) { console.error('[stories] No se pudo abrir la historia en el chat:', error); } } location.href = `/?story=${encodeURIComponent(ts)}`; }
+    function openEditor(nextMode, title) { recordRequestVersion++; if (previewUrl) URL.revokeObjectURL(previewUrl); previewUrl = ''; mode = nextMode; currentFile = null; strokes = []; drawCanvas = null; drawContext = null; drawEnabled = false; textEnabled = false; selectedBackground = nextMode === 'image' ? COLORS[0] : randomBackgroundColor(selectedBackground); $('editorTitle').textContent = title; $('editorBody').innerHTML = ''; $('drawTools').classList.remove('on'); $('textTool').classList.add('hidden'); $('drawTool').classList.add('hidden'); $('skipPhotoButton').classList.add('hidden'); $('publishButton').disabled = false; $('publishButton').textContent = 'Publicar'; $('editorHint').textContent = ''; $('colorPalette').classList.add('hidden'); $('editor').classList.add('on'); }
+    function startTextStory() {
+      openEditor('text', 'Historia de texto');
+      $('editorBody').innerHTML = '<div id="textCanvas" class="textEditor"><div class="textEntry"><label class="textPrompt" for="storyText">Escribe algo que quieras compartir</label><textarea id="storyText" placeholder="Tu historia empieza aquí…" rows="5" oninput="updateTextCounter()"></textarea></div><div class="textFoot"><span>Elige un fondo que combine con tu mensaje</span><span id="textCount">0 / 140</span></div></div>';
+      $('textCount').textContent = `0 / ${storyTextMaxCharacters}`;
+      $('textCanvas').style.background = selectedBackground;
+      $('colorPalette').classList.remove('hidden');
+      renderPalette();
+      $('editorHint').textContent = 'Tu texto aparecerá centrado en la historia.';
+      updateTextCounter();
+      $('storyText').focus({ preventScroll: true });
+    }
+    function updateTextCounter() {
+      const input = $('storyText'), count = $('textCount');
+      if (!input || !count) return;
+      const length = Array.from(input.value).length;
+      count.textContent = `${length} / ${storyTextMaxCharacters}`;
+      count.classList.toggle('near-limit', length >= storyTextMaxCharacters * 0.9);
+      $('publishButton').disabled = !input.value.trim() || length > storyTextMaxCharacters;
+      fitTextInput(input);
+    }
+    function fitTextInput(input) {
+      input.style.fontSize = '';
+      input.style.paddingTop = '0px';
+      const style = getComputedStyle(input);
+      const maxSize = parseFloat(style.fontSize);
+      const minSize = Math.min(17, maxSize);
+      const measure = input.cloneNode();
+      measure.removeAttribute('id');
+      measure.rows = 1;
+      measure.tabIndex = -1;
+      measure.setAttribute('aria-hidden', 'true');
+      Object.assign(measure.style, {
+        position: 'fixed',
+        inset: '0 auto auto -10000px',
+        visibility: 'hidden',
+        width: `${input.clientWidth}px`,
+        height: 'auto',
+        minHeight: '0',
+        maxHeight: 'none',
+        padding: '0',
+        overflow: 'hidden',
+        whiteSpace: 'pre-wrap',
+        overflowWrap: 'anywhere',
+        boxSizing: 'border-box'
+      });
+      document.body.appendChild(measure);
+      const content = input.value || input.placeholder;
+      let size = maxSize;
+      measure.value = content;
+      for (; size > minSize; size -= 1) {
+        measure.style.fontSize = `${size}px`;
+        if (measure.scrollHeight <= input.clientHeight) break;
+      }
+      input.style.fontSize = `${Math.max(minSize, size)}px`;
+      measure.style.fontSize = input.style.fontSize;
+      const contentHeight = measure.scrollHeight;
+      input.style.paddingTop = `${Math.max(0, Math.floor((input.clientHeight - contentHeight) / 2))}px`;
+      input.scrollTop = 0;
+      measure.remove();
+    }
+    function startBlankDrawing() {
+      openEditor('drawing', 'Dibujo libre');
+      $('editorBody').innerHTML = '<div id="blankCanvasWrap" class="blankCanvasWrap"><canvas id="blankCanvas" class="blankCanvas" aria-label="Lienzo de dibujo"></canvas></div>';
+      $('drawTools').classList.add('on');
+      $('colorPalette').classList.remove('hidden');
+      renderPalette();
+      $('blankCanvasWrap').style.background = selectedBackground;
+      $('drawColor').value = '#ffffff';
+      setupDrawingCanvas($('blankCanvas'));
+      $('editorHint').textContent = 'Dibuja con el dedo o el cursor. Puedes deshacer los trazos.';
+      updateUndoButton();
+    }
+    function audioWaveMarkup(count, className, maxHeight = 84) {
+      return `<div class="${className}" aria-hidden="true">${Array.from({ length: count }, (_, index) => {
+        const height = Math.round(maxHeight * (.22 + ((index * 19 + index * index * 7) % 78) / 100));
+        const delay = -((index * 83) % 900);
+        return `<span style="--wave-height:${height}px;--wave-delay:${delay}ms"></span>`;
+      }).join('')}</div>`;
+    }
+    function startAudioStory() {
+      openEditor('audio', 'Historia de audio');
+      $('editorBody').innerHTML = `<div id="audioPanel" class="audioPanel"><div class="audioMicIcon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11z"/></svg></div><h2>Historia de audio</h2><p id="recordStatus" class="recordStatus" aria-live="polite">Toca el micrófono para empezar a grabar.</p>${audioWaveMarkup(35, 'recordWave', 84)}<div class="audioControls"><button id="recordHold" class="recordHold" type="button" aria-label="Empezar a grabar" onclick="toggleRecording()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11z"/></svg><span>Tocar para grabar</span></button></div><span class="recordHint">Toca otra vez para detener. Máximo ${audioDurationLabel()}.</span><div id="audioPlayback" class="audioPlayback" hidden>${audioWaveMarkup(35, 'audioPlaybackWave', 26)}<div class="audioPlaybackControls"><button id="audioPlaybackButton" class="audioPlaybackPlay" type="button" aria-label="Reproducir audio" onclick="toggleRecordedAudio()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></button><div class="audioPlaybackTrack"><input id="audioSeek" type="range" min="0" max="1000" value="0" aria-label="Posición del audio" aria-valuetext="0:00 de 0:00" oninput="seekRecordedAudio(this.value)"><div class="audioPlaybackTimes"><span id="audioCurrentTime">0:00</span><span id="audioDuration">0:00</span></div></div></div><audio id="audioPreview" preload="metadata"></audio></div></div>`;
+      const preview = $('audioPreview');
+      preview.addEventListener('timeupdate', updateRecordedAudioUi);
+      preview.addEventListener('loadedmetadata', updateRecordedAudioUi);
+      preview.addEventListener('durationchange', updateRecordedAudioUi);
+      preview.addEventListener('play', updateRecordedAudioUi);
+      preview.addEventListener('pause', updateRecordedAudioUi);
+      preview.addEventListener('ended', updateRecordedAudioUi);
+      $('publishButton').disabled = true;
+      $('editorHint').textContent = 'Toca para grabar y vuelve a tocar para detener.';
+    }
+    function queueSelectedFiles(files) { const selected = Array.from(files || []); $('storyFiles').value = ''; if (!selected.length) return; if (selected.some(file => !file.type.startsWith('image/') && !file.type.startsWith('video/'))) { notify('Selecciona imágenes o videos válidos.'); return; } queue.push(...selected); processQueue(); }
+    async function processQueue() {
+      if (queueProcessing || $('editor').classList.contains('on')) return;
+      queueProcessing = true;
+      try {
+        while (queue.length) {
+          const file = queue.shift();
+          if (file.type.startsWith('video/')) {
+            const status = $('uploadStatus');
+            status.textContent = `Subiendo video sin modificar: ${file.name}`;
+            status.classList.remove('hidden');
+            try { await uploadStory(file, 'video'); }
+            catch (error) { queue = []; console.error('[stories] No se pudo subir el video:', error); notify(error.message); return; }
+            finally { status.classList.add('hidden'); }
+            continue;
+          }
+          openEditor('image', 'Editar foto');
+          $('skipPhotoButton').classList.remove('hidden');
+          currentFile = file;
+          previewUrl = URL.createObjectURL(file);
+          $('editorBody').innerHTML = `<div class="imageEditor"><div class="imageStage"><img id="storyImage" src="${previewUrl}" alt="Vista previa de la historia"><canvas id="imageCanvas" class="drawCanvas" aria-label="Dibujo sobre la foto" style="display:none"></canvas><div id="imageText" class="overlayText hidden" contenteditable="true" spellcheck="false" aria-label="Texto sobre la foto"></div></div><span class="editorTip">Tu foto se publica en una historia; añade texto o dibuja encima si quieres.</span></div>`;
+          $('textTool').classList.remove('hidden');
+          $('drawTool').classList.remove('hidden');
+          $('textTool').classList.remove('on');
+          $('drawTool').classList.remove('on');
+          imageElement = $('storyImage');
+          imageElement.addEventListener('load', () => {
+            if ($('editor').classList.contains('on') && mode === 'image') {
+              setupDrawingCanvas($('imageCanvas'));
+              $('publishButton').disabled = false;
+            }
+          }, { once: true });
+          imageElement.addEventListener('error', () => {
+            $('publishButton').disabled = true;
+            notify('No se pudo abrir esta imagen para editarla.');
+          }, { once: true });
+          $('publishButton').disabled = true;
+          if (imageElement.complete && imageElement.naturalWidth) {
+            setupDrawingCanvas($('imageCanvas'));
+            $('publishButton').disabled = false;
+          }
+          $('editorHint').textContent = `Foto ${selectedCount()} de la selección. Publica para continuar con la siguiente.`;
+          $('publishButton').textContent = queue.length ? 'Publicar y continuar' : 'Publicar';
+          return;
+        }
+      } finally {
+        queueProcessing = false;
+      }
+      await loadStories();
+    }
+    function selectedCount() { return 1 + queue.length; }
+    function toggleDrawing() {
+      if (!drawCanvas) return;
+      drawEnabled = !drawEnabled;
+      drawCanvas.style.display = drawEnabled ? 'block' : 'none';
+      $('drawTools').classList.toggle('on', drawEnabled || mode === 'drawing');
+      $('drawTool').classList.toggle('on', drawEnabled);
+      const text = $('imageText');
+      if (text) text.style.pointerEvents = drawEnabled ? 'none' : '';
+      if (mode === 'image') $('editorHint').textContent = drawEnabled ? 'Dibuja encima de la foto. Toca el lápiz otra vez para salir del modo dibujo.' : 'Añade texto o dibuja encima de la foto si quieres.';
+    }
+    function toggleImageText() {
+      const text = $('imageText');
+      if (!text) return;
+      textEnabled = !textEnabled;
+      text.classList.toggle('hidden', !textEnabled);
+      $('textTool').classList.toggle('on', textEnabled);
+      $('editorHint').textContent = textEnabled ? 'Escribe directamente sobre la foto; vuelve a tocar T para ocultar el texto.' : 'Añade texto o dibuja encima de la foto si quieres.';
+      if (textEnabled) text.focus();
+    }
+    function setupDrawingCanvas(canvas) { if (!canvas) return; const isPhoto = mode === 'image', image = isPhoto ? imageElement : null, scale = isPhoto ? Math.min(1, 2048 / Math.max(image.naturalWidth, image.naturalHeight)) : devicePixelRatio, width = isPhoto ? Math.max(1, Math.round(image.naturalWidth * scale)) : Math.max(1, Math.round(canvas.clientWidth * scale)), height = isPhoto ? Math.max(1, Math.round(image.naturalHeight * scale)) : Math.max(1, Math.round(canvas.clientHeight * scale)); if (!width || !height) return; canvas.width = width; canvas.height = height; drawCanvas = canvas; drawContext = canvas.getContext('2d'); if (!drawContext) throw new Error('No se pudo abrir el lienzo de dibujo.'); canvas.onpointerdown = event => { if (!drawEnabled && mode !== 'drawing') return; event.preventDefault(); canvas.setPointerCapture(event.pointerId); const rect = canvas.getBoundingClientRect(), point = { x: (event.clientX - rect.left) * canvas.width / rect.width, y: (event.clientY - rect.top) * canvas.height / rect.height }; strokes.push({ color: $('drawColor').value, points: [point] }); drawing = true; paintStrokes(); }; canvas.onpointermove = event => { if (!drawing) return; const rect = canvas.getBoundingClientRect(); strokes[strokes.length - 1].points.push({ x: (event.clientX - rect.left) * canvas.width / rect.width, y: (event.clientY - rect.top) * canvas.height / rect.height }); paintStrokes(); }; canvas.onpointerup = canvas.onpointercancel = () => { drawing = false; }; }
+    function updateUndoButton() {
+      const button = $('undoStrokeButton'), count = $('strokeCount');
+      if (button) button.disabled = strokes.length === 0;
+      const clear = $('clearStrokesButton');
+      if (clear) clear.disabled = strokes.length === 0;
+      if (count) count.textContent = `${strokes.length} ${strokes.length === 1 ? 'trazo' : 'trazos'}`;
+    }
+    function undoStroke() { if (!strokes.length) return; strokes.pop(); paintStrokes(); updateUndoButton(); }
+    function clearStrokes() { if (!strokes.length) return; strokes = []; paintStrokes(); updateUndoButton(); }
+    async function composePhoto() { const image = imageElement; if (!image || !image.naturalWidth) throw new Error('La foto todavía se está cargando.'); const scale = Math.min(1, 2048 / Math.max(image.naturalWidth, image.naturalHeight)), canvas = document.createElement('canvas'); canvas.width = Math.max(1, Math.round(image.naturalWidth * scale)); canvas.height = Math.max(1, Math.round(image.naturalHeight * scale)); const ctx = canvas.getContext('2d'); if (!ctx) throw new Error('No se pudo preparar la foto.'); ctx.drawImage(image, 0, 0, canvas.width, canvas.height); if (drawCanvas) ctx.drawImage(drawCanvas, 0, 0, canvas.width, canvas.height); const content = ($('imageText')?.innerText || '').trim(); if (content) { const fontSize = Math.max(24, Math.round(canvas.width * .065)), maxWidth = canvas.width * .84; ctx.font = `700 ${fontSize}px system-ui,sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#fff'; ctx.strokeStyle = '#000b'; ctx.lineWidth = Math.max(3, fontSize * .12); const lines = []; for (const paragraph of content.split('\n')) { let line = ''; for (const word of paragraph.split(/\s+/)) { const next = line ? `${line} ${word}` : word; if (line && ctx.measureText(next).width > maxWidth) { lines.push(line); line = word; } else line = next; } lines.push(line); } const lineHeight = fontSize * 1.2; let y = canvas.height / 2 - (lines.length - 1) * lineHeight / 2; for (const line of lines) { ctx.strokeText(line, canvas.width / 2, y, maxWidth); ctx.fillText(line, canvas.width / 2, y, maxWidth); y += lineHeight; } } const blob = await new Promise((resolve, reject) => canvas.toBlob(value => value ? resolve(value) : reject(new Error('No se pudo crear la foto editada.')), 'image/webp', .88)); const base = (currentFile.name || 'historia').replace(/\.[^.]+$/, ''); return new File([blob], `${base}-editada.webp`, { type: 'image/webp' }); }
+    async function publishCurrent() {
+      const button = $('publishButton');
+      if (button.disabled) return;
+      button.disabled = true;
+      button.textContent = 'Publicando…';
+      try {
+        if (mode === 'text') {
+          const text = $('storyText').value.trim();
+          if (!text) throw new Error('Escribe algo primero.');
+          await postTextStory(text, selectedBackground);
+        } else if (mode === 'image') {
+          const file = strokes.length || ($('imageText')?.innerText || '').trim() ? await composePhoto() : await compressPhoto(currentFile);
+          await uploadStory(file, 'image');
+        } else if (mode === 'drawing') {
+          const file = await canvasStoryFile($('blankCanvas'), selectedBackground, 'dibujo');
+          await uploadStory(file, 'image');
+        } else if (mode === 'audio') {
+          if (!currentFile) throw new Error('Graba un audio antes de publicar.');
+          await uploadStory(currentFile, 'audio');
+        }
+        closeEditor(true);
+        notify('Historia publicada.');
+        await processQueue();
+        await loadStories();
+      } catch (error) {
+        console.error('[stories] No se pudo publicar la historia:', error);
+        notify(error.message || 'No se pudo publicar la historia.');
+        button.textContent = queue.length && mode === 'image' ? 'Publicar y continuar' : 'Publicar';
+        button.disabled = mode === 'text' ? !$('storyText').value.trim() : mode === 'audio' ? !currentFile : false;
+      }
+    }
+    async function compressPhoto(file) { const bitmap = await createImageBitmap(file); try { const scale = Math.min(1, 2048 / Math.max(bitmap.width, bitmap.height)), canvas = document.createElement('canvas'); canvas.width = Math.max(1, Math.round(bitmap.width * scale)); canvas.height = Math.max(1, Math.round(bitmap.height * scale)); const context = canvas.getContext('2d'); if (!context) throw new Error('No se pudo preparar la imagen.'); context.drawImage(bitmap, 0, 0, canvas.width, canvas.height); const blob = await new Promise((resolve, reject) => canvas.toBlob(value => value ? resolve(value) : reject(new Error('No se pudo comprimir la imagen.')), 'image/webp', .82)); return new File([blob], file.name.replace(/\.[^.]+$/, '') + '.webp', { type: 'image/webp' }); } finally { bitmap.close(); } }
+    async function canvasStoryFile(canvas, background, name) { const exportCanvas = document.createElement('canvas'); exportCanvas.width = canvas.width; exportCanvas.height = canvas.height; const context = exportCanvas.getContext('2d'); if (!context) throw new Error('No se pudo preparar el dibujo.'); context.fillStyle = background; context.fillRect(0, 0, exportCanvas.width, exportCanvas.height); context.drawImage(canvas, 0, 0); const blob = await new Promise((resolve, reject) => exportCanvas.toBlob(value => value ? resolve(value) : reject(new Error('No se pudo crear la historia de dibujo.')), 'image/webp', .88)); return new File([blob], `${name}.webp`, { type: 'image/webp' }); }
+    async function postTextStory(text, bg) { await requestJson('/story', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'text', text, bg }) }); }
+    function base64(buffer) { const bytes = new Uint8Array(buffer); let binary = ''; const chunk = 0x8000; for (let i = 0; i < bytes.length; i += chunk)binary += String.fromCharCode(...bytes.subarray(i, Math.min(i + chunk, bytes.length))); return btoa(binary); }
+    const SHA256_K = new Uint32Array([0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2]);
+    function sha256Fallback(bytes) { const hash = new Uint32Array([0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19]), length = bytes.length, padded = new Uint8Array((((length + 8) >> 6) + 1) * 64); padded.set(bytes); padded[length] = 0x80; const view = new DataView(padded.buffer); view.setUint32(padded.length - 4, (length << 3) >>> 0, false); view.setUint32(padded.length - 8, Math.floor(length / 536870912), false); const words = new Uint32Array(64), rotate = (value, bits) => (value >>> bits) | (value << (32 - bits)); for (let offset = 0; offset < padded.length; offset += 64) { for (let index = 0; index < 16; index++)words[index] = view.getUint32(offset + index * 4, false); for (let index = 16; index < 64; index++) { const x = words[index - 15], y = words[index - 2], s0 = rotate(x, 7) ^ rotate(x, 18) ^ (x >>> 3), s1 = rotate(y, 17) ^ rotate(y, 19) ^ (y >>> 10); words[index] = (words[index - 16] + s0 + words[index - 7] + s1) >>> 0; } let [a, b, c, d, e, f, g, h] = hash; for (let index = 0; index < 64; index++) { const s1 = rotate(e, 6) ^ rotate(e, 11) ^ rotate(e, 25), choice = (e & f) ^ (~e & g), t1 = (h + s1 + choice + SHA256_K[index] + words[index]) >>> 0, s0 = rotate(a, 2) ^ rotate(a, 13) ^ rotate(a, 22), majority = (a & b) ^ (a & c) ^ (b & c), t2 = (s0 + majority) >>> 0; h = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0; } hash[0] = (hash[0] + a) >>> 0; hash[1] = (hash[1] + b) >>> 0; hash[2] = (hash[2] + c) >>> 0; hash[3] = (hash[3] + d) >>> 0; hash[4] = (hash[4] + e) >>> 0; hash[5] = (hash[5] + f) >>> 0; hash[6] = (hash[6] + g) >>> 0; hash[7] = (hash[7] + h) >>> 0; } return Array.from(hash, value => value.toString(16).padStart(8, '0')).join(''); }
+    async function hashBuffer(buffer) { const bytes = new Uint8Array(buffer); if (globalThis.crypto?.subtle?.digest) { try { return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', buffer)), byte => byte.toString(16).padStart(2, '0')).join(''); } catch (error) { console.warn('[stories] Se usará el cálculo local del hash:', error); } } return sha256Fallback(bytes); }
+    async function uploadStory(file, kind) { const buffer = await file.arrayBuffer(), hash = await hashBuffer(buffer), have = await requestJson('/have?hash=' + encodeURIComponent(hash)); const data = have.ok ? '' : 'data:' + (file.type || 'application/octet-stream') + ';base64,' + base64(buffer); await requestJson('/story', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind, mime: file.type, hash, data }) }); }
+    function stopTracks() { if (recorderStream) recorderStream.getTracks().forEach(track => track.stop()); recorderStream = null; }
+    function formatAudioTime(seconds) { const value = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0; return `${Math.floor(value / 60)}:${String(value % 60).padStart(2, '0')}`; }
+    function audioDurationLabel() { return formatAudioTime(Math.ceil(storyAudioMaxDurationMs / 1000)); }
+    function updateRecordedAudioUi() {
+      const audio = $('audioPreview');
+      if (!audio) return;
+      const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
+      const current = Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
+      const seek = $('audioSeek'), button = $('audioPlaybackButton'), player = $('audioPlayback');
+      if ($('audioCurrentTime')) $('audioCurrentTime').textContent = formatAudioTime(current);
+      if ($('audioDuration')) $('audioDuration').textContent = formatAudioTime(duration);
+      if (seek) {
+        seek.value = duration ? String(Math.round(current / duration * 1000)) : '0';
+        seek.style.setProperty('--audio-progress', `${duration ? current / duration * 100 : 0}%`);
+        seek.setAttribute('aria-valuetext', `${formatAudioTime(current)} de ${formatAudioTime(duration)}`);
+      }
+      if (button) {
+        button.setAttribute('aria-label', audio.paused ? 'Reproducir audio' : 'Pausar audio');
+        button.innerHTML = audio.paused
+          ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>'
+          : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 19h4V5H6zm8-14v14h4V5z"/></svg>';
+      }
+      player?.classList.toggle('is-playing', !audio.paused && !audio.ended);
+    }
+    function toggleRecordedAudio() {
+      const audio = $('audioPreview');
+      if (!audio || !recordedUrl) return;
+      if (audio.paused) audio.play().catch(error => {
+        console.error('[stories] No se pudo reproducir la grabación:', error);
+        notify('No se pudo reproducir la grabación.');
+      });
+      else audio.pause();
+    }
+    function seekRecordedAudio(value) {
+      const audio = $('audioPreview');
+      if (!audio || !Number.isFinite(audio.duration) || !audio.duration) return;
+      audio.currentTime = audio.duration * Number(value) / 1000;
+      updateRecordedAudioUi();
+    }
+    function setRecordUi(state, message) {
+      const button = $('recordHold'), status = $('recordStatus');
+      $('editorBody').querySelector('.audioPanel')?.classList.toggle('is-recording', state === 'recording');
+      $('editorBody').querySelector('.audioPanel')?.classList.toggle('has-recording', state === 'ready');
+      const hint = $('editorBody').querySelector('.recordHint');
+      if (hint) hint.textContent = state === 'ready'
+        ? 'Puedes escucharla o tocar para grabar una nueva nota.'
+        : state === 'recording'
+          ? `Toca el micrófono para detener. Se parará automáticamente a los ${audioDurationLabel()}.`
+          : state === 'requesting'
+            ? 'Concede acceso al micrófono para empezar a grabar.'
+            : state === 'saving'
+              ? 'Preparando tu grabación…'
+              : `Toca otra vez para detener. Máximo ${audioDurationLabel()}.`;
+      if (status) {
+        status.textContent = message;
+        status.classList.toggle('is-recording', state === 'recording');
+      }
+      if (button) {
+        button.classList.toggle('is-recording', state === 'recording');
+        button.setAttribute('aria-pressed', String(state === 'recording'));
+        button.disabled = state === 'saving';
+        const labelText = state === 'recording' ? 'Tocar para detener' : state === 'requesting' ? 'Esperando micrófono…' : state === 'saving' ? 'Preparando audio…' : state === 'ready' ? 'Grabar otra vez' : 'Tocar para grabar';
+        button.setAttribute('aria-label', labelText);
+        const label = button.querySelector('span');
+        if (label) label.textContent = labelText;
+        if (state === 'recording' || state === 'saving' || state === 'requesting') {
+          button.querySelector('svg').innerHTML = state === 'recording'
+            ? '<path d="M7 7h10v10H7z"/>'
+            : '<path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11z"/>';
+        } else {
+          button.querySelector('svg').innerHTML = '<path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11z"/>';
+        }
+      }
+    }
+    function toggleRecording() {
+      if (recordFinalizing) return;
+      if (recordPending) {
+        recordHoldActive = false;
+        recordStopWhenReady = true;
+        setRecordUi('idle', 'Cancelando el acceso al micrófono…');
+        return;
+      }
+      if (recorder?.state === 'recording') {
+        recordHoldActive = false;
+        stopRecording();
+        return;
+      }
+      if (recordHoldActive) return;
+      recordHoldActive = true;
+      recordStopWhenReady = false;
+      startRecording();
+    }
+    function clearRecordingTimers() {
+      clearInterval(recordInterval);
+      clearTimeout(recordLimitTimer);
+      recordInterval = null;
+      recordLimitTimer = null;
+    }
+    async function startRecording() {
+      if (recordPending || recordFinalizing || recorder?.state === 'recording') return;
+      const requestVersion = ++recordRequestVersion;
+      recordPending = true;
+      recordStopWhenReady = false;
+      if (recordedUrl) URL.revokeObjectURL(recordedUrl);
+      recordedUrl = '';
+      currentFile = null;
+      $('audioPlayback').hidden = true;
+      $('audioPanel').classList.remove('has-recording');
+      $('audioPreview').pause();
+      $('audioPreview').removeAttribute('src');
+      $('audioPreview').classList.remove('ready');
+      $('audioPreview').load();
+      $('publishButton').disabled = true;
+      setRecordUi('requesting', 'Solicitando acceso al micrófono…');
+      let stream;
+      try {
+        if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') throw new Error('Este navegador no permite grabar audio aquí.');
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        if (requestVersion !== recordRequestVersion || !$('editor').classList.contains('on') || mode !== 'audio') {
+          stream.getTracks().forEach(track => track.stop());
+          if (requestVersion === recordRequestVersion) recordPending = false;
+          return;
+        }
+        if (!recordHoldActive || recordStopWhenReady) {
+          stream.getTracks().forEach(track => track.stop());
+          recordPending = false;
+          recordStopWhenReady = false;
+          setRecordUi('idle', 'Listo cuando quieras. Toca el micrófono para grabar.');
+          return;
+        }
+        recorderStream = stream;
+        recorderChunks = [];
+        const mimeType = typeof MediaRecorder.isTypeSupported === 'function'
+          ? ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'].find(type => MediaRecorder.isTypeSupported(type))
+          : '';
+        const activeRecorder = recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+        activeRecorder.ondataavailable = event => { if (event.data?.size) recorderChunks.push(event.data); };
+        activeRecorder.onerror = event => {
+          stopTracks();
+          clearRecordingTimers();
+          recordPending = false;
+          recordHoldActive = false;
+          recordFinalizing = false;
+          recordStopWhenReady = false;
+          if (recorder === activeRecorder) recorder = null;
+          $('publishButton').disabled = true;
+          setRecordUi('idle', 'Falló la grabación. Inténtalo de nuevo.');
+          console.error('[stories] Error de grabación:', event.error || event);
+          notify('Falló la grabación de audio.');
+        };
+        activeRecorder.onstop = () => {
+          if (requestVersion !== recordRequestVersion) return;
+          stopTracks();
+          clearRecordingTimers();
+          recordPending = false;
+          recordHoldActive = false;
+          recordFinalizing = false;
+          recordStopWhenReady = false;
+          if (recorder === activeRecorder) recorder = null;
+          if (mode !== 'audio') return;
+          const blob = new Blob(recorderChunks, { type: activeRecorder.mimeType || 'audio/webm' });
+          if (!blob.size) {
+            setRecordUi('idle', 'No se capturó audio. Toca el micrófono para volver a intentarlo.');
+            $('publishButton').disabled = true;
+            notify('La grabación quedó vacía. Inténtalo otra vez.');
+            return;
+          }
+          if (recordedUrl) URL.revokeObjectURL(recordedUrl);
+          recordedUrl = URL.createObjectURL(blob);
+          const extension = (blob.type.split('/')[1] || 'webm').split(';')[0].replace('x-', '');
+          currentFile = new File([blob], `historia-audio.${extension}`, { type: blob.type });
+          $('audioPreview').src = recordedUrl;
+          $('audioPreview').load();
+          $('audioPlayback').hidden = false;
+          $('audioPanel').classList.add('has-recording');
+          setRecordUi('ready', 'Tu grabación está lista. Escúchala o graba otra vez.');
+          updateRecordedAudioUi();
+          $('publishButton').disabled = false;
+          $('editorHint').textContent = 'Escucha tu historia o toca el micrófono para grabar otra vez.';
+        };
+        activeRecorder.start();
+        recordPending = false;
+        const started = Date.now();
+        setRecordUi('recording', `Grabando · 0:00 / ${audioDurationLabel()} · toca para detener`);
+        $('editorHint').textContent = `La grabación se detiene al tocar de nuevo o al llegar a ${audioDurationLabel()}.`;
+        $('publishButton').disabled = true;
+        recordInterval = setInterval(() => {
+          const seconds = Math.floor((Date.now() - started) / 1000);
+          if (Date.now() - started >= storyAudioMaxDurationMs) {
+            recordHoldActive = false;
+            stopRecording();
+            return;
+          }
+          setRecordUi('recording', `Grabando · ${formatAudioTime(seconds)} / ${audioDurationLabel()} · toca para detener`);
+        }, 250);
+        recordLimitTimer = setTimeout(() => {
+          recordHoldActive = false;
+          stopRecording();
+        }, storyAudioMaxDurationMs);
+        if (!recordHoldActive || recordStopWhenReady) stopRecording();
+      } catch (error) {
+        if (stream) stream.getTracks().forEach(track => track.stop());
+        if (requestVersion !== recordRequestVersion) return;
+        recordPending = false;
+        recordHoldActive = false;
+        recordStopWhenReady = false;
+        $('publishButton').disabled = true;
+        setRecordUi('idle', 'No se pudo iniciar. Revisa el acceso al micrófono e inténtalo de nuevo.');
+        notify(error.name === 'NotAllowedError' ? 'Permite el acceso al micrófono para grabar la historia.' : error.message);
+        console.error('[stories] No se pudo iniciar la grabación:', error);
+      }
+    }
+    function stopRecording() {
+      if (recordPending) {
+        recordStopWhenReady = true;
+        return;
+      }
+      if (!recorder || recorder.state === 'inactive' || recordFinalizing) return;
+      recordFinalizing = true;
+      recordHoldActive = false;
+      $('publishButton').disabled = true;
+      setRecordUi('saving', 'Guardando la grabación…');
+      recorder.stop();
+    }
+    function paintStrokes() {
+      if (!drawContext || !drawCanvas) return;
+      drawContext.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+      drawContext.lineWidth = Math.max(5, drawCanvas.width * .009);
+      drawContext.lineCap = 'round';
+      drawContext.lineJoin = 'round';
+      for (const stroke of strokes) {
+        drawContext.strokeStyle = drawContext.fillStyle = stroke.color;
+        if (stroke.points.length === 1) {
+          const point = stroke.points[0];
+          drawContext.beginPath();
+          drawContext.arc(point.x, point.y, drawContext.lineWidth / 2, 0, Math.PI * 2);
+          drawContext.fill();
+          continue;
+        }
+        drawContext.beginPath();
+        drawContext.moveTo(stroke.points[0].x, stroke.points[0].y);
+        for (const point of stroke.points.slice(1)) drawContext.lineTo(point.x, point.y);
+        drawContext.stroke();
+      }
+      updateUndoButton();
+    }
+    function closeEditor(preserveQueue = false) {
+      recordRequestVersion++;
+      recordHoldActive = false;
+      recordStopWhenReady = false;
+      if (recorder && recorder.state !== 'inactive') recorder.stop();
+      stopTracks();
+      clearRecordingTimers();
+      recordPending = false;
+      recordFinalizing = false;
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      if (recordedUrl) URL.revokeObjectURL(recordedUrl);
+      const preview = $('audioPreview');
+      if (preview) {
+        preview.pause();
+        preview.removeAttribute('src');
+        preview.load();
+      }
+      previewUrl = '';
+      recordedUrl = '';
+      currentFile = null;
+      imageElement = null;
+      drawCanvas = null;
+      drawContext = null;
+      strokes = [];
+      mode = '';
+      $('editor').classList.remove('on');
+      $('editorBody').innerHTML = '';
+      $('skipPhotoButton').classList.add('hidden');
+      $('publishButton').disabled = false;
+      if (!preserveQueue) queue = [];
+    }
+    function skipCurrentPhoto() {
+      if (mode !== 'image') return;
+      closeEditor(true);
+      notify('Foto descartada.');
+      void processQueue();
+    }
+    async function deleteStory(ts) { if (!confirm('¿Quieres eliminar esta historia?')) return; try { await requestJson('/story/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ts }) }); await loadStories(); notify('Historia eliminada.'); } catch (error) { console.error('[stories] No se pudo eliminar la historia:', error); notify(error.message); } }
+    async function editTextStory(ts) { try { const { stories = [] } = await requestJson('/stories', { cache: 'no-store' }), story = stories.find(item => item.from === me.username && item.ts === ts); if (!story) throw new Error('La historia ya no está disponible.'); const text = prompt('Editar el texto de la historia:', story.text || ''); if (text === null) return; if (Array.from(text).length > storyTextMaxCharacters) throw new Error(`Las historias admiten hasta ${storyTextMaxCharacters} caracteres.`); const bg = story.bg || randomBackgroundColor(); await requestJson('/story/edit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ts, text, bg }) }); await loadStories(); } catch (error) { console.error('[stories] No se pudo editar la historia:', error); notify(error.message); } }
+    initialize();
+  </script>
+  <script src="/js/popmenu.js?v=1"></script>
+  <script src="/js/appearance.js" defer></script>
+</body>
+
+</html>

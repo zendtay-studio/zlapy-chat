@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#111b21">
+  <title>Acceso — Zlapy</title>
+  <link rel="stylesheet" href="/css/theme.css">
+  <link rel="stylesheet" href="/css/login.css?v=1">
+  <script>
+    /* Aplica el acento cacheado del usuario antes de pintar para que no parpadee */
+    try {
+      var hint = JSON.parse(localStorage.getItem('chatlocal_appearance_hint') || 'null'), ok = function (c) { return /^#[0-9a-f]{6}$/i.test(c || ''); };
+      if (hint && ok(hint.sender)) {
+        var ink = ok(hint.senderText) ? hint.senderText : '#101318', other = ok(hint.receiver) ? hint.receiver : '#171b21', r = document.documentElement.style;
+        r.setProperty('--accent', hint.sender);
+        r.setProperty('--accent-ink', ink);
+        r.setProperty('--accent-secondary', other);
+        r.setProperty('--accent-hover', 'color-mix(in srgb, ' + hint.sender + ' 88%, ' + ink + ')');
+        r.setProperty('--accent-soft', 'color-mix(in srgb, ' + hint.sender + ' 18%, transparent)');
+      }
+    } catch (e) { }
+  </script>
+</head>
+
+<body class="page-login">
+<div id="login">
+    <section class="box" aria-labelledby="loginTitle">
+        <div class="loginHero">
+            <svg class="loginMascot" viewBox="0 0 144 144" role="img" aria-label=" Zlapy">
+                <path
+                    d="M35 18h74c18 0 31 13 31 31v43c0 17-13 30-31 30H83l-28 20v-20H35C18 122 5 109 5 92V49c0-18 12-31 30-31Z"
+                    fill="currentColor"></path>
+                <circle cx="52" cy="65" r="7" fill="#090c0f"></circle>
+                <circle cx="92" cy="65" r="7" fill="#090c0f"></circle>
+                <!-- <path d="M48 83c7 12 17 18 27 18s20-6 27-18" fill="none" stroke="#090c0f" stroke-width="7"
+                    stroke-linecap="round"></path> -->
+            </svg>
+            <h1 id="loginTitle" style="font-size: 40px; font-weight: 600"> Zlapy</h1>
+            <p id="loginSubtitle"></p>
+        </div>
+        <form id="newAccount">
+            <label class="authField" for="uname">
+                <span>Usuario</span>
+                <div class="authInputWrap">
+                    <span class="authInputIcon" aria-hidden="true"><svg viewBox="0 0 24 24">
+                            <circle cx="12" cy="8" r="3.5"></circle>
+                            <path d="M4.5 20c.6-3.7 3.2-5.5 7.5-5.5s6.9 1.8 7.5 5.5"></path>
+                        </svg></span>
+                    <input id="uname" name="username" placeholder="zendtay" maxlength="24" autocomplete="username"
+                        autocapitalize="none" spellcheck="false" required="">
+                </div>
+            </label>
+            <label class="authField" for="authPassword">
+                <span>Contraseña</span>
+                <div class="authInputWrap">
+                    <input id="authPassword" name="password" type="password" placeholder="••••••••••••"
+                        maxlength="128" autocomplete="current-password" required="">
+                    <span class="authInputIcon" aria-hidden="true"><svg viewBox="0 0 24 24">
+                            <rect x="4.5" y="10" width="15" height="11" rx="2"></rect>
+                            <path d="M8 10V7a4 4 0 0 1 8 0v3m-4 4v3"></path>
+                        </svg></span>
+                    <button class="authPeek" type="button" data-password="authPassword"
+                        aria-label="Mostrar contraseña" aria-pressed="false"><svg viewBox="0 0 24 24">
+                            <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"></path>
+                            <circle cx="12" cy="12" r="3"></circle>
+                            <path class="peekSlash" d="m3 3 18 18"></path>
+                        </svg></button>
+                </div>
+            </label>
+            <div class="authHint" id="authPasswordHint" style="display:none">Usa al menos 8 caracteres.</div>
+            <label class="authField" id="authConfirmField" for="authPasswordConfirm" style="display:none">
+                <span>Repite la contraseña</span>
+                <div class="authInputWrap">
+                    <input id="authPasswordConfirm" name="passwordConfirm" type="password"
+                        placeholder="••••••••••••" maxlength="128" autocomplete="new-password">
+                    <span class="authInputIcon" aria-hidden="true"><svg viewBox="0 0 24 24">
+                            <rect x="4.5" y="10" width="15" height="11" rx="2"></rect>
+                            <path d="M8 10V7a4 4 0 0 1 8 0v3m-4 4v3"></path>
+                        </svg></span>
+                    <button class="authPeek" type="button" data-password="authPasswordConfirm"
+                        aria-label="Mostrar contraseña" aria-pressed="false"><svg viewBox="0 0 24 24">
+                            <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"></path>
+                            <circle cx="12" cy="12" r="3"></circle>
+                            <path class="peekSlash" d="m3 3 18 18"></path>
+                        </svg></button>
+                </div>
+            </label>
+            <div id="authError" role="alert" aria-live="polite" style="display:none"></div>
+            <button id="authSubmit" type="submit">Iniciar sesión</button>
+        </form>
+        <div class="authDivider" aria-hidden="true"><span>o</span></div>
+        <button class="authSwitch" id="btnNewAccount" type="button">¿No tienes
+            cuenta?<strong>Crear cuenta</strong></button>
+        <div class="authFoot">Al continuar, accedes a tus conversaciones privadas.</div>
+    </section>
+</div>
+
+  <script>
+    /* Pantalla de acceso: solo autenticacion. La app (index.html) comprueba
+       la sesion y, si no hay, devuelve aqui. */
+    (function () {
+      'use strict';
+      let authMode = 'login';
+
+      async function start() {
+        const name = document.getElementById('uname').value.trim();
+        const password = document.getElementById('authPassword').value;
+        const error = document.getElementById('authError');
+        if (authMode === 'register' && password !== document.getElementById('authPasswordConfirm').value) {
+          error.textContent = 'Las contraseñas no coinciden.';
+          error.style.display = 'block';
+          return;
+        }
+        const button = document.getElementById('authSubmit');
+        button.disabled = true;
+        error.style.display = 'none';
+        try {
+          const response = await fetch('/auth/' + authMode, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: name, password })
+          });
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.error || 'No se pudo autenticar.');
+          location.replace('/');
+        } catch (exception) {
+          error.textContent = exception.message || 'No se pudo completar la solicitud.';
+          error.style.display = 'block';
+        } finally {
+          button.disabled = false;
+        }
+      }
+
+      function resetPasswordVisibility() {
+        document.querySelectorAll('.authPeek').forEach(button => {
+          button.setAttribute('aria-pressed', 'false');
+          button.setAttribute('aria-label', 'Mostrar contraseña');
+          document.getElementById(button.dataset.password).type = 'password';
+        });
+      }
+
+      function showNewAccount() {
+        authMode = authMode === 'login' ? 'register' : 'login';
+        resetPasswordVisibility();
+        const login = document.getElementById('login');
+        login.classList.toggle('register-mode', authMode === 'register');
+        document.getElementById('authSubmit').textContent = authMode === 'register' ? 'Crear cuenta' : 'Iniciar sesión';
+        document.getElementById('loginTitle').textContent = ' Zlapy';
+        const loginSubtitle = document.getElementById('loginSubtitle');
+        loginSubtitle.textContent = authMode === 'register'
+          ? 'Crea tu cuenta con un usuario y una contraseña.'
+          : '';
+        loginSubtitle.style.display = authMode === 'register' ? 'block' : 'none';
+        document.getElementById('btnNewAccount').innerHTML = authMode === 'register'
+          ? '¿Ya tienes cuenta?<strong>Iniciar sesión</strong>'
+          : '¿No tienes cuenta?<strong>Crear cuenta</strong>';
+        document.getElementById('authPassword').autocomplete = authMode === 'register' ? 'new-password' : 'current-password';
+        const confirmField = document.getElementById('authConfirmField');
+        confirmField.style.display = authMode === 'register' ? 'flex' : 'none';
+        document.getElementById('authPasswordHint').style.display = authMode === 'register' ? 'block' : 'none';
+        document.getElementById('authPasswordConfirm').required = authMode === 'register';
+        document.getElementById('authError').style.display = 'none';
+        document.getElementById('authError').textContent = '';
+        if (authMode === 'register' && matchMedia('(max-width: 480px)').matches) {
+          requestAnimationFrame(() => confirmField.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
+        }
+      }
+
+      document.querySelectorAll('.authPeek').forEach(button => button.addEventListener('click', () => {
+        const input = document.getElementById(button.dataset.password);
+        const visible = input.type === 'password';
+        input.type = visible ? 'text' : 'password';
+        button.setAttribute('aria-label', visible ? 'Ocultar contraseña' : 'Mostrar contraseña');
+        button.setAttribute('aria-pressed', String(visible));
+      }));
+
+      document.getElementById('uname').addEventListener('input', event => {
+        const input = event.currentTarget;
+        const start = input.selectionStart;
+        input.value = input.value.toLowerCase();
+        input.setSelectionRange(start, start);
+      });
+
+      document.getElementById('btnNewAccount').addEventListener('click', showNewAccount);
+      document.getElementById('newAccount').addEventListener('submit', event => { event.preventDefault(); start(); });
+
+      // Si ya hay sesion, no hay nada que hacer aqui.
+      fetch('/auth/session', { cache: 'no-store' })
+        .then(response => response.json())
+        .then(session => { if (session && session.authenticated) location.replace('/'); })
+        .catch(() => { });
+    })();
+  </script>
+</body>
+
+</html>

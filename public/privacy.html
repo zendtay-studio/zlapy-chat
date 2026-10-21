@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Privacidad</title>
+  <style>
+    * {
+      margin: 0;
+      box-sizing: border-box;
+      font-family: 'Segoe UI', Helvetica, Arial, sans-serif
+    }
+
+    body {
+      background: #111b21;
+      color: #e9edef;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      max-width: 560px;
+      margin: 0 auto
+    }
+
+    header {
+      background: #202c33;
+      padding: 16px 20px;
+      font-size: 18px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      position: sticky;
+      top: 0;
+      z-index: 5
+    }
+
+    header a {
+      color: #e9edef;
+      text-decoration: none;
+      font-size: 22px
+    }
+
+    header button {
+      margin-left: auto;
+      background: var(--accent);
+      border: none;
+      color: var(--accent-ink);
+      padding: 9px 16px;
+      border-radius: 8px;
+      font-size: 14px;
+      cursor: pointer
+    }
+
+    main {
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px
+    }
+
+    h2 {
+      font-size: 14px;
+      color: #8696a0;
+      font-weight: 400;
+      padding: 8px 4px 4px
+    }
+
+    .row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 13px 10px;
+      border-bottom: 1px solid #222d34;
+      cursor: pointer;
+      border-radius: 8px
+    }
+
+    .row:hover {
+      background: #202c33
+    }
+
+    .row [data-unblock] {
+      background: #2a3942;
+      color: #e9edef;
+      border: 0;
+      border-radius: 8px;
+      padding: 8px 12px;
+      cursor: pointer
+    }
+
+    .pic {
+      width: 42px;
+      height: 42px;
+      border-radius: 12px;
+      background: #2a3942;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex: none;
+      color: #8696a0
+    }
+
+    .pic svg {
+      width: 22px;
+      height: 22px
+    }
+
+    .meta {
+      flex: 1;
+      min-width: 0
+    }
+
+    .meta b {
+      font-size: 15px;
+      display: block
+    }
+
+    .meta span {
+      font-size: 12.5px;
+      color: #8696a0
+    }
+
+    .chev {
+      color: #8696a0;
+      font-size: 18px
+    }
+
+    .seg {
+      display: flex;
+      gap: 6px;
+      background: #202c33;
+      border-radius: 10px;
+      padding: 4px;
+      margin: 8px 0
+    }
+
+    .seg button {
+      flex: 1;
+      background: none;
+      border: none;
+      color: #8696a0;
+      padding: 10px 6px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 13.5px
+    }
+
+    .seg button.on {
+      background: var(--accent);
+      color: var(--accent-ink)
+    }
+
+    .help {
+      font-size: 13px;
+      color: #8696a0;
+      padding: 4px
+    }
+
+    .list {
+      background: #202c33;
+      border-radius: 10px;
+      padding: 4px;
+      max-height: 46vh;
+      overflow-y: auto
+    }
+
+    .row input[type=checkbox] {
+      order: 3;
+      margin-left: auto;
+      width: 20px;
+      height: 20px;
+      accent-color: var(--accent);
+      flex: none
+    }
+
+    .row:has(input:checked) {
+      background: var(--accent-soft)
+    }
+
+    .row input:disabled {
+      opacity: .35
+    }
+
+    .row .av {
+      order: 1;
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      background: var(--accent);
+      color: var(--accent-ink);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 17px;
+      font-weight: 600;
+      flex: none;
+      overflow: hidden
+    }
+
+    .row .av img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover
+    }
+
+    .person {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 10px;
+      border-radius: 8px;
+      cursor: pointer
+    }
+
+    .person:hover {
+      background: #31424c
+    }
+
+    .person:has(input:checked) {
+      background: var(--accent-soft)
+    }
+
+    .person input {
+      order: 3;
+      margin-left: auto;
+      width: 20px;
+      height: 20px;
+      accent-color: var(--accent);
+      flex: none
+    }
+
+    .person .av {
+      order: 1;
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      background: var(--accent);
+      color: var(--accent-ink);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      font-weight: 600;
+      flex: none;
+      overflow: hidden
+    }
+
+    .person .av img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover
+    }
+
+    .person .meta {
+      order: 2;
+      flex: 1;
+      min-width: 0
+    }
+
+    .person .meta b {
+      display: block;
+      font-size: 15px;
+      color: #e9edef
+    }
+
+    .person .meta {
+      min-width: 0
+    }
+
+    .person .meta b {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap
+    }
+
+    .person input {
+      width: 18px;
+      height: 18px;
+      accent-color: var(--accent)
+    }
+
+    .btns {
+      display: flex;
+      gap: 10px;
+      margin-top: 12px
+    }
+
+    .btns button {
+      flex: 1;
+      background: #2a3942;
+      color: #e9edef;
+      border: none;
+      border-radius: 10px;
+      padding: 13px;
+      font-size: 14.5px;
+      cursor: pointer
+    }
+
+    .btns button.ok {
+      background: var(--accent);
+      color: var(--accent-ink)
+    }
+
+    .quickBar {
+      display: flex;
+      gap: 6px;
+      background: #202c33;
+      border-radius: 10px;
+      padding: 4px;
+      margin: 8px 0
+    }
+
+    .quickBar button {
+      flex: 1;
+      background: none;
+      border: none;
+      color: #8696a0;
+      padding: 10px 4px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 13px
+    }
+
+    .quickBar button:hover {
+      background: #2a3942;
+      color: #e9edef
+    }
+
+    .quickBar button.on {
+      background: var(--accent);
+      color: var(--accent-ink)
+    }
+
+    .quickHint {
+      font-size: 12px;
+      color: #8696a0;
+      padding: 2px 4px 6px
+    }
+
+    #toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #233138;
+      color: #e9edef;
+      padding: 12px 18px;
+      border-radius: 10px;
+      font-size: 14px;
+      box-shadow: 0 4px 18px #0008;
+      display: none;
+      z-index: 50
+    }
+
+    @media(max-width:600px) {
+    }
+  </style>
+  <link rel="stylesheet" href="/css/theme.css">
+  <script src="/js/transport-crypto.js"></script>
+  <script src="/js/transport.js"></script>
+  <script>
+    /* Aplica el acento cacheado del usuario antes de pintar para que no parpadee */
+    try {
+      var hint = JSON.parse(localStorage.getItem('chatlocal_appearance_hint') || 'null'), ok = function (c) { return /^#[0-9a-f]{6}$/i.test(c || ''); };
+      if (hint && ok(hint.sender)) {
+        var ink = ok(hint.senderText) ? hint.senderText : '#101318', other = ok(hint.receiver) ? hint.receiver : '#171b21', r = document.documentElement.style;
+        r.setProperty('--accent', hint.sender);
+        r.setProperty('--accent-ink', ink);
+        r.setProperty('--accent-secondary', other);
+        r.setProperty('--accent-hover', 'color-mix(in srgb, ' + hint.sender + ' 88%, ' + ink + ')');
+        r.setProperty('--accent-soft', 'color-mix(in srgb, ' + hint.sender + ' 18%, transparent)');
+      }
+    } catch (e) { }
+  </script>
+
+</head>
+
+<body class="page-privacy">
+  <header><a href="/" onclick="return goBack()">←</a><span id="headTitle">Privacidad</span><span id="saveState"
+      style="margin-left:auto;font-size:12.5px;color:#8696a0"></span></header>
+  <main id="main"></main>
+  <div id="toast"></div>
+  <script>
+    let me = null, priv = null, contacts = [], editKey = null, editMode = 'all', editSel = [], editNobody = false;
+    const ICONS = {
+      foto: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="8" r="3.5"/><path d="M4 20c0-3.9 3.6-6 8-6s8 2.1 8 6"/></svg>',
+      nota: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 20l1-4L16.5 4.5a2.1 2.1 0 013 3L8 19l-4 1z"/></svg>',
+      descripcion: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5h16M4 10h16M4 15h10M4 20h7"/></svg>',
+      historias: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.5"/></svg>',
+      llamadas: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 3h3l2 5-2.5 1.5a11 11 0 006 6L16 13l5 2v3a2 2 0 01-2.2 2A16 16 0 014 5.2 2 2 0 016 3z"/></svg>',
+      mensajes: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5h16v11H9l-5 4V5z"/></svg>',
+      compartir: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M10 9V5l-7 7 7 7v-4c5 0 8.5 1.6 11 5-1-5-4-10-11-11z"/></svg>'
+    };
+    const ROWS = [
+      { key: 'foto', label: 'Foto de perfil', sub: 'Quién puede ver mi foto' },
+      { key: 'nota', label: 'Mi nota', sub: 'Quién puede ver mi nota (dura 24 h)' },
+      { key: 'descripcion', label: 'Descripción', sub: 'Quién puede ver mi descripción' },
+      { key: 'historias', label: 'Mis historias', sub: 'Quién puede ver mis historias' },
+      { key: 'llamadas', label: 'Quién puede llamarme', sub: 'Quién puede llamarme' },
+      { key: 'mensajes', label: 'Quién puede escribirme', sub: 'Quién puede enviarme mensajes' },
+      { key: 'compartir', label: 'Compartir', sub: 'Quién puede reenviar lo que envío' }
+    ];
+    const PRIVACY_MODES = [['server', 'Todos'], ['contacts', 'Contactos'], ['nobody', 'Nadie'], ['only', 'Solo…'], ['except', 'Excepto…']];
+    const PRIVACY_DEFAULTS = {
+      foto: { mode: 'server', users: [] }, nota: { mode: 'contacts', users: [] }, descripcion: { mode: 'server', users: [] },
+      historias: { mode: 'contacts', users: [] }, llamadas: { mode: 'contacts', users: [] }, mensajes: { mode: 'contacts', users: [] },
+      compartir: { mode: 'contacts', users: [] }
+    };
+    const ADD_ME_ROW = { key: 'agregarme', label: 'Quién puede agregarme', sub: 'Quién puede agregarme a sus contactos' };
+    const esc = s => String(s == null ? '' : s).replace(/[<>&"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    function toast(t) { const e = document.getElementById('toast'); e.textContent = t; e.style.display = 'block'; clearTimeout(e._t); e._t = setTimeout(() => e.style.display = 'none', 2500); }
+    function resumen(k) {
+      const v = priv[k] || PRIVACY_DEFAULTS[k], n = (v.users || []).length;
+      if (v.mode === 'server') return 'Todos los usuarios del servidor';
+      if (v.mode === 'contacts' || v.mode === 'all') return 'Solo mis contactos';
+      if (v.mode === 'nobody' || (v.mode === 'only' && !n)) return 'Nadie';
+      return v.mode === 'only' ? n + ' contacto(s)' : n ? n + ' excluido(s)' : 'Solo mis contactos';
+    }
+    function renderRows() {
+      document.getElementById('headTitle').textContent = 'Privacidad';
+      const values = ROWS.map(r => priv[r.key] || PRIVACY_DEFAULTS[r.key]), first = values[0];
+      const same = values.every(v => v.mode === first.mode && JSON.stringify(v.users || []) === JSON.stringify(first.users || []));
+      const quick = !same ? '' : first.mode === 'all' ? 'contacts' : first.mode === 'only' && !(first.users || []).length ? 'nobody' : first.mode;
+      document.getElementById('main').innerHTML = '<h2>Quién puede ver mi información personal</h2>'
+        + `<div class="quickBar">${PRIVACY_MODES.map(([mode, label]) => `<button title="${mode === 'server' ? 'Todos los usuarios del servidor' : mode === 'contacts' ? 'Solo mis contactos aceptados' : label}" class="${quick === mode ? 'on' : ''}" onclick="applyAll('${mode}')">${label}</button>`).join('')}</div>
+      <div class="quickHint">“Todos” incluye todas las cuentas del servidor; “Contactos” solo incluye contactos aceptados. “Solo” y “Excepto” se aplican a tus contactos.</div>`
+        + ROWS.map(r =>
+          `<div class="row" onclick="editRow('${r.key}')"><div class="pic">${ICONS[r.key]}</div><div class="meta"><b>${r.label}</b><span>${resumen(r.key)}</span></div><span class="chev">›</span></div>`
+        ).join('')
+        + `<div class="row" onclick="editRow('${ADD_ME_ROW.key}')"><div class="pic">${ICONS.foto}</div><div class="meta"><b>${ADD_ME_ROW.label}</b><span>${resumenAgregarme()}</span></div><span class="chev">›</span></div>`;
+      document.getElementById('main').innerHTML += `<div class="row" onclick="editRow('blocked')"><div class="pic">${ICONS.foto}</div><div class="meta"><b>Contactos bloqueados</b><span>Ver y desbloquear cuentas</span></div><span class="chev">›</span></div>`;
+      editKey = null;
+    }
+    function resumenAgregarme() {
+      return ({ all: 'Todos los usuarios del servidor', request: 'Por solicitud', nobody: 'Nadie' })[(priv.agregarme || {}).mode || 'request'];
+    }
+    const avH = c => `<img src="${esc(c.p && c.p.avatar ? c.p.avatar : '/avatar/' + encodeURIComponent((c.p && c.p.id) || c.id || c.username) + '.svg?v=3')}" alt="">`; /* NEW-01: esc() como en index/profile/view */
+    const nmH = c => esc((c.p && c.p.name && !/^PCE[13]:/.test(c.p.name)) ? c.p.name : c.username);
+    let pickMode = null, pickSel = [];
+    function applyAll(mode) {
+      if (!priv) return;
+      if (mode === 'server' || mode === 'contacts' || mode === 'nobody') {
+        const storedMode = mode;
+        for (const r of ROWS) priv[r.key] = { mode: storedMode, users: [] };
+        persist(); renderRows();
+        toast(mode === 'server' ? 'Visible para todos los usuarios del servidor' : mode === 'contacts' ? 'Visible solo para tus contactos aceptados' : 'Nadie puede verlo');
+        return;
+      }
+      pickMode = mode; pickSel = []; paintGlobalPicker();
+    }
+    function paintGlobalPicker() {
+      const mode = pickMode;
+      showPickerModal(mode, [], 'Se aplica a los 7 ajustes y solo puede elegir contactos aceptados.').then(selected => {
+        if (selected === null) { pickMode = null; return; }
+        pickSel = selected;
+        applyGlobalPick();
+      });
+    }
+    function showPickerModal(mode, initial, hint) {
+      return new Promise(resolve => {
+        let selected = initial.slice();
+        const overlay = document.createElement('div');
+        overlay.id = 'pickerOverlay';
+        overlay.className = 'pickerOverlay';
+        const title = mode === 'only' ? 'Solo estos contactos pueden verlo' : 'Contactos excepto';
+        overlay.innerHTML = `<section class="pickerSheet" id="pickerSheet" role="dialog" aria-modal="true" aria-labelledby="pickerTitle">
+      <b class="pickerTitle" id="pickerTitle">${title}</b>
+      <div class="pickerHint" id="pickerHint">${esc(hint)}</div>
+      <div class="pickerList" id="pickerList">${contacts.length ? contacts.map(c => `<label class="pickerPerson"><input type="checkbox" value="${esc(c.username)}" ${selected.includes(c.username) ? 'checked' : ''}><div class="av">${avH(c)}</div><div class="meta"><b>${nmH(c)}</b></div></label>`).join('') : '<div class="help">Todavía no tienes contactos</div>'}</div>
+      <div class="pickerBtns"><button type="button" data-action="cancel">Cancelar</button><button type="button" class="ok" data-action="apply">Aplicar</button></div>
+    </section>`;
+        const close = value => { overlay.remove(); document.removeEventListener('keydown', onKey); resolve(value); };
+        const onKey = e => { if (e.key === 'Escape') close(null); };
+        overlay.addEventListener('change', e => {
+          if (e.target.matches('input[type=checkbox]')) selected = [...overlay.querySelectorAll('input:checked')].map(i => i.value);
+        });
+        overlay.addEventListener('click', e => {
+          if (e.target === overlay || e.target.closest('[data-action="cancel"]')) close(null);
+          else if (e.target.closest('[data-action="apply"]')) close(selected);
+        });
+        document.addEventListener('keydown', onKey);
+        document.body.appendChild(overlay);
+      });
+    }
+    function cancelGlobalPick() { pickMode = null; renderRows(); }
+    function applyGlobalPick() {
+      if (!pickMode || !priv) return;
+      for (const r of ROWS) priv[r.key] = { mode: pickMode, users: pickSel.slice() };
+      const m = pickMode; pickMode = null;
+      persist(); renderRows();
+      toast(m === 'only' ? 'Aplicado: solo los elegidos' : 'Aplicado: contactos excepto los marcados');
+    }
+    let saveT = null;
+    async function persist() {
+      const state = document.getElementById('saveState');
+      if (state) state.textContent = 'Guardando…';
+      clearTimeout(saveT);
+      try {
+        const response = await fetch('/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: me.username, privacy: priv }) });
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        if (state) {
+          state.textContent = 'Guardado';
+          saveT = setTimeout(() => { state.textContent = ''; }, 1200);
+        }
+      } catch (error) {
+        if (state) state.textContent = 'Error al guardar';
+        toast('No se pudo guardar la privacidad');
+        console.error('Error guardando privacidad:', error);
+      }
+    }
+    function editRow(key) {
+      if (!priv) { toast('Cargando…'); return; }
+      if (key === 'agregarme') return paintAgregarme();
+      if (key === 'blocked') return paintBlocked();
+      editKey = key;
+      const fila = ROWS.find(r => r.key === key), v = priv[key] || PRIVACY_DEFAULTS[key];
+      editMode = v.mode; editSel = (v.users || []).slice();
+      editNobody = editMode === 'only' && !editSel.length;
+      document.getElementById('headTitle').textContent = fila.label;
+      paintEditor(fila);
+    }
+    async function paintBlocked() {
+      document.getElementById('headTitle').textContent = 'Contactos bloqueados';
+      const main = document.getElementById('main');
+      main.innerHTML = '<div class="help">Cargando contactos bloqueados…</div>';
+      try {
+        const response = await fetch('/profile?username=' + encodeURIComponent(me.username) + '&me=' + encodeURIComponent(me.username), { cache: 'no-store' });
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        const profile = await response.json(), blocked = Array.isArray(profile.blocked) ? profile.blocked : [];
+        main.innerHTML = '<div class="help">Las cuentas bloqueadas no pueden ver tu perfil, nota, historias ni presencia.</div>' +
+          (blocked.length ? blocked.map(username => `<div class="row"><div class="pic">${esc(username[0].toUpperCase())}</div><div class="meta"><b>${esc(username)}</b><span>Bloqueado</span></div><button type="button" data-unblock="${esc(username)}">Desbloquear</button></div>`).join('') : '<div class="help">No tienes contactos bloqueados.</div>') +
+          '<div class="btns"><button onclick="renderRows()">Atrás</button></div>';
+        main.querySelectorAll('[data-unblock]').forEach(button => button.onclick = () => unblock(button.dataset.unblock));
+      } catch (error) {
+        console.error('No se pudieron cargar los contactos bloqueados:', error);
+        main.innerHTML = '<div class="help">No se pudieron cargar los contactos bloqueados.</div><button onclick="paintBlocked()">Reintentar</button><button onclick="renderRows()">Atrás</button>';
+      }
+    }
+    async function unblock(username) {
+      try {
+        const response = await fetch('/block', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target: username }) });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || 'HTTP ' + response.status);
+        toast('Se desbloqueó a ' + username + '. Agrégalo de nuevo para restablecer el contacto.');
+        await paintBlocked();
+      } catch (error) {
+        console.error('No se pudo desbloquear el contacto:', error);
+        toast('No se pudo desbloquear a ' + username);
+      }
+    }
+    function paintAgregarme() {
+      const mode = (priv.agregarme || {}).mode || 'request';
+      document.getElementById('headTitle').textContent = ADD_ME_ROW.label;
+      document.getElementById('main').innerHTML = `<h2>${ADD_ME_ROW.sub}</h2>
+    <div class="quickBar">${[['all', 'Todos'], ['request', 'Por solicitud'], ['nobody', 'Nadie']].map(([value, label]) => `<button data-mode="${value}" class="${mode === value ? 'on' : ''}">${label}</button>`).join('')}</div>
+    <div class="help">${mode === 'all' ? 'Cualquier usuario del servidor puede agregarte directamente.' : mode === 'request' ? 'Cualquier usuario puede enviarte una solicitud; tú decides si aceptar. Al aceptar, se agregan mutuamente.' : 'Nadie puede agregarte ni enviarte solicitudes.'}</div>
+    <div class="btns"><button onclick="renderRows()">Atrás</button></div>`;
+      document.querySelectorAll('#main .quickBar button').forEach(button => button.onclick = () => {
+        priv.agregarme = { mode: button.dataset.mode, users: [] };
+        persist();
+        paintAgregarme();
+      });
+    }
+    function paintEditor(fila) {
+      const selectedMode = editMode === 'all' ? 'contacts' : editNobody ? 'nobody' : editMode;
+      const help = selectedMode === 'server' ? 'Todos los usuarios del servidor pueden verlo.' : selectedMode === 'contacts' ? 'Solo tus contactos aceptados pueden verlo.' : selectedMode === 'nobody' ? 'Nadie puede verlo.' : editMode === 'only' ? 'Marca qué contactos SÍ pueden verlo.' : 'Tus contactos aceptados pueden verlo, excepto quienes marques.';
+      document.getElementById('main').innerHTML =
+        `<h2>${esc(fila.sub)}</h2>
+    <div class="quickBar">${PRIVACY_MODES.map(([mode, label]) => `<button data-m="${mode}" title="${mode === 'server' ? 'Todos los usuarios del servidor' : mode === 'contacts' ? 'Solo mis contactos aceptados' : label}" class="${selectedMode === mode ? 'on' : ''}">${label}</button>`).join('')}</div>
+    <div class="help">${help}</div>
+    <div class="btns"><button onclick="renderRows()">Atrás</button></div>`;
+      document.querySelectorAll('.quickBar button').forEach(b => b.onclick = async () => {
+        const mode = b.dataset.m;
+        if (mode === 'server' || mode === 'contacts' || mode === 'nobody') {
+          editMode = mode;
+          editNobody = mode === 'nobody';
+          editSel = [];
+          applyRow();
+          paintEditor(fila);
+          return;
+        }
+        const selected = await showPickerModal(mode, editMode === mode ? editSel : [], esc(fila.sub) + '. Selecciona los contactos.');
+        if (selected === null) return;
+        editMode = mode;
+        editNobody = false;
+        editSel = selected;
+        applyRow();
+        paintEditor(fila);
+      });
+    }
+    function applyRow() {
+      priv[editKey] = { mode: editMode, users: ['all', 'server', 'contacts', 'nobody'].includes(editMode) ? [] : editSel };
+      persist();
+    }
+    async function init() {
+      const session = await fetch('/auth/session', { cache: 'no-store' }).then(r => r.json());
+      if (!session.authenticated) return location.href = '/';
+      me = session.user;
+      const [p, u] = await Promise.all([
+        fetch('/profile?username=' + encodeURIComponent(me.username) + '&me=' + encodeURIComponent(me.username)).then(r => r.json()).catch(() => ({})),
+        fetch('/users').then(r => r.json()).catch(() => ({ users: [] }))
+      ]);
+      priv = p.privacy || {};
+      contacts = (u.users || []).filter(c => c.username !== me.username);
+      for (const c of contacts) { try { c.p = await fetch('/profile?username=' + encodeURIComponent(c.username) + '&me=' + encodeURIComponent(me.username)).then(r => r.json()); } catch { c.p = {}; } }
+      renderRows();
+    }
+    init();
+    function goBack() { if (history.length > 1) { history.back(); return false; } return true; }
+    window.addEventListener('pageshow', e => { if (e.persisted) init(); });
+  </script>
+  <script src="/js/appearance.js" defer></script>
+</body>
+
+</html>
