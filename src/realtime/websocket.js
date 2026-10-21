@@ -13,6 +13,7 @@ const http = require('http');
 const { getSessionFromCache, hashSessionToken, originAllowed, sessionCookie } = require('../auth/sessions.js');
 const { addCall, endUserCalls, hasCall, updateCall } = require('../calls/store.js');
 const { CONFIG } = require('../config.js');
+const { decryptForUser } = require('../crypto/setup.js');
 const { db } = require('../db/database.js');
 const { Stmt } = require('../db/statements.js');
 const { pruneBlobHashes, removeBlobAccess } = require('../db/transactions.js');
@@ -206,8 +207,20 @@ const wsUpgradeInner = (req, socket) => {
                     }
                     p.privacy = merged;
                 }
-                if (typeof m.name === 'string' && m.name.length <= 64) p.name = m.name;
-                            if (typeof m.note === 'string' && m.note.length <= 500 && m.note !== p.note) {
+                /* Guarda contra el doble cifrado: si el cliente devuelve un
+                   texto que YA venía cifrado (el servidor se lo pintó así),
+                   se conserva el valor real del perfil. Sin esta comprobación
+                   el texto cifrado se volvería a cifrar y el original
+                   quedaría destruido para siempre. */
+                const cifradoDeVuelta = value => {
+                    if (typeof value !== 'string' || !value.startsWith('PCE')) return false;
+                    try {
+                        const plain = decryptForUser(u.id, value);
+                        return typeof plain === 'string' && plain.length > 0;
+                    } catch (error) { return false; }
+                };
+                if (typeof m.name === 'string' && !cifradoDeVuelta(m.name) && m.name.length <= 64) p.name = m.name;
+                if (typeof m.note === 'string' && !cifradoDeVuelta(m.note) && m.note.length <= 500 && m.note !== p.note) {
                     p.note = m.note;
                     p.noteTs = m.note ? Date.now() : 0;
                     // Una sola fuente de verdad: la nota también vive en
@@ -215,7 +228,8 @@ const wsUpgradeInner = (req, socket) => {
                     if (m.note) notesMap[from] = { ...(notesMap[from] || {}), text: m.note, ts: p.noteTs };
                     else delete notesMap[from];
                 }
-                if (typeof m.desc === 'string' && characterCount(m.desc, MESSAGE_LIMITS.profileDescriptionCharacters) <= MESSAGE_LIMITS.profileDescriptionCharacters) p.desc = m.desc;
+                if (typeof m.desc === 'string' && !cifradoDeVuelta(m.desc) &&
+                    characterCount(m.desc, MESSAGE_LIMITS.profileDescriptionCharacters) <= MESSAGE_LIMITS.profileDescriptionCharacters) p.desc = m.desc;
                 if (validAvatar(m.avatar)) p.avatar = m.avatar;
                 saveUserToDb(u);
                 for (const user of users.values()) push(user, { type: 'profile', username: from });

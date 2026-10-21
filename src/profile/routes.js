@@ -248,13 +248,30 @@ function postProfile(req, res, url, data, actor) {
     // mensajes: sin cota, un nombre o una nota de varios MB se
     // guardarían en la base y se devolverían en cada visita.
     if (rejectRateLimited(res, profileLimiter, req.authUser.id, 10, 'guardados de perfil por minuto')) return;
-    if (Object.prototype.hasOwnProperty.call(data, 'desc') &&
+    /* Guarda contra el doble cifrado: si el cliente nos devuelve un texto que
+       YA viene cifrado (porque el servidor se lo pintó así), volverlo a
+       cifrar destruiría el texto original para siempre. En ese caso se
+       conserva el valor real que ya tenía el perfil.
+       Se comprueba ANTES que los límites de longitud: el texto cifrado es
+       más largo que el original, así que si se validara primero el servidor
+       lo rechazaría con un 400 y el cliente no podría guardar su perfil. */
+    const cifradoDeVuelta = value => {
+        if (typeof value !== 'string' || !value.startsWith('PCE')) return false;
+        try {
+            const plain = decryptForUser(req.authUser.id, value);
+            return typeof plain === 'string' && plain.length > 0;
+        } catch (error) { return false; }
+    };
+    const yaCifrado = {};
+    for (const key of ['name', 'note', 'desc'])
+        if (Object.prototype.hasOwnProperty.call(data, key) && cifradoDeVuelta(data[key])) yaCifrado[key] = true;
+    if (!yaCifrado.desc && Object.prototype.hasOwnProperty.call(data, 'desc') &&
         (typeof data.desc !== 'string' || characterCount(data.desc, MESSAGE_LIMITS.profileDescriptionCharacters) > MESSAGE_LIMITS.profileDescriptionCharacters))
         return json(res, 400, { error: `La descripción admite hasta ${MESSAGE_LIMITS.profileDescriptionCharacters} caracteres.` });
-    if (Object.prototype.hasOwnProperty.call(data, 'name') &&
+    if (!yaCifrado.name && Object.prototype.hasOwnProperty.call(data, 'name') &&
         (typeof data.name !== 'string' || characterCount(data.name, 64) > 64))
         return json(res, 400, { error: 'El nombre admite hasta 64 caracteres.' });
-    if (Object.prototype.hasOwnProperty.call(data, 'note') &&
+    if (!yaCifrado.note && Object.prototype.hasOwnProperty.call(data, 'note') &&
         (typeof data.note !== 'string' || characterCount(data.note, 500) > 500))
         return json(res, 400, { error: 'La nota admite hasta 500 caracteres.' });
     if (Object.prototype.hasOwnProperty.call(data, 'avatar') && data.avatar !== '' && !validAvatar(data.avatar))
@@ -285,13 +302,8 @@ function postProfile(req, res, url, data, actor) {
        YA viene cifrado (porque el servidor se lo pintó así), volverlo a
        cifrar destruiría el texto original para siempre. En ese caso se
        conserva el valor real que ya tenía el perfil. */
-    const cifradoDeVuelta = value => {
-        if (typeof value !== 'string' || !value.startsWith('PCE')) return false;
-        const plain = decryptForUser(req.authUser.id, value);
-        return typeof plain === 'string' && plain.length > 0;
-    };
     for (const key of ['name', 'note', 'desc']) {
-        if (cifradoDeVuelta(patch[key])) {
+        if (yaCifrado[key]) {
             console.error(`[perfil] Se ignoró ${key}: el cliente devolvió texto cifrado.`);
             delete patch[key];
         }
