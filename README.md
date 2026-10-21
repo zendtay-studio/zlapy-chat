@@ -92,6 +92,34 @@ cd zlapy-chat
 npm run termux   # actualiza paquetes, instala las herramientas, compila y arranca
 ```
 
+> **Nota (npm 12 o superior).** Desde npm 12 los *scripts de instalación* de las
+> dependencias están bloqueados por defecto, así que el binario nativo de
+> `better-sqlite3` no se compila solo. El proyecto ya lo aprueba en su
+> `package.json` (`allowScripts`) y, además, el `postinstall` comprueba el
+> binario y **lo compila si falta**. Si prefieres hacerlo a mano:
+>
+> ```bash
+> npm install-scripts approve better-sqlite3   # solo si npm te lo pide
+> npm run rebuild:sqlite                        # compila en el sitio
+> ```
+>
+> En Android no existe binario publicado: la compilación es obligatoria
+> (`pkg install python make clang` antes).
+
+### Primera instalación: no hay que hacer nada más
+
+`npm start` funciona en una instalación nueva sin pasos manuales:
+
+| Qué pasa | Resultado |
+| --- | --- |
+| No existe `.env` | Se crea a partir de `.env.example` con los valores por defecto (permisos `600`) |
+| No existe la llave maestra | Se genera y se guarda en `.zlapymasterkey` (permisos `600`) |
+| No existe la base de datos | Se crea vacía en `data/` |
+
+Si la base de datos **ya tiene cuentas** y falta la llave maestra, el servidor
+se niega a arrancar (generar una llave nueva dejaría ilegibles los mensajes,
+historias y adjuntos cifrados): hay que restaurar la llave de tu respaldo.
+
 ### Windows / macOS
 
 ```bash
@@ -131,6 +159,7 @@ npm start        # con supervisor: si el proceso se cae, lo reinicia
 | `npm test` | Suite completa (`node --test test/*.test.js`): unitarias + integración en instancias aisladas |
 | `npm run backup` | Respaldo consistente de las dos bases + `.zlapymasterkey` |
 | `npm run key` | Genera la llave maestra (`--force` para reemplazar, `--null` para vaciar) |
+| `npm run rebuild:sqlite` | Compila `better-sqlite3` en el sitio (obligatorio en Android/Termux) |
 | `npm run termux` | Todo en uno para Termux: actualiza, instala herramientas, compila y arranca |
 | `npm run tunnel` | Publica el servidor con un túnel de Cloudflare |
 | `npm run migrate:mtproto` | Migración **manual** del histórico al esquema de cifrado en la nube (`--apply` la ejecuta de verdad) |

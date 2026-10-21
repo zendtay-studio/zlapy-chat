@@ -71,13 +71,33 @@ function loadConfig(env = process.env) {
 
 /* Valores ya resueltos: los usa el servidor y los scripts de operación
  * (`ops/`), que cargan el `.env` con dotenv antes de usarlos. */
+const fs = require('fs');
 const path = require('path');
 const ROOT = path.join(__dirname, '..');
+
+/* En una instalación nueva el `.env` no existe todavía (no viene en el
+ * repositorio). Se crea a partir de `.env.example` con los valores por
+ * defecto, de modo que `npm start` funcione sin pasos manuales y el usuario
+ * tenga un fichero donde ajustar la configuración. El `.env` puede contener
+ * secretos, así que se deja con permisos de solo para el propietario. */
+const ENV_PATH = path.join(ROOT, '.env');
+const ENV_EXAMPLE_PATH = path.join(ROOT, '.env.example');
+function ensureEnvFile() {
+    if (fs.existsSync(ENV_PATH)) return false;
+    if (!fs.existsSync(ENV_EXAMPLE_PATH)) return false;
+    fs.writeFileSync(ENV_PATH, fs.readFileSync(ENV_EXAMPLE_PATH));
+    try { fs.chmodSync(ENV_PATH, 0o600); } catch (error) { /* best-effort */ }
+    return true;
+}
+const envCreated = ensureEnvFile();
 
 // Carga el `.env` de la raiz del proyecto: el servidor y los scripts de
 // operacion parten de la misma configuracion. Las variables ya presentes en el
 // entorno mandan sobre el fichero.
-require('dotenv').config({ path: path.join(ROOT, '.env') });
+require('dotenv').config({ path: ENV_PATH });
+if (envCreated) {
+    console.log(`[config] se creó ${path.relative(ROOT, ENV_PATH)} a partir de .env.example (instalación nueva).`);
+}
 
 const CONFIG = loadConfig(process.env);
 const GIPHY_API_KEY = String(process.env.GIPHY_API_KEY || '').trim();

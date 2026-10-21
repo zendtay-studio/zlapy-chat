@@ -6,14 +6,20 @@
  * compilados para Linux, macOS y Windows (x64 y arm64), pero no para Android,
  * así que en Termux hay que compilarlo en el dispositivo.
  *
- * Este script se ejecuta como `postinstall`: si el binario no está, explica
- * cómo obtenerlo. En plataformas sin binario publicado (Android/Termux) el
- * error indica el comando exacto de compilación.
+ * Este script se ejecuta como `postinstall`:
+ *
+ *   1. Si el binario está, no hace nada más.
+ *   2. Si falta, intenta compilarlo (`ops/build-sqlite.js`). Esto cubre el
+ *      caso de npm 12 o superior, que bloquea por defecto los scripts de
+ *      instalación de las dependencias: el binario nunca llega a compilarse y
+ *      sin él el servidor no arranca.
+ *   3. Si tampoco se puede compilar, explica qué hacer y termina con error.
  */
 'use strict';
 
 const fs = require('fs');
 const path = require('path');
+const { spawnSync } = require('child_process');
 
 const root = (() => {
     try { return path.dirname(require.resolve('better-sqlite3/package.json')); }
@@ -36,36 +42,42 @@ const candidates = [
     path.join(root, 'build', 'Debug', 'better_sqlite3.node')
 ];
 
-const found = candidates.find(p => fs.existsSync(p));
+const binary = () => candidates.find(p => fs.existsSync(p));
 
+const found = binary();
 if (found) {
     console.log(`better-sqlite3: binario nativo presente (${path.relative(root, found)})`);
     process.exit(0);
 }
 
-/* Sin binario: en Android hay que compilarlo; en el resto de plataformas es
- * raro (falta el prebuild o el paquete se instalo sin scripts). */
-if (process.platform === 'android') {
-    console.error([
-        '',
-        'better-sqlite3 no trae binario para Android: hay que compilarlo en el dispositivo.',
-        '',
-        '  cd node_modules/better-sqlite3',
-        '  npm exec -- node-gyp rebuild --release --force_build=1',
-        '',
-        'Necesitas las herramientas de compilacion: pkg install python make clang',
-        ''
-    ].join('\n'));
-    process.exit(1);
+/* Sin binario: se intenta compilar. Es lo que haría el script de instalación
+ * del paquete si npm no lo bloquease (npm >= 12 lo bloquea por defecto). */
+console.log(`better-sqlite3: no hay binario nativo para ${target}; se intenta compilar...`);
+const build = spawnSync(process.execPath, [path.join(__dirname, 'build-sqlite.js')], { stdio: 'inherit' });
+if (build.status === 0 && binary()) {
+    console.log(`better-sqlite3: binario nativo listo (${path.relative(root, binary())})`);
+    process.exit(0);
 }
 
+/* Sin binario y sin compilación posible: se explica qué hacer. */
+const android = process.platform === 'android';
 console.error([
     '',
-    `No se encuentra el binario nativo de better-sqlite3 para ${target}.`,
-    'Reinstala las dependencias: npm install',
-    'Si sigue faltando, compila en el sitio:',
-    '  cd node_modules/better-sqlite3',
-    '  npm exec -- node-gyp rebuild --release --force_build=1',
+    android
+        ? 'better-sqlite3 no trae binario para Android: hay que compilarlo en el dispositivo.'
+        : `No se encuentra el binario nativo de better-sqlite3 para ${target}.`,
+    '',
+    '  npm run rebuild:sqlite',
+    '',
+    android
+        ? 'Necesitas las herramientas de compilacion: pkg install python make clang'
+        : 'Si npm es version 12 o superior, los scripts de instalacion de las dependencias',
+    android
+        ? ''
+        : 'estan bloqueados por defecto. Aprueba el de better-sqlite3 y compila:',
+    android
+        ? ''
+        : '  npm install-scripts approve better-sqlite3',
     ''
 ].join('\n'));
 process.exit(1);

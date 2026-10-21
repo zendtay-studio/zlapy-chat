@@ -160,10 +160,7 @@ En Linux, macOS y Windows con arquitectura soportada **no debería ocurrir**
 la tabla 1.2 y compila a mano:
 
 ```bash
-cd zlapy-chat
-cd node_modules/better-sqlite3
-npm exec -- node-gyp rebuild --release --force_build=1
-cd ../..
+npm run rebuild:sqlite
 ```
 
 > **Aviso verificado en esta versión:** con `better-sqlite3@13.0.3` el paquete
@@ -171,10 +168,15 @@ cd ../..
 > `npm rebuild better-sqlite3` **no compila nada** (imprime "rebuilt
 > dependencies successfully" y no genera ningún binario), **tampoco con
 > `--build-from-source`**: no hay script que ejecutar. La única vía que
-> funciona es invocar `node-gyp` explícitamente, como en el bloque de arriba.
+> funciona es invocar `node-gyp` explícitamente, como hace
+> `npm run rebuild:sqlite` (`ops/build-sqlite.js`).
 >
 > Eso deja el binario en `node_modules/better-sqlite3/build/Release/better_sqlite3.node`,
 > que es una de las rutas que comprueba el `postinstall` del proyecto.
+>
+> El `postinstall` del proyecto (`ops/check-native.js`) **intenta compilar
+> solo** cuando falta el binario, así que en Android/Termux `npm ci` ya
+> compila el módulo sin pasos extra.
 
 #### Verificar que el binario nativo está en su sitio
 
@@ -204,23 +206,38 @@ pkg install python make clang sqlite git nodejs openssl
 git clone https://github.com/zendtay-studio/zlapy-chat.git
 cd zlapy-chat
 
-# 3. Instalar dependencias sin ejecutar el postinstall (todavía no hay binario)
-npm install --ignore-scripts
+# 3. Instalar dependencias
+npm ci
+#    El postinstall comprueba el binario nativo y, como en Android no hay
+#    prebuild, lo compila en el dispositivo. Tarda varios minutos: deja el
+#    teléfono enchufado y no cierres la terminal.
 
-# 4. Compilar better-sqlite3 en el dispositivo
-cd node_modules/better-sqlite3
-npm exec -- node-gyp rebuild --release --force_build=1
-cd ../..
+# 4. Si la compilación falló (faltaba el toolchain), instálalo y repite:
+pkg install python make clang
+npm run rebuild:sqlite
 
-# 5. Instalar de verdad: el postinstall comprueba que el binario ya está
-npm install
-#    (si npm vuelve a descargar el paquete y el postinstall vuelve a fallar,
-#     repite el paso 4: el orden importa)
-
-# 6. Configuración y datos
-cp .env.example .env
-mkdir -p data
+# 5. Arrancar
+npm start
 ```
+
+> **npm 12 o superior.** Los *scripts de instalación* de las dependencias
+> están bloqueados por defecto, así que npm puede pedirte aprobar el de
+> `better-sqlite3`:
+>
+> ```bash
+> npm install-scripts approve better-sqlite3
+> npm run rebuild:sqlite
+> ```
+>
+> El proyecto ya lo aprueba en su `package.json` (campo `allowScripts`), así
+> que normalmente no hace falta. El aviso de npm sobre `better-sqlite3` es un
+> error conocido de npm con la versión 13 de ese paquete: el paquete **sí**
+> trae los binarios precompilados dentro del tarball (funciona en Linux,
+> macOS y Windows); en Android no existe ninguno y hay que compilar.
+
+El `.env` y la llave maestra **se crean solos** en la primera ejecución
+(el `.env` a partir de `.env.example` y la llave en `.zlapymasterkey`), así
+que no hace falta ningún paso de configuración manual.
 
 Compilar `better-sqlite3` en un móvil ARM tarda varios minutos: no cierres la
 terminal y deja el teléfono enchufado (evita que Android mate el proceso).
@@ -234,24 +251,14 @@ npm run termux
 Equivale exactamente a:
 
 ```
-pkg update && pkg upgrade -y && pkg install python make clang sqlite && npm i && npm start
+pkg update && pkg upgrade -y && pkg install python make clang sqlite
+  && npm i --ignore-scripts && npm run rebuild:sqlite
+  && node ops/check-native.js && npm start
 ```
 
-> **Limitación real del script:** termina en `npm i`, y en Termux ese `npm i`
-> **falla** en el `postinstall` (no hay prebuild para `android-arm64` y aún no
-> se ha compilado). La cadena `&&` se rompe y `npm start` no llega a ejecutarse.
-> El mensaje del `postinstall` que verás es:
->
-> ```
-> No se encuentra el binario nativo de better-sqlite3 para android-arm64.
-> En Termux: pkg install python make clang sqlite && npm rebuild better-sqlite3
-> ```
->
-> Es decir: **usa `npm run termux` para la parte de paquetes y luego compila
-> con los pasos 3–5 de arriba**, o hazlo todo manual (pasos 1–6). El
-> `npm rebuild better-sqlite3` que sugiere el mensaje **no compila** con
-> `better-sqlite3@13.0.3` (no tiene script `install`); la compilación real es
-> la del paso 4, con `node-gyp`.
+Es decir: instala los paquetes de Termux, instala las dependencias **sin**
+scripts (para que el `postinstall` no falle antes de compilar), compila
+`better-sqlite3` en el dispositivo, comprueba el binario y arranca el servidor.
 
 #### Almacenamiento externo (opcional)
 
@@ -426,15 +433,22 @@ npm run key -- --null       # vacía CHAT_MASTER_KEY en el .env (o -n)
 
 Notas verificadas:
 
-- `npm run key` **necesita que exista `.env`** y que tenga **exactamente una**
-  línea `CHAT_MASTER_KEY=`. Si hay cero o dos, falla con
-  `Expected exactly one CHAT_MASTER_KEY assignment in ...`.
+- `npm run key` **crea el `.env`** si no existe (a partir de `.env.example`) y
+  necesita que tenga **exactamente una** línea `CHAT_MASTER_KEY=`. Si hay cero
+  o dos, falla con `Expected exactly one CHAT_MASTER_KEY assignment in ...`.
+- En la **primera instalación** no hace falta ejecutar `npm run key`: el
+  servidor crea el `.env` (a partir de `.env.example`, modo `600`) y genera la
+  llave maestra en `.zlapymasterkey` (modo `600`) si la base de datos está
+  vacía.
 - Con `--force` se **reemplaza** la clave: los datos cifrados con la anterior
   quedan **irrecuperables**. El propio script avisa de ello.
 - Si `.zlapymasterkey` **falta y ya hay una base con datos**, el arranque
   **aborta** con un error claro en vez de regenerarla en silencio
   (`src/crypto/master-key.js`). Es a propósito: una llave nueva haría
   ilegibles todos los mensajes, historias y adjuntos.
+- Si `.zlapymasterkey` existe y el `.env` trae **otra** clave, `npm run key`
+  se niega a generar una nueva (el `.env` tiene prioridad y los datos quedarían
+  inaccesibles): hay que usar `--force` asumiendo el riesgo.
 - Si defines `CHAT_MASTER_KEY`, el valor debe codificar **exactamente 32 bytes**
   en base64; si no, el arranque falla con
   `CHAT_MASTER_KEY must encode exactly 32 bytes`.

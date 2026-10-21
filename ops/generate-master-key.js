@@ -4,6 +4,10 @@
  * Escribe `CHAT_MASTER_KEY` en el fichero `.env` con el modo de fichero
  * correcto, genera una clave aleatoria de 32 bytes en base64 o vacía la
  * existente. La clave nunca se muestra por pantalla.
+ *
+ * Si el `.env` no existe (instalación nueva) se crea a partir de
+ * `.env.example` antes de escribir la clave, para que el comando funcione
+ * también en la primera instalación.
  */
 
 const crypto = require('node:crypto');
@@ -29,7 +33,28 @@ function writeSecretFile(filePath, contents) {
     try { fs.chmodSync(filePath, SECRET_FILE_MODE); } catch (e) { /* best-effort */ }
 }
 
+/**
+ * Crea el `.env` a partir de `.env.example` si todavía no existe.
+ *
+ * En una instalación nueva el `.env` no está (no se versiona), así que el
+ * comando fallaba con ENOENT. Ahora se crea con los valores por defecto y
+ * el usuario puede ajustarlo después.
+ *
+ * @returns {boolean} true si se creó el fichero.
+ */
+function ensureEnvFile(envPath) {
+    if (fs.existsSync(envPath)) return false;
+    const examplePath = path.join(path.dirname(envPath), '.env.example');
+    if (!fs.existsSync(examplePath))
+        throw new Error(`No existe ${envPath} ni ${examplePath}. Copia .env.example a .env y vuelve a intentarlo.`);
+    const contents = fs.readFileSync(examplePath, 'utf8');
+    writeSecretFile(envPath, contents);
+    console.log(`Se creó ${envPath} a partir de .env.example (instalación nueva).`);
+    return true;
+}
+
 function generateMasterKey(envPath = path.join(__dirname, '..', '.env'), { force = false, clear = false } = {}) {
+    ensureEnvFile(envPath);
     const contents = fs.readFileSync(envPath, 'utf8');
     const newline = contents.includes('\r\n') ? '\r\n' : '\n';
     const lines = contents.split(/\r?\n/);
@@ -75,7 +100,26 @@ if (require.main === module) {
         const force = args.includes('--force') || args.includes('-f');
         const clear = args.includes('--null') || args.includes('-n');
         if (force && clear) throw new Error('No combines la opción para generar con la opción para vaciar.');
-        generateMasterKey(path.join(__dirname, '..', '.env'), { force, clear });
+        const envPath = path.join(__dirname, '..', '.env');
+        const masterKeyPath = path.join(__dirname, '..', '.zlapymasterkey');
+        // Si el servidor ya generó `.zlapymasterkey` (arranque en una
+        // instalación nueva), escribir otra clave en el `.env` la dejaría sin
+        // efecto y haría ilegibles los datos cifrados con la anterior.
+        if (!force && !clear && fs.existsSync(masterKeyPath)) {
+            const enFichero = fs.readFileSync(masterKeyPath);
+            const contents = fs.readFileSync(envPath, 'utf8');
+            const match = contents.match(/^\s*CHAT_MASTER_KEY\s*=\s*(.*)$/m);
+            const valor = match ? match[1].trim().replace(/^["']|["']$/g, '') : '';
+            const enEnv = valor ? Buffer.from(valor, 'base64') : Buffer.alloc(0);
+            if (enEnv.length !== enFichero.length || !enEnv.equals(enFichero)) {
+                throw new Error(
+                    `Ya existe ${masterKeyPath} (llave maestra en uso). El .env tiene prioridad sobre ese ` +
+                    'fichero, así que generar una clave nueva aquí dejaría los datos cifrados inaccesibles. ' +
+                    'Si de verdad quieres cambiarla, borra el fichero de llave (y el .env) y vuelve a arrancar.'
+                );
+            }
+        }
+        generateMasterKey(envPath, { force, clear });
         if (clear) {
             console.log('CHAT_MASTER_KEY se vació en .env. El servidor usará .zlapymasterkey si existe.');
         } else {
@@ -90,4 +134,4 @@ if (require.main === module) {
     }
 }
 
-module.exports = { generateMasterKey };
+module.exports = { generateMasterKey, ensureEnvFile };
