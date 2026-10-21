@@ -1,0 +1,45 @@
+{
+  "name": "zlapy-chat",
+  "version": "1.0.0",
+  "description": "Zlapy — mensajería y llamadas de voz/vídeo P2P (WebRTC) en tu red local: servidor Node.js con SQLite, WebSocket propio y notificaciones push",
+  "main": "server.js",
+  "author": "zendtay-studio <zendtaystudio@gmail.com>",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zendtay-studio/zlapy-chat.git"
+  },
+  "bugs": {
+    "url": "https://github.com/zendtay-studio/zlapy-chat/issues"
+  },
+  "homepage": "https://github.com/zendtay-studio/zlapy-chat#readme",
+  "keywords": [
+    "zlapy",
+    "chat",
+    "webrtc",
+    "websocket",
+    "p2p",
+    "local",
+    "mensajeria",
+    "llamadas"
+  ],
+  "packageManager": "npm@10.9.8",
+  "scripts": {
+    "start": "node ops/supervisor.js",
+    "termux": "pkg update && pkg upgrade -y && pkg install python make clang sqlite && npm i --ignore-scripts && (cd node_modules/better-sqlite3 && npm exec -- node-gyp rebuild --release --force_build=1) && node ops/check-native.js && npm start",
+    "tunnel": "node ops/tunnel.js",
+    "key": "node ops/generate-master-key.js",
+    "test": "node --test test/*.test.js",
+    "backup": "node ops/backup.js",
+    "postinstall": "node ops/check-native.js",
+    "migrate:mtproto": "node ops/migrate-to-mtproto.js",
+    "repair:double-encrypted": "node ops/repair-double-encrypted.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "dotenv": "^18.0.8"
+  }
+}

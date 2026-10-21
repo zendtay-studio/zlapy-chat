@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Perfil</title>
+  <style>
+    * {
+      margin: 0;
+      box-sizing: border-box;
+      font-family: 'Segoe UI', Helvetica, Arial, sans-serif
+    }
+
+    body {
+      background: #111b21;
+      color: #e9edef;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      max-width: 520px;
+      margin: 0 auto
+    }
+
+    header {
+      background: #202c33;
+      padding: 16px 20px;
+      font-size: 18px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 14px
+    }
+
+    header a {
+      color: #e9edef;
+      text-decoration: none;
+      font-size: 22px
+    }
+
+    main {
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      align-items: center;
+      text-align: center
+    }
+
+    .bigAv {
+      width: 110px;
+      height: 110px;
+      border-radius: 50%;
+      background: var(--accent);
+      color: var(--accent-ink);
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 40px
+    }
+
+    .bigAv img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover
+    }
+
+    .avWrap {
+      position: relative;
+      margin-top: 22px
+    }
+
+    .noteFloat {
+      position: absolute;
+      top: -22px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #2a3942;
+      border: 1px solid #374045;
+      color: #d1d7db;
+      font-size: 13px;
+      font-style: italic;
+      padding: 7px 14px;
+      border-radius: 16px;
+      box-shadow: 0 4px 16px #0008;
+      white-space: nowrap;
+      max-width: 240px;
+      overflow: hidden;
+      text-overflow: ellipsis
+    }
+
+    .noteFloat::after {
+      content: '';
+      position: absolute;
+      left: 50%;
+      bottom: -5px;
+      transform: translateX(-50%) rotate(45deg);
+      width: 10px;
+      height: 10px;
+      background: #2a3942;
+      border-right: 1px solid #374045;
+      border-bottom: 1px solid #374045
+    }
+
+    .sub {
+      color: #8696a0;
+      font-size: 13px
+    }
+
+    button {
+      background: #374045;
+      border: none;
+      color: #e9edef;
+      padding: 13px;
+      border-radius: 8px;
+      font-size: 15px;
+      cursor: pointer;
+      width: 100%;
+      margin-top: 10px
+    }
+
+    button.danger {
+      color: #ef5350
+    }
+
+    .mOverlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, .65);
+      z-index: 130;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px
+    }
+
+    .mSheet {
+      background: #202c33;
+      color: #e9edef;
+      border-radius: 14px;
+      width: min(420px, 94vw);
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px
+    }
+
+    .mTitle {
+      font-size: 17px;
+      font-weight: 600
+    }
+
+    .mText {
+      font-size: 14.5px;
+      color: #d1d7db;
+      line-height: 1.45;
+      white-space: pre-line
+    }
+
+    .mBtns {
+      display: flex;
+      gap: 10px
+    }
+
+    .mBtn {
+      flex: 1;
+      background: #2a3942;
+      color: #e9edef;
+      border: none;
+      border-radius: 10px;
+      padding: 12px;
+      font-size: 14.5px;
+      cursor: pointer
+    }
+
+    .mBtn.peligro {
+      background: #3a2323;
+      color: #ef5350
+    }
+
+    @media (max-width:768px) {
+      .mOverlay {
+        align-items: flex-end;
+        padding: 0
+      }
+
+      .mSheet {
+        width: 100%;
+        border-radius: 16px 16px 0 0
+      }
+    }
+
+    button.green {
+      background: var(--accent);
+      color: var(--accent-ink)
+    }
+
+    .actions {
+      display: flex;
+      justify-content: center;
+      gap: 14px;
+      margin-top: 10px
+    }
+
+    .actions button {
+      width: 54px;
+      height: 54px;
+      margin: 0;
+      padding: 0;
+      border-radius: 50%;
+      display: grid;
+      place-items: center
+    }
+
+    .actions svg {
+      width: 24px;
+      height: 24px;
+      fill: currentColor
+    }
+
+    #photoViewer {
+      position: fixed;
+      inset: 0;
+      background: #000e;
+      z-index: 100;
+      display: none;
+      align-items: center;
+      justify-content: center
+    }
+
+    #photoViewer img {
+      max-width: 94vw;
+      max-height: 90vh;
+      object-fit: contain
+    }
+
+    #photoViewer button {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      width: 44px;
+      height: 44px;
+      padding: 0;
+      margin: 0;
+      border-radius: 50%;
+      font-size: 26px
+    }
+  </style>
+  <link rel="stylesheet" href="/css/theme.css">
+  <script src="/js/transport-crypto.js"></script>
+  <script src="/js/transport.js"></script>
+  <script>
+    /* Aplica el acento cacheado del usuario antes de pintar para que no parpadee */
+    try {
+      var hint = JSON.parse(localStorage.getItem('chatlocal_appearance_hint') || 'null'), ok = function (c) { return /^#[0-9a-f]{6}$/i.test(c || ''); };
+      if (hint && ok(hint.sender)) {
+        var ink = ok(hint.senderText) ? hint.senderText : '#101318', other = ok(hint.receiver) ? hint.receiver : '#171b21', r = document.documentElement.style;
+        r.setProperty('--accent', hint.sender);
+        r.setProperty('--accent-ink', ink);
+        r.setProperty('--accent-secondary', other);
+        r.setProperty('--accent-hover', 'color-mix(in srgb, ' + hint.sender + ' 88%, ' + ink + ')');
+        r.setProperty('--accent-soft', 'color-mix(in srgb, ' + hint.sender + ' 18%, transparent)');
+      }
+    } catch (e) { }
+  </script>
+
+</head>
+
+<body class="page-view">
+  <header><a href="/" onclick="return goBack()">←</a> Perfil</header>
+  <main>
+    <div class="avWrap">
+      <div class="bigAv" id="viewAvatar"></div>
+      <div class="noteFloat" id="viewNoteFloat" style="display:none"></div>
+    </div>
+    <b id="viewName" style="font-size:22px"></b>
+    <div class="sub" id="viewUsername"></div>
+    <div class="sub" id="viewPresence"></div>
+    <p id="viewDesc"></p>
+    <div class="sub" id="viewInfo"></div>
+    <div class="sub" id="restricciones" style="display:none;color:#53bdeb">Este contacto tiene restricciones de
+      privacidad activadas</div>
+    <div class="sub" id="fotoPrivada" style="display:none;color:#8696a0">Foto de perfil oculta por privacidad</div>
+    <div class="actions">
+      <button class="green" id="btnChat" type="button" aria-label="Abrir chat" title="Abrir chat"><svg
+          viewBox="0 0 24 24">
+          <path
+            d="M4 3h16a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-9l-6 4v-4H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zm0 2v11h3v2.26L10.32 16H20V5H4z" />
+        </svg></button>
+      <button class="green" id="btnCall" type="button" aria-label="Llamar" title="Llamar"><svg viewBox="0 0 24 24">
+          <path
+            d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.02-.24c1.12.37 2.33.57 3.57.57a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1C10.61 21 3 13.39 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.24.2 2.45.57 3.57a1 1 0 0 1-.25 1.02z" />
+        </svg></button>
+      <button class="green" id="btnVideo" type="button" aria-label="Videollamar" title="Videollamar"><svg
+          viewBox="0 0 24 24">
+          <path d="M17 10.5V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-3.5l5 5v-13z" />
+        </svg></button>
+    </div>
+    <button class="danger" id="btnBlock" onclick="toggleBlock()"></button>
+    <button class="danger" onclick="deleteChat()">Eliminar chat</button>
+  </main>
+  <div id="photoViewer" role="dialog" aria-modal="true" aria-label="Foto de perfil"
+    onclick="if(event.target===this)closePhoto()">
+    <button type="button" aria-label="Cerrar foto" onclick="closePhoto()">×</button>
+    <img id="photoViewerImage" alt="">
+  </div>
+  <script>
+    let me = null, target = null, blocked = false;
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+    function modal(titulo, texto, acciones) {
+      return new Promise(res => {
+        const ov = document.createElement('div'); ov.className = 'mOverlay';
+        const sh = document.createElement('div'); sh.className = 'mSheet';
+        sh.innerHTML = `<div class="mTitle">${esc(titulo)}</div>${texto !== undefined ? `<div class="mText">${esc(texto)}</div>` : ''}<div class="mBtns"></div>`;
+        const cerrar = v => { ov.remove(); res(v); };
+        acciones.forEach(a => { const b = document.createElement('button'); b.className = 'mBtn ' + (a.tipo || ''); b.textContent = a.txt; b.onclick = () => cerrar(a.valor); sh.querySelector('.mBtns').appendChild(b); });
+        ov.appendChild(sh); ov.onclick = e => { if (e.target === ov) cerrar(null); };
+        document.body.appendChild(ov);
+      });
+    }
+    async function init() {
+      const session = await fetch('/auth/session', { cache: 'no-store' }).then(r => r.json());
+      if (!session.authenticated) return location.href = '/';
+      me = session.user;
+      target = new URLSearchParams(location.search).get('username');
+      const p = await fetch('/profile?username=' + encodeURIComponent(target) + '&me=' + encodeURIComponent(me.username)).then(r => r.json()).catch(() => ({}));
+      document.getElementById('viewName').textContent = p.name || target;
+      document.getElementById('viewUsername').textContent = '@' + (p.username || target);
+      const presence = document.getElementById('viewPresence');
+      presence.textContent = p.online === true ? 'En línea' : p.online === false && p.lastSeen ? `Últ. vez ${new Date(p.lastSeen).toLocaleString()}` : 'Presencia no disponible';
+      if (p.online === true) presence.style.color = 'var(--accent)';
+      const av = document.getElementById('viewAvatar');
+      if (p.permisos && p.permisos.verFoto === false) {
+        av.innerHTML = `<img src="/avatar/${encodeURIComponent(p.id || target)}.svg?v=3" alt="">`;
+        av.style.opacity = '1';
+        document.getElementById('fotoPrivada').style.display = 'block';
+      } else {
+        // avatar heredado neutralizado si trae comillas/ángulos.
+        const avSrc = String(p.avatar || '/avatar/' + encodeURIComponent(p.id || target) + '.svg?v=3').replace(/"/g, '%22').replace(/</g, '%3C');
+        av.innerHTML = `<img src="${avSrc}" alt="">`;
+      }
+      av.onclick = () => { const image = av.querySelector('img'); if (!image) return; document.getElementById('photoViewerImage').src = image.currentSrc || image.src; document.getElementById('photoViewer').style.display = 'flex'; };
+      if (p.note) { const nb = document.getElementById('viewNoteFloat'); nb.textContent = String(p.note).slice(0, 60); nb.style.display = 'block'; }
+      else document.getElementById('viewNoteFloat').style.display = 'none';
+      document.getElementById('viewDesc').textContent = p.desc || (p.privacyDesc === 'private' ? 'Descripción privada' : 'Sin descripción');
+      document.getElementById('viewInfo').textContent = p.username;
+      const perms = p.permisos || {};
+      document.getElementById('btnChat').style.display = perms.escribir === false ? 'none' : 'block';
+      document.getElementById('btnCall').style.display = perms.llamar === false ? 'none' : 'block';
+      document.getElementById('btnVideo').style.display = perms.llamar === false ? 'none' : 'block';
+      document.getElementById('restricciones').style.display = (perms.escribir === false || perms.llamar === false) ? 'block' : 'none';
+      const myself = await fetch('/profile?username=' + encodeURIComponent(me.username) + '&me=' + encodeURIComponent(me.username)).then(r => r.json());
+      blocked = (myself.blocked || []).includes(target);
+      document.getElementById('btnBlock').textContent = blocked ? 'Desbloquear' : 'Bloquear';
+      document.getElementById('btnChat').onclick = () => location.href = '/?open=' + encodeURIComponent(target);
+      document.getElementById('btnCall').onclick = () => location.href = '/?open=' + encodeURIComponent(target) + '&call=voice';
+      document.getElementById('btnVideo').onclick = () => location.href = '/?open=' + encodeURIComponent(target) + '&call=video';
+    }
+    async function toggleBlock() {
+      const r = await fetch('/block', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: me.username, target }) }).then(r => r.json());
+      blocked = r.blocked;
+      document.getElementById('btnBlock').textContent = blocked ? 'Desbloquear' : 'Bloquear';
+      if (blocked) await modal('Has bloqueado a ' + target, 'No podrá enviarte mensajes ni llamarte. Lo que te escriba no se entregará. No se le avisa de nada.', [{ txt: 'Entendido', valor: true }]);
+    }
+    async function deleteChat() {
+      const ok = await modal('Eliminar chat', 'Se borrará la conversación para los dos. Esta acción no se puede deshacer.', [{ txt: 'Cancelar', valor: false }, { txt: 'Eliminar', valor: true, tipo: 'peligro' }]);
+      if (!ok) return;
+      await fetch('/chat/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: me.username, to: target }) });
+      location.href = '/';
+    }
+    init();
+    function goBack() { if (history.length > 1) { history.back(); return false; } return true; }
+    function closePhoto() { document.getElementById('photoViewer').style.display = 'none'; document.getElementById('photoViewerImage').removeAttribute('src'); }
+    document.addEventListener('keydown', event => { if (event.key === 'Escape') closePhoto(); });
+    window.addEventListener('pageshow', e => { if (e.persisted && typeof init === 'function') init(); });
+  </script>
+  <script src="/js/appearance.js" defer></script>
+</body>
+
+</html>

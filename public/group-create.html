@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#111b21">
+    <title>Crear grupo — Zlapy</title>
+    <link rel="stylesheet" href="/css/theme.css">
+    <link rel="stylesheet" href="/css/group-create.css?v=3">
+    <link rel="stylesheet" href="/css/avatar-editor.css?v=1">
+    <script>
+        /* Aplica el acento cacheado del usuario antes de pintar para que no parpadee */
+        try {
+            var hint = JSON.parse(localStorage.getItem('chatlocal_appearance_hint') || 'null'), ok = function (c) { return /^#[0-9a-f]{6}$/i.test(c || ''); };
+            if (hint && ok(hint.sender)) {
+                var ink = ok(hint.senderText) ? hint.senderText : '#101318', other = ok(hint.receiver) ? hint.receiver : '#171b21', r = document.documentElement.style;
+                r.setProperty('--accent', hint.sender);
+                r.setProperty('--accent-ink', ink);
+                r.setProperty('--accent-secondary', other);
+                r.setProperty('--accent-hover', 'color-mix(in srgb, ' + hint.sender + ' 88%, ' + ink + ')');
+                r.setProperty('--accent-soft', 'color-mix(in srgb, ' + hint.sender + ' 18%, transparent)');
+            }
+        } catch (e) { }
+    </script>
+</head>
+<body>
+    <svg class="svg-sprite" aria-hidden="true" focusable="false">
+        <symbol id="i-x" viewBox="0 0 24 24">
+            <path d="M18 6 6 18M6 6l12 12"></path>
+        </symbol>
+        <symbol id="i-camera" viewBox="0 0 24 24">
+            <path d="M14.5 4h-5L8 6H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3l-1.5-2Z"></path>
+            <circle cx="12" cy="13" r="3.4"></circle>
+        </symbol>
+        <symbol id="i-users" viewBox="0 0 24 24">
+            <circle cx="9" cy="8" r="3"></circle>
+            <path d="M3.5 19c.4-3.2 2.3-5 5.5-5s5.1 1.8 5.5 5"></path>
+            <circle cx="17" cy="9" r="2.3"></circle>
+            <path d="M16 14.2c2.6.2 4 1.8 4.4 4.3"></path>
+        </symbol>
+        <symbol id="i-search" viewBox="0 0 24 24">
+            <circle cx="11" cy="11" r="6.5"></circle>
+            <path d="m16 16 4 4"></path>
+        </symbol>
+        <symbol id="i-check" viewBox="0 0 24 24">
+            <path d="m5 12.5 4.2 4.2L19 7"></path>
+        </symbol>
+        <symbol id="i-plus" viewBox="0 0 24 24">
+            <path d="M12 5v14M5 12h14"></path>
+        </symbol>
+        <symbol id="i-minus" viewBox="0 0 24 24">
+            <path d="M5 12h14"></path>
+        </symbol>
+        <symbol id="i-chevron" viewBox="0 0 24 24">
+            <path d="m6 9 6 6 6-6"></path>
+        </symbol>
+        <symbol id="i-lock" viewBox="0 0 24 24">
+            <rect x="5" y="10" width="14" height="10" rx="2"></rect>
+            <path d="M8 10V7a4 4 0 0 1 8 0v3"></path>
+        </symbol>
+        <symbol id="i-info" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="9"></circle>
+            <path d="M12 11v5M12 8h.01"></path>
+        </symbol>
+        <symbol id="i-pencil" viewBox="0 0 24 24">
+            <path d="m4 20 4.5-1 10-10a2.1 2.1 0 0 0-3-3l-10 10L4 20Z"></path>
+            <path d="m13.5 6.5 4 4"></path>
+        </symbol>
+    </svg>
+
+                <header class="appbar">
+                    <button class="icon-btn" id="closeBtn" type="button" aria-label="Volver a Zlapy" title="Volver">
+                        <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
+                    </button>
+                    <div class="appbar-copy">
+                        <h1>Nuevo grupo</h1>
+                        <p id="appbarSub">Añade un nombre y participantes</p>
+                    </div>
+                    <button class="create-btn" id="createBtn" type="button">Crear</button>
+                </header>
+
+                <div class="content" id="content">
+                    <section class="identity" aria-label="Identidad del grupo">
+                        <button class="avatar" id="avatarBtn" type="button" aria-label="Añadir foto del grupo" title="Añadir foto del grupo">
+                            <span class="avatar-art" id="avatarDefault">
+                                <svg class="icon" aria-hidden="true"><use href="#i-users"></use></svg>
+                            </span>
+                            <img class="avatar-img" id="avatarImg" alt="Foto del grupo" hidden>
+                            <span class="camera-badge" aria-hidden="true">
+                                <svg class="icon"><use href="#i-camera"></use></svg>
+                            </span>
+                        </button>
+                        <input id="avatarInput" type="file" accept="image/*" tabindex="-1" hidden>
+
+                        <div class="identity-fields">
+                            <input class="name-input" id="groupName" type="text" maxlength="40" placeholder="Nombre del grupo" aria-label="Nombre del grupo" autocomplete="off" spellcheck="true">
+                            <div class="under-name">
+                                <button class="text-action" id="descToggle" type="button" aria-expanded="false" aria-controls="descWrap">
+                                    <svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg>
+                                    <span>Añadir descripción</span>
+                                </button>
+                                <span class="char-count" id="nameCount">0/40</span>
+                            </div>
+                            <div class="desc-wrap" id="descWrap" hidden>
+                                <textarea id="groupDesc" maxlength="500" rows="2" placeholder="¿De qué trata el grupo? (opcional)" aria-label="Descripción del grupo"></textarea>
+                                <span class="char-count" id="descCount">0/500</span>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="participants" aria-labelledby="participantsTitle">
+                        <div class="section-head">
+                            <div>
+                                <h2 id="participantsTitle">Participantes</h2>
+                                <p>Elige a las personas que formarán parte del grupo.</p>
+                            </div>
+                            <span class="count-badge" id="memberCount" aria-live="polite">0</span>
+                        </div>
+
+                        <div class="chips" id="chips" aria-label="Participantes seleccionados"></div>
+                        <p class="chips-empty" id="chipsEmpty">
+                            <svg class="icon" aria-hidden="true"><use href="#i-users"></use></svg>
+                            Aún no has añadido a nadie.
+                        </p>
+
+                        <div class="search">
+                            <svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg>
+                            <input id="searchInput" type="search" placeholder="Buscar contactos" aria-label="Buscar contactos" autocomplete="off">
+                            <button class="search-clear" id="searchClear" type="button" aria-label="Borrar búsqueda" hidden>
+                                <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
+                            </button>
+                        </div>
+
+                        <div class="list-head">
+                            <span id="listLabel">Todos los contactos</span>
+                            <span class="list-count" id="listCount">0</span>
+                        </div>
+                        <div class="contact-list" id="contactList" role="group" aria-label="Contactos"></div>
+                        <div class="empty-search" id="emptySearch" hidden>
+                            <svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg>
+                            <b id="emptyTitle">No encontramos a nadie</b>
+                            <span id="emptyText">Prueba con otro nombre o con el @usuario.</span>
+                            <button class="empty-retry" id="emptyRetry" type="button" hidden>Reintentar</button>
+                        </div>
+                    </section>
+
+                    <details class="advanced" id="advanced">
+                        <summary>
+                            <span class="adv-icon" aria-hidden="true">
+                                <svg class="icon"><use href="#i-lock"></use></svg>
+                            </span>
+                            <span class="adv-copy">
+                                <b>Privacidad y permisos</b>
+                                <small id="advSummary">Privado · Solicitar · Todos escriben</small>
+                            </span>
+                            <span class="chev" aria-hidden="true">
+                                <svg class="icon"><use href="#i-chevron"></use></svg>
+                            </span>
+                        </summary>
+                        <div class="adv-body">
+                            <div class="adv-row">
+                                <div class="adv-label">
+                                    <b>Privacidad</b>
+                                    <span>Quién puede encontrar el grupo</span>
+                                </div>
+                                <div class="seg" data-key="visibility" role="group" aria-label="Privacidad del grupo">
+                                    <button type="button" data-value="private" class="on" aria-pressed="true">Privado</button>
+                                    <button type="button" data-value="public" aria-pressed="false">Público</button>
+                                </div>
+                            </div>
+                            <div class="adv-row">
+                                <div class="adv-label">
+                                    <b>Cómo unirse</b>
+                                    <span>Cómo entran las personas nuevas</span>
+                                </div>
+                                <div class="seg" data-key="join" role="group" aria-label="Cómo unirse al grupo">
+                                    <button type="button" data-value="request" class="on" aria-pressed="true">Solicitar</button>
+                                    <button type="button" data-value="open" aria-pressed="false">Abierta</button>
+                                    <button type="button" data-value="closed" aria-pressed="false">Cerrada</button>
+                                </div>
+                            </div>
+                            <div class="adv-row">
+                                <div class="adv-label">
+                                    <b>Quién escribe</b>
+                                    <span>Envío de mensajes en el grupo</span>
+                                </div>
+                                <div class="seg" data-key="write" role="group" aria-label="Quién puede escribir">
+                                    <button type="button" data-value="all" class="on" aria-pressed="true">Todos</button>
+                                    <button type="button" data-value="admins" aria-pressed="false">Solo admins</button>
+                                </div>
+                            </div>
+                            <div class="adv-row">
+                                <div class="adv-label">
+                                    <b>Añadir miembros</b>
+                                    <span>Quién puede invitar a otras personas</span>
+                                </div>
+                                <div class="seg" data-key="add" role="group" aria-label="Quién puede añadir miembros">
+                                    <button type="button" data-value="all" aria-pressed="false">Todos</button>
+                                    <button type="button" data-value="admins" class="on" aria-pressed="true">Solo admins</button>
+                                </div>
+                            </div>
+                            <div class="adv-row">
+                                <div class="adv-label">
+                                    <b>Editar grupo</b>
+                                    <span>Nombre, foto y descripción</span>
+                                </div>
+                                <div class="seg" data-key="edit" role="group" aria-label="Quién puede editar el grupo">
+                                    <button type="button" data-value="all" aria-pressed="false">Todos</button>
+                                    <button type="button" data-value="admins" class="on" aria-pressed="true">Solo admins</button>
+                                </div>
+                            </div>
+                            <div class="adv-row">
+                                <div class="adv-label">
+                                    <b>Mencionar a @todos</b>
+                                    <span>Uso de la mención global</span>
+                                </div>
+                                <div class="seg" data-key="mention" role="group" aria-label="Quién puede mencionar a todos">
+                                    <button type="button" data-value="all" class="on" aria-pressed="true">Todos</button>
+                                    <button type="button" data-value="admins" aria-pressed="false">Solo admins</button>
+                                </div>
+                            </div>
+                            <p class="adv-note">Podrás cambiar estos permisos después desde la información del grupo.</p>
+                        </div>
+                    </details>
+
+                    <p class="footnote">
+                        <svg class="icon" aria-hidden="true"><use href="#i-info"></use></svg>
+                        <span>Los participantes recibirán una invitación. Podrás cambiar más ajustes después de crear el grupo.</span>
+                    </p>
+                </div>
+
+                <div class="toast" id="toast" role="status" aria-live="polite">
+                    <span id="toastText"></span>
+                </div>
+
+    <script src="/js/transport-crypto.js"></script>
+    <script src="/js/transport.js"></script>
+    <script src="/js/avatar-editor.js?v=1"></script>
+    <script src="/js/autogrow.js?v=1"></script>
+    <script src="/js/group-create.js?v=4"></script>
+</body>
+</html>

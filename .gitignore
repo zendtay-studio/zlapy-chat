@@ -1,0 +1,19 @@
+# Secretos y credenciales
+.env
+.zlapymasterkey
+key.pem
+cert.pem
+
+# Datos persistentes, respaldos y configuración local de túnel
+data/
+backups/
+zty.yml
+
+# Dependencias
+node_modules/
+# package-lock.json SÍ se versiona: es lo que hace reproducibles las
+# instalaciones (`npm ci`) y permite auditar qué código de terceros entra.
+
+# Estado de ejecución
+# PID del servidor hijo mientras corre el supervisor.
+.zlapy.pid

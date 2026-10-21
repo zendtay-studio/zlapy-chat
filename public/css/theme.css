@@ -1,0 +1,640 @@
+:root {
+  color-scheme: dark;
+  --page: #090c0f;
+  --surface: #101419;
+  --surface-raised: #171b21;
+  --surface-hover: #20252d;
+  --line: #292f38;
+  --text: #d5dce2;
+  --muted: #87919d;
+  --accent: #d3dbe1;
+  --accent-ink: #101318;
+  --accent-secondary: var(--accent);
+}
+
+@keyframes public-page-enter {
+  from { opacity: 0; transform: translateY(8px) }
+  to { opacity: 1; transform: translateY(0) }
+}
+
+@keyframes public-item-enter {
+  from { opacity: 0; transform: translateY(7px) }
+  to { opacity: 1; transform: translateY(0) }
+}
+
+body.page-privacy,
+body.page-profile,
+body.page-stories,
+body.page-view {
+  background-color: var(--page);
+  background-image: radial-gradient(circle at 1px 1px, #ffffff0a 1px, transparent 1px), radial-gradient(circle at 85% 18%, #ffffff08, transparent 34%);
+  background-size: 26px 26px, auto;
+  color: var(--text)
+}
+
+body.page-privacy > header,
+body.page-profile > header,
+body.page-view > header,
+body.page-stories .page > header {
+  animation: public-page-enter .28s ease-out both
+}
+
+body.page-privacy > main,
+body.page-profile > main,
+body.page-view > main,
+body.page-stories .page > main {
+  animation: public-page-enter .34s ease-out both
+}
+
+body.page-privacy #main > .row,
+body.page-privacy #main > .quickBar,
+body.page-privacy #main > .quickHint,
+body.page-profile main > *,
+body.page-view main > *,
+body.page-stories .cards > .card {
+  animation: public-item-enter .24s ease-out both
+}
+
+body.page-privacy #main > .row:nth-child(2),
+body.page-stories .cards > .card:nth-child(2) { animation-delay: 24ms }
+body.page-privacy #main > .row:nth-child(3),
+body.page-stories .cards > .card:nth-child(3) { animation-delay: 48ms }
+body.page-privacy #main > .row:nth-child(4),
+body.page-stories .cards > .card:nth-child(4) { animation-delay: 72ms }
+body.page-privacy #main > .row:nth-child(5),
+body.page-stories .cards > .card:nth-child(5) { animation-delay: 96ms }
+body.page-privacy #main > .row:nth-child(6),
+body.page-stories .cards > .card:nth-child(6) { animation-delay: 120ms }
+
+body.page-privacy button,
+body.page-profile button,
+body.page-view button,
+body.page-stories button,
+body.page-privacy a,
+body.page-profile a,
+body.page-view a,
+body.page-stories a {
+  transition: background-color .16s ease, color .16s ease, border-color .16s ease, transform .16s ease
+}
+
+.page-privacy header,
+.page-profile header,
+.page-stories header,
+.page-view header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  color: var(--text)
+}
+
+.page-privacy header a,
+.page-profile header a,
+.page-stories header a,
+.page-view header a {
+  color: var(--text)
+}
+
+.page-privacy h2,
+.page-privacy .meta span,
+.page-privacy .chev,
+.page-privacy .help,
+.page-privacy .quickHint,
+.page-profile label,
+.page-profile .sub,
+.page-view .sub,
+.page-stories .sub,
+.page-stories .card .sub {
+  color: var(--muted)
+}
+
+.page-privacy .row,
+.page-privacy .person,
+.pickerPerson {
+  border-color: var(--line);
+  border-radius: 13px
+}
+
+.page-privacy .row:hover,
+.page-privacy .person:hover,
+.pickerPerson:hover,
+.page-privacy .row:has(input:checked),
+.page-privacy .person:has(input:checked) {
+  background: var(--surface-hover)
+}
+
+.page-privacy .pic,
+.page-privacy .row .av,
+.page-privacy .person .av,
+.pickerPerson .av,
+.page-profile .bigAv,
+.page-view .bigAv {
+  background: #262d36;
+  color: var(--text)
+}
+
+.page-privacy .seg,
+.page-privacy .quickBar,
+.page-privacy .list,
+.pickerList,
+.page-profile input,
+.page-profile textarea,
+.page-profile select {
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  color: var(--text)
+}
+
+.page-privacy .seg button,
+.page-privacy .quickBar button {
+  color: var(--muted);
+  border-radius: 11px
+}
+
+.page-privacy .seg button.on,
+.page-privacy .quickBar button.on {
+  background: var(--accent);
+  color: var(--accent-ink)
+}
+
+.page-privacy input[type=checkbox],
+.pickerPerson input[type=checkbox] {
+  accent-color: #d3dbe1
+}
+
+/* ===== Aspecto de burbujas del chat: anillos y botones circulares ===== */
+.page-profile .bigAv,
+.page-view .bigAv {
+  padding: 3px;
+  border: 0;
+  background: linear-gradient(45deg, var(--accent), var(--accent-secondary), var(--accent))
+}
+
+.page-profile .bigAv>img,
+.page-profile .bigAv>span,
+.page-view .bigAv>img,
+.page-view .bigAv>span {
+  width: 100%;
+  height: 100%;
+  border: 2px solid var(--page);
+  border-radius: 50%;
+  object-fit: cover
+}
+
+.page-profile .noteFloat,
+.page-view .noteFloat {
+  border-radius: 18px;
+  box-shadow: 0 5px 18px #0007;
+  transition: border-color .18s ease, box-shadow .18s ease
+}
+
+.page-profile .noteFloat:hover,
+.page-view .noteFloat:hover {
+  box-shadow: 0 8px 24px #0008
+}
+
+/* Lista de historias: la miniatura se muestra tal cual (sin el aro con
+   degradado de la tira de historias de la app). */
+.page-stories .preview {
+  width: 64px;
+  height: 64px;
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: var(--surface-hover);
+  overflow: hidden
+}
+
+.page-stories .preview>img,
+.page-stories .preview>video,
+.page-stories .preview>.textPreview,
+.page-stories .preview>.audioType,
+.page-stories .preview>.kindIcon {
+  border-radius: 12px
+}
+
+.page-stories .storyFab {
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-ink);
+  box-shadow: 0 5px 18px #0007;
+  transition: transform .18s ease, background .18s ease, box-shadow .18s ease
+}
+
+.page-stories .storyFab:hover {
+  transform: translateY(-3px) scale(1.04);
+  background: var(--accent-hover, #e7edf1);
+  box-shadow: 0 8px 24px #0008
+}
+
+.page-stories .storyFab:active {
+  transform: scale(.94)
+}
+
+.page-stories .storyFab svg {
+  width: 25px;
+  height: 25px
+}
+
+.page-view #photoViewer img,
+.page-view #photoViewerImage {
+  border-radius: 12px
+}
+
+@media(max-width:560px) {
+
+  .page-stories .preview {
+    width: 56px;
+    height: 56px
+  }
+}
+
+.page-stories .card,
+.page-stories .aviso {
+  background-color: var(--surface-raised);
+  background-image: linear-gradient(145deg, #ffffff06, transparent 60%);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  color: var(--text)
+}
+
+.page-stories .aviso {
+  border-left: 3px solid #9ba5b0
+}
+
+.page-privacy header button,
+.page-profile button,
+.page-view button,
+.page-stories button:not(.storyFab),
+.page-privacy .btns button,
+.page-privacy .pickerBtns button {
+  background: #20252c;
+  border: 1px solid #303741;
+  border-radius: 14px;
+  color: var(--text);
+  font-weight: 600;
+  transition: background .15s, transform .15s
+}
+
+.page-privacy header button,
+.page-profile button:not(.danger):not(.ghost),
+.page-view button.green,
+.page-privacy .btns button.ok,
+.page-privacy .pickerBtns button.ok {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink)
+}
+
+.page-privacy header button:hover,
+.page-profile button:hover,
+.page-view button:hover,
+.page-stories button:not(.storyFab):hover,
+.page-privacy .btns button:hover,
+.page-privacy .pickerBtns button:hover {
+  background: #2a3039;
+  transform: translateY(-1px)
+}
+
+.page-privacy header button:hover,
+.page-profile button:not(.danger):not(.ghost):hover,
+.page-view button.green:hover,
+.page-privacy .btns button.ok:hover,
+.page-privacy .pickerBtns button.ok:hover {
+  background: #e7edf1
+}
+
+.page-profile button.danger,
+.page-view button.danger,
+.page-stories button.danger,
+.page-profile .danger,
+.page-view .danger,
+.page-stories .danger {
+  background: #2b1d20;
+  color: #f09b9b;
+  border-color: #493035
+}
+
+/* ===== Selector de contactos: un único diseño para toda la app =====
+   Lo usan la página de privacidad y la de detalles de grupo. */
+.pickerOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px
+}
+
+.pickerSheet {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(420px, 94vw);
+  max-height: 86vh;
+  padding: 20px;
+  border-radius: 14px;
+  background: #202c33;
+  color: #e9edef;
+  box-shadow: 0 10px 40px #000a
+}
+
+.pickerTitle {
+  font-size: 17px;
+  font-weight: 600
+}
+
+.pickerHint {
+  color: #d1d7db;
+  font-size: 14px;
+  line-height: 1.45
+}
+
+.pickerList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 290px;
+  padding: 4px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  background: var(--surface-raised)
+}
+
+.pickerPerson {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 13px;
+  cursor: pointer
+}
+
+.pickerPerson:hover {
+  background: var(--surface-hover)
+}
+
+.pickerPerson input {
+  order: 3;
+  width: 20px;
+  height: 20px;
+  margin-left: auto;
+  flex: none;
+  accent-color: var(--accent)
+}
+
+.pickerPerson .av {
+  order: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  overflow: hidden;
+  border-radius: 50%;
+  background: #262d36;
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 600
+}
+
+.pickerPerson .av img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover
+}
+
+.pickerPerson .meta {
+  order: 2;
+  flex: 1;
+  min-width: 0
+}
+
+.pickerPerson .meta b {
+  display: block;
+  overflow: hidden;
+  color: #e9edef;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap
+}
+
+.pickerBtns {
+  display: flex;
+  gap: 10px
+}
+
+.pickerBtns button {
+  flex: 1;
+  padding: 12px 14px;
+  border: 0;
+  border-radius: 10px;
+  background: #2a3942;
+  color: #e9edef;
+  font-size: 14.5px;
+  cursor: pointer
+}
+
+.pickerBtns button.ok {
+  background: var(--accent);
+  color: var(--accent-ink)
+}
+
+/* Base de los modales compartidos (.mOverlay/.mSheet). Las páginas que ya
+   traen su propia hoja conservan sus valores; las que no (detalles del grupo)
+   reciben aquí el componente completo, incluida la barrita de Android. */
+:where(.mOverlay) {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px
+}
+
+:where(.mSheet) {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(420px, 94vw);
+  max-height: 86vh;
+  overflow-y: auto;
+  padding: 20px
+}
+
+:where(.mTitle) {
+  font-weight: 600
+}
+
+:where(.mText) {
+  font-size: 14.5px;
+  line-height: 1.45
+}
+
+:where(.mBtns) {
+  display: flex;
+  flex-wrap: wrap
+}
+
+:where(.mBtn) {
+  flex: 1;
+  min-width: 110px;
+  font-size: 14.5px;
+  cursor: pointer
+}
+
+.mOverlay,
+.pickerOverlay {
+  background: rgba(0, 0, 0, .74);
+  backdrop-filter: none
+}
+
+.mSheet,
+.pickerSheet {
+  background: #11151a;
+  color: var(--text);
+  border: 1px solid #2b313a;
+  border-radius: 24px;
+  box-shadow: 0 24px 80px #000b
+}
+
+.mTitle,
+.pickerTitle {
+  font-size: 20px;
+  letter-spacing: -.3px
+}
+
+.mText,
+.pickerHint {
+  color: #aab3bd
+}
+
+.mSheet input,
+.pickerSheet input {
+  min-height: 48px;
+  padding: 13px 15px;
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  color: var(--text)
+}
+
+.mBtns,
+.pickerBtns,
+.page-privacy .btns {
+  gap: 9px;
+  margin-top: 4px
+}
+
+.mBtn,
+.pickerBtns button,
+.page-privacy .btns button {
+  min-height: 46px;
+  background: #20252c;
+  color: var(--text);
+  border: 1px solid #303741;
+  border-radius: 15px;
+  padding: 11px 16px;
+  font-weight: 600
+}
+
+.mBtn.ok,
+.pickerBtns button.ok,
+.page-privacy .btns button.ok {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink)
+}
+
+.mBtn.peligro,
+.page-profile .confirmDanger {
+  background: #2b1d20;
+  border-color: #493035;
+  color: #f09b9b
+}
+
+#toast {
+  background: #20252c;
+  color: var(--text);
+  border: 1px solid #383f49;
+  border-radius: 16px;
+  box-shadow: 0 12px 36px #0008
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid #cbd5df;
+  outline-offset: 2px
+}
+
+@media(max-width:768px) {
+
+  .mOverlay,
+  .pickerOverlay {
+    align-items: flex-end;
+    padding: 0
+  }
+
+  .mSheet,
+  .pickerSheet {
+    width: 100%;
+    max-height: min(88dvh, 760px);
+    padding: 25px 20px calc(20px + env(safe-area-inset-bottom));
+    border-radius: 26px 26px 0 0;
+    border-bottom: 0
+  }
+
+  .mSheet::before,
+  .pickerSheet::before {
+    content: '';
+    width: 38px;
+    height: 4px;
+    background: #414852;
+    border-radius: 4px;
+    align-self: center;
+    margin: -10px 0 5px
+  }
+
+  .mBtns,
+  .pickerBtns,
+  .page-privacy .btns {
+    flex-direction: column-reverse
+  }
+
+  .mBtn,
+  .pickerBtns button,
+  .page-privacy .btns button {
+    width: 100%;
+    flex: none
+  }
+
+  .page-privacy main,
+  .page-profile main,
+  .page-view main,
+  .page-stories main {
+    padding-bottom: calc(24px + env(safe-area-inset-bottom))
+  }
+}
+
+@media(prefers-reduced-motion: reduce) {
+  body.page-privacy *,
+  body.page-profile *,
+  body.page-view *,
+  body.page-stories * {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: .01ms !important
+  }
+}

@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Mi perfil</title>
+  <style>
+    * {
+      margin: 0;
+      box-sizing: border-box;
+      font-family: 'Segoe UI', Helvetica, Arial, sans-serif
+    }
+
+    body {
+      background: #111b21;
+      color: #e9edef;
+      min-height: 100vh;
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      width: 100%;
+      max-width: 720px;
+      margin: 0 auto;
+      border-inline: 1px solid #20252c
+    }
+
+    header {
+      background: #202c33;
+      padding: 16px 20px;
+      font-size: 18px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 14px
+    }
+
+    header a {
+      color: #e9edef;
+      text-decoration: none;
+      font-size: 22px
+    }
+
+    main {
+      width: 100%;
+      padding: clamp(16px, 5vw, 32px);
+      display: flex;
+      flex-direction: column;
+      gap: 16px
+    }
+
+    .bigAv {
+      width: 110px;
+      height: 110px;
+      border-radius: 50%;
+      background: var(--accent);
+      color: var(--accent-ink);
+      align-self: center;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 40px;
+      cursor: pointer;
+      flex: none
+    }
+
+    .bigAv img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover
+    }
+
+    .avWrap {
+      position: relative;
+      align-self: center;
+      margin-top: 20px
+    }
+
+    .noteFloat {
+      position: absolute;
+      top: -22px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #2a3942;
+      border: 1px solid #374045;
+      color: #d1d7db;
+      font-size: 13px;
+      font-style: italic;
+      padding: 7px 14px;
+      border-radius: 18px;
+      white-space: nowrap;
+      max-width: 240px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      cursor: text;
+      outline: none;
+      min-width: 70px;
+      text-align: center
+    }
+
+    .noteFloat:empty::before {
+      content: attr(placeholder);
+      opacity: .55
+    }
+
+    .noteFloat:focus {
+      border-color: var(--accent)
+    }
+
+    input,
+    textarea,
+    select {
+      background: #202c33;
+      border: none;
+      border-radius: 8px;
+      padding: 12px;
+      color: #e9edef;
+      outline: none;
+      font-size: 15px;
+      width: 100%
+    }
+
+    label {
+      color: #8696a0;
+      font-size: 13px
+    }
+
+    button {
+      background: var(--accent);
+      border: none;
+      color: var(--accent-ink);
+      padding: 13px;
+      border-radius: 8px;
+      font-size: 16px;
+      cursor: pointer
+    }
+
+    .danger {
+      background: #374045;
+      color: #ef5350
+    }
+
+    .ghost {
+      background: #2a3942;
+      color: #e9edef
+    }
+
+    .avatarHint {
+      color: #8696a0;
+      font-size: 12.5px;
+      text-align: center
+    }
+
+    #profileError {
+      display: none;
+      color: #f09b9b;
+      background: #2b1d20;
+      border: 1px solid #493035;
+      border-radius: 12px;
+      padding: 12px;
+      font-size: 14px
+    }
+
+    @media(max-width:480px) {
+      header {
+        padding: 14px 16px
+      }
+
+      main {
+        padding-bottom: calc(24px + env(safe-area-inset-bottom))
+      }
+    }
+  </style>
+  <link rel="stylesheet" href="/css/theme.css">
+  <link rel="stylesheet" href="/css/avatar-editor.css?v=1">
+  <script src="/js/transport-crypto.js"></script>
+  <script src="/js/transport.js"></script>
+  <script>
+    /* Aplica el acento cacheado del usuario antes de pintar para que no parpadee */
+    try {
+      var hint = JSON.parse(localStorage.getItem('chatlocal_appearance_hint') || 'null'), ok = function (c) { return /^#[0-9a-f]{6}$/i.test(c || ''); };
+      if (hint && ok(hint.sender)) {
+        var ink = ok(hint.senderText) ? hint.senderText : '#101318', other = ok(hint.receiver) ? hint.receiver : '#171b21', r = document.documentElement.style;
+        r.setProperty('--accent', hint.sender);
+        r.setProperty('--accent-ink', ink);
+        r.setProperty('--accent-secondary', other);
+        r.setProperty('--accent-hover', 'color-mix(in srgb, ' + hint.sender + ' 88%, ' + ink + ')');
+        r.setProperty('--accent-soft', 'color-mix(in srgb, ' + hint.sender + ' 18%, transparent)');
+      }
+    } catch (e) { }
+  </script>
+
+</head>
+
+<body class="page-profile">
+  <header><a href="/" onclick="return goBack()">←</a> Mi perfil</header>
+  <main>
+    <div class="avWrap">
+      <div class="bigAv" id="profAvatar" role="button" tabindex="0" aria-label="Cambiar foto de perfil"
+        onclick="document.getElementById('avatarInput').click()"></div>
+      <button type="button" class="avatarRemoveBadge" id="avatarRemoveBtn" hidden onclick="removeAvatar()"
+        title="Quitar foto" aria-label="Quitar foto de perfil">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 7h16M9.5 7V4h5v3M6.5 7l.8 13h9.4l.8-13M10 11v5M14 11v5" />
+        </svg>
+      </button>
+      <div class="noteFloat" id="profNoteFloat" contenteditable="true" placeholder="Escribe tu nota…"
+        spellcheck="false"></div>
+    </div>
+    <div class="avatarHint">Toca la foto para elegir una imagen y recortarla.</div>
+    <div class="sub" style="color:#8696a0;font-size:12.5px;text-align:center">Toca la burbuja para editar tu nota (dura
+      24 h). Así la verán los demás.</div>
+    <label>Nombre de usuario (minúsculas):
+      <input id="profUsername" maxlength="24" autocomplete="username" autocapitalize="none" spellcheck="false"
+        placeholder="usuario">
+    </label>
+    <input id="profName" placeholder="Nombre">
+    <textarea id="profDesc" rows="3" placeholder="Descripción / Información"></textarea>
+    <div id="profDescCount" style="color:#8696a0;font-size:12px;text-align:right">0 / 140</div>
+    <label>Foto de perfil:
+      <select id="privPhoto">
+        <option value="public">Pública</option>
+        <option value="private">Privada</option>
+      </select>
+    </label>
+    <label>Descripción:
+      <select id="privDesc">
+        <option value="public">Pública</option>
+        <option value="private">Privada</option>
+      </select>
+    </label>
+    <button id="saveProfileBtn" onclick="saveProfile()">Guardar cambios</button>
+    <div id="profileError" role="alert" aria-live="polite"></div>
+  </main>
+  <input type="file" id="avatarInput" style="display:none" accept="image/*"
+    onchange="loadAvatar(this.files[0]); this.value=''">
+  <script>
+    let me = null, pendingAvatar = '', profileDescriptionLimit = 140, myId = '', avatarRemoved = false;
+    const b64 = buf => { let s = ''; const a = new Uint8Array(buf); for (let i = 0; i < a.length; i += 8192) s += String.fromCharCode(...a.subarray(i, i + 8192)); return btoa(s); };
+
+    async function init() {
+      const [sessionResponse, configResponse] = await Promise.all([
+        fetch('/auth/session', { cache: 'no-store' }),
+        fetch('/config', { cache: 'no-store' })
+      ]);
+      if (configResponse.ok) {
+        const config = await configResponse.json();
+        if (Number.isSafeInteger(config.profileDescriptionCharacters) && config.profileDescriptionCharacters > 0)
+          profileDescriptionLimit = config.profileDescriptionCharacters;
+      }
+      const session = await sessionResponse.json();
+      if (!session.authenticated) return location.href = '/';
+      me = session.user;
+      const p = await fetch('/profile?username=' + encodeURIComponent(me.username) + '&me=' + encodeURIComponent(me.username)).then(r => r.json()).catch(() => ({}));
+      const nameInput = document.getElementById('profName');
+      const rawName = String(p.name || '');
+      const encryptedName = rawName.startsWith('PCE3:') || rawName.startsWith('PCE1:');
+      nameInput.value = rawName && !encryptedName ? rawName : me.username;
+      // Si el nombre llegó cifrado no lo pisanos al guardar: se muestra el
+      // usuario como referencia y se omite el campo hasta que se edite.
+      nameInput.dataset.encrypted = encryptedName ? '1' : '';
+      nameInput.addEventListener('input', () => { delete nameInput.dataset.encrypted; });
+      document.getElementById('profUsername').value = me.username;
+      document.getElementById('profUsername').oninput = event => {
+        const input = event.currentTarget;
+        const cursor = input.selectionStart;
+        input.value = input.value.toLowerCase();
+        input.setSelectionRange(cursor, cursor);
+      };
+      const description = document.getElementById('profDesc');
+      description.value = p.desc || '';
+      updateDescriptionCount();
+      description.addEventListener('input', updateDescriptionCount);
+      // El alto se ajusta al cargar, no solo al escribir.
+      if (window.ZlapyAutoGrow) ZlapyAutoGrow.grow(description, { minHeight: 78, maxHeight: 260 });
+      const nb = document.getElementById('profNoteFloat');
+      nb.textContent = p.note || '';
+      nb.addEventListener('input', () => { const t = nb.textContent || ''; if (t.length > 60) nb.textContent = t.slice(0, 60); });
+      nb.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); nb.blur(); } });
+      nb.addEventListener('paste', e => { e.preventDefault(); document.execCommand('insertText', false, (e.clipboardData.getData('text') || '').slice(0, 60)); });
+      document.getElementById('privPhoto').value = p.privacyPhoto || 'public';
+      document.getElementById('privDesc').value = p.privacyDesc || 'public';
+      const av = document.getElementById('profAvatar');
+      // neutraliza comillas/ángulos de avatares heredados de antes de
+      // la validación del servidor: solo pasa tal cual si es un valor sano.
+      const avSrc = String(p.avatar || '/avatar/' + encodeURIComponent(p.id || me.id) + '.svg?v=3').replace(/"/g, '%22').replace(/</g, '%3C');
+      av.innerHTML = `<img src="${avSrc}" alt="">`;
+      myId = p.id || me.id || me.username;
+      document.getElementById('avatarRemoveBtn').hidden = !p.avatar || String(p.avatar).startsWith('/avatar/');
+    }
+    function defaultAvatarSrc() {
+      return '/avatar/' + encodeURIComponent(myId || (me && me.username) || '') + '.svg?v=3';
+    }
+    function removeAvatar() {
+      pendingAvatar = '';
+      avatarRemoved = true;
+      const av = document.getElementById('profAvatar');
+      av.innerHTML = `<img src="${defaultAvatarSrc()}" alt="">`;
+      document.getElementById('avatarRemoveBtn').hidden = true;
+    }
+    function updateDescriptionCount() {
+      const input = document.getElementById('profDesc');
+      const length = Array.from(input.value).length;
+      document.getElementById('profDescCount').textContent = `${length} / ${profileDescriptionLimit}`;
+    }
+    // Recorta la foto a 1:1 (cuadrada o circular) a 512 x 512 antes de guardarla.
+    async function loadAvatar(f) {
+      if (!f) return;
+      const editor = window.ZlapyAvatarEditor;
+      if (!editor || typeof editor.open !== 'function') { await loadAvatarFallback(f); return; }
+      let result = null;
+      try {
+        result = await editor.open({ file: f });
+      } catch (error) {
+        console.error('[perfil] No se pudo editar la foto:', error);
+      }
+      if (!result || !result.dataUrl) return;
+      pendingAvatar = result.dataUrl;
+      avatarRemoved = false;
+      document.getElementById('profAvatar').innerHTML = `<img src="${pendingAvatar}" alt="">`;
+      document.getElementById('avatarRemoveBtn').hidden = false;
+    }
+    // Respaldo si el editor no está disponible: recorte central a 512 x 512.
+    function loadAvatarFallback(f) {
+      return new Promise(resolve => {
+        const url = URL.createObjectURL(f);
+        const img = new Image();
+        img.onload = () => {
+          const side = Math.min(img.width, img.height);
+          const size = 512;
+          const c = document.createElement('canvas');
+          c.width = c.height = size;
+          const ctx = c.getContext('2d');
+          ctx.drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, size, size);
+          pendingAvatar = c.toDataURL('image/jpeg', 0.88);
+          avatarRemoved = false;
+          document.getElementById('profAvatar').innerHTML = `<img src="${pendingAvatar}" alt="">`;
+          document.getElementById('avatarRemoveBtn').hidden = false;
+          URL.revokeObjectURL(url);
+          resolve();
+        };
+        img.onerror = () => {
+          const r = new FileReader();
+          r.onload = () => {
+            pendingAvatar = r.result;
+            avatarRemoved = false;
+            document.getElementById('profAvatar').innerHTML = `<img src="${r.result}" alt="">`;
+            document.getElementById('avatarRemoveBtn').hidden = false;
+            resolve();
+          };
+          r.readAsDataURL(f);
+        };
+        img.src = url;
+      });
+    }
+    async function saveProfile() {
+      const errorBox = document.getElementById('profileError');
+      const button = document.getElementById('saveProfileBtn');
+      errorBox.style.display = 'none';
+      button.disabled = true;
+      try {
+        if (Array.from(document.getElementById('profDesc').value).length > profileDescriptionLimit)
+          throw new Error(`La descripción admite hasta ${profileDescriptionLimit} caracteres.`);
+        const nextUsername = document.getElementById('profUsername').value.trim();
+        if (!/^[a-z0-9_.-]{3,24}$/.test(nextUsername))
+          throw new Error('El usuario debe tener entre 3 y 24 letras, números, puntos, guiones o guiones bajos.');
+        if (nextUsername !== me.username) {
+          const renameResponse = await fetch('/account/profile', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: nextUsername })
+          });
+          const renameResult = await renameResponse.json();
+          if (!renameResponse.ok) throw new Error(renameResult.error || 'No se pudo cambiar el usuario.');
+          me = renameResult.user;
+        }
+        const cur = document.querySelector('#profAvatar img');
+        const nameInput = document.getElementById('profName');
+        const body = {
+          username: me.username,
+          desc: document.getElementById('profDesc').value,
+          note: (document.getElementById('profNoteFloat').textContent || '').replace(/\s+/g, ' ').trim().slice(0, 60),
+          privacyPhoto: document.getElementById('privPhoto').value,
+          privacyDesc: document.getElementById('privDesc').value
+        };
+        if (!nameInput.dataset.encrypted) body.name = nameInput.value.trim() || me.username;
+        if (pendingAvatar) body.avatar = pendingAvatar;
+        else if (avatarRemoved) body.avatar = '/avatar/' + encodeURIComponent(myId || me.username) + '.svg';
+        else if (cur && cur.getAttribute('src') && !cur.getAttribute('src').startsWith('/avatar/')) body.avatar = cur.src;
+        const response = await fetch('/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || 'No se pudo guardar el perfil.');
+        location.href = '/';
+      } catch (error) {
+        errorBox.textContent = error.message || 'No se pudo guardar el perfil.';
+        errorBox.style.display = 'block';
+      } finally {
+        button.disabled = false;
+      }
+    }
+    function goBack() { if (history.length > 1) { history.back(); return false; } return true; }
+    window.addEventListener('pageshow', e => { if (e.persisted) init(); });
+    init();
+  </script>
+  <script src="/js/appearance.js" defer></script>
+  <script src="/js/autogrow.js?v=1"></script>
+  <script src="/js/avatar-editor.js?v=1"></script>
+</body>
+
+</html>

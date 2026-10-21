@@ -1,0 +1,33 @@
+# Ejemplo de configuración de cloudflared.
+# Cópialo a zty.yml (ese nombre está en .gitignore y NO se sube al repo):
+#   cp zty.yml.example zty.yml
+#
+# El token del túnel NO va aquí: se guarda en .env como CLOUDFLARE_TUNNEL_TOKEN
+# y lo lee `npm run tunnel`.
+tunnel: <UUID-DEL-TUNEL>
+
+# protocol: http2 -- el valor por defecto es `auto`, que prueba QUIC sobre UDP
+#   y solo cae a http2 si no consigue establecer la conexion UDP. Esa caida
+#   puede ser intermitente: Cloudflare resuelve a una IP de borde v6 y el
+#   envio UDP a veces sale con `sendmsg: network is unreachable`. Fijar http2
+#   lo hace determinista en vez de depender de en que orden fallen los intentos.
+#
+# edge-ip-version: "4" -- con comillas A PROPOSITO. cloudflared lo parsea como
+#   string, y sin ellas el `ingress validate` falla con "expected string found
+#   int". Es el valor por defecto, asi que se deja escrito para documentar que
+#   la conexion al borde es por IPv4.
+protocol: http2
+edge-ip-version: "4"
+
+ingress:
+  # Se evaluan de arriba abajo y gana la primera que coincide. Una regla sin
+  # `hostname` captura cualquier dominio, y una sin `path` captura cualquier
+  # ruta.
+  - hostname: tudominio.qzz.io
+    service: http://localhost:3000
+
+  # Catch-all obligatorio: sin esta ultima regla cloudflared se quejaria, y
+  # ademas deja escrito que este tunel no es un proxy abierto. Cualquier
+  # hostname que no sea el de arriba recibe un 404 desde el borde de Cloudflare,
+  # sin llegar nunca a la aplicacion.
+  - service: http_status:404
