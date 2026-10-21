@@ -1,0 +1,37 @@
+# CI de Zlapy: instala exactamente las dependencias fijadas en package-lock.json
+# y ejecuta la suite de pruebas. Sin secretos: el job no necesita ninguno.
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+# Permisos mínimos: el job sólo lee el repositorio.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Node 22 · npm ci · npm test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clonar el repositorio
+        uses: actions/checkout@v4
+
+      - name: Instalar Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          # La caché de npm usa package-lock.json (ya versionado): sin él la
+          # instalación no sería reproducible.
+          cache: 'npm'
+
+      # `npm ci` instala lo que fija package-lock.json y falla si el
+      # lockfile no está sincronizado con package.json.
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Ejecutar la suite de pruebas
+        run: npm test
