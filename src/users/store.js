@@ -12,7 +12,7 @@ const mtproto = require('../crypto/mtproto.js');
 
 const { prepareStoredMessage } = require('../chat/messages.js');
 const { CONFIG } = require('../config.js');
-const { authKeyRecord, authKeys, decryptForUser, encryptAtRest, encryptForUser, messageContextBytes, messageCrypto } = require('../crypto/setup.js');
+const { authKeyRecord, authKeys, decryptAtRest, decryptForUser, encryptAtRest, encryptForUser, messageContextBytes, messageCrypto } = require('../crypto/setup.js');
 const { db } = require('../db/database.js');
 const { SCHEMA_VERSION } = require('../db/schema.js');
 const { Stmt } = require('../db/statements.js');
@@ -221,6 +221,21 @@ function regenerateAuthKeyInner(userId) {
         const msgId = mtproto.nextMsgId('0');
         return mtproto.encrypt(newKey, plain, { salt, sessionId, msgId, seqNo: 0 }).blob;
     };
+    /* Descifra con la clave ANTERIOR. La rotación ya instaló la nueva, así que
+       `decryptForUser` solo conocería la nueva: las tablas que la usaran
+       quedarían cifradas con la clave vieja PARA SIEMPRE. Ese fue el fallo que
+       dejaba los resúmenes (y notas, perfil, llamadas, push e historias)
+       ilegibles tras regenerar la clave: sin vista previa en la lista y el
+       chat al fondo. Los mensajes ya se descifraban con `oldRec` a mano. */
+    const decryptWithOld = blob => {
+        if (typeof blob !== 'string' || blob === '') return blob === '' ? '' : blob;
+        if (blob.startsWith('PCE3:')) {
+            if (!oldRec) return null;
+            const out = mtproto.decrypt(oldRec.key, blob);
+            return out ? out.body.toString('utf8') : null;
+        }
+        return decryptAtRest(blob);
+    };
 
     // 1) Mensajes del usuario: se descifran con la clave previa (o con la
     //    maestra si se guardaron con la clave global) y se re-cifran con la
@@ -257,46 +272,46 @@ function regenerateAuthKeyInner(userId) {
 
     // 2) El resto de contenido del usuario.
     for (const row of db.prepare('SELECT owner, peer, unread, last_data FROM summaries WHERE owner = ?').all(userId)) {
-        const plain = decryptForUser(userId, row.last_data);
+        const plain = decryptWithOld( row.last_data);
         if (plain === null) continue;
         Stmt.upsertSummary.run(row.owner, row.peer, row.unread, encryptWithNew(plain));
         reencrypted++;
     }
     for (const row of db.prepare('SELECT owner, gid, unread, last_data FROM group_summaries WHERE owner = ?').all(userId)) {
-        const plain = decryptForUser(userId, row.last_data);
+        const plain = decryptWithOld( row.last_data);
         if (plain === null) continue;
         Stmt.upsertGroupSummary.run(row.owner, row.gid, row.unread, encryptWithNew(plain));
         reencrypted++;
     }
     for (const row of db.prepare('SELECT user_id, data FROM user_notes WHERE user_id = ?').all(userId)) {
-        const plain = decryptForUser(userId, row.data);
+        const plain = decryptWithOld( row.data);
         if (plain === null) continue;
         db.prepare('UPDATE user_notes SET data = ? WHERE user_id = ?').run(encryptWithNew(plain), userId);
         reencrypted++;
     }
     for (const row of db.prepare('SELECT user_id, display_name, bio, note FROM user_profiles WHERE user_id = ?').all(userId)) {
-        const name = decryptForUser(userId, row.display_name);
-        const bio = decryptForUser(userId, row.bio);
-        const note = decryptForUser(userId, row.note);
+        const name = decryptWithOld(row.display_name);
+        const bio = decryptWithOld(row.bio);
+        const note = decryptWithOld(row.note);
         if (name === null || bio === null || note === null) continue;
         db.prepare('UPDATE user_profiles SET display_name = ?, bio = ?, note = ? WHERE user_id = ?')
             .run(encryptWithNew(name), encryptWithNew(bio), encryptWithNew(note), userId);
         reencrypted++;
     }
     for (const row of db.prepare('SELECT id, owner, peer, ts, data FROM calls WHERE owner = ?').all(userId)) {
-        const plain = decryptForUser(userId, row.data);
+        const plain = decryptWithOld( row.data);
         if (plain === null) continue;
         db.prepare('UPDATE calls SET data = ? WHERE id = ? AND owner = ?').run(encryptWithNew(plain), row.id, userId);
         reencrypted++;
     }
     for (const row of db.prepare('SELECT user_id, endpoint, data FROM push_subs WHERE user_id = ?').all(userId)) {
-        const plain = decryptForUser(userId, row.data);
+        const plain = decryptWithOld( row.data);
         if (plain === null) continue;
         db.prepare('UPDATE push_subs SET data = ? WHERE user_id = ? AND endpoint = ?').run(encryptWithNew(plain), userId, row.endpoint);
         reencrypted++;
     }
     for (const row of db.prepare('SELECT from_id, ts, data FROM stories WHERE from_id = ?').all(userId)) {
-        const plain = decryptForUser(userId, row.data);
+        const plain = decryptWithOld( row.data);
         if (plain === null) continue;
         db.prepare('UPDATE stories SET data = ? WHERE from_id = ? AND ts = ?').run(encryptWithNew(plain), userId, row.ts);
         reencrypted++;

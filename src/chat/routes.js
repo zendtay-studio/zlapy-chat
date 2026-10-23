@@ -14,14 +14,14 @@ const RANK = { sent: 1, delivered: 2, read: 3 };
 const crypto = require('crypto');
 const { blobAvailableTo, blobHashOk, blobQuotaOk, invalidateBlobQuota, readBlob, storeBlob } = require('./media.js');
 const { deleteMessageById, filterForViewer, getChatPage, invalidateChatPage, readMessagePage, resolveReply, rowToMessage, updateStoredMessage } = require('./messages.js');
-const { decorateForClient, onChatDeletedSummary, onMessageDeletedSummary, onMessageSentSummary, onReadSummary, readSummaryEntry, resolveName, writeSummaryEntry } = require('./summaries.js');
+const { decorateForClient, healSummary, onChatDeletedSummary, onMessageDeletedSummary, onMessageSentSummary, onReadSummary, readSummaryEntry, resolveName, writeSummaryEntry } = require('./summaries.js');
 const { applyChatPrefs, readChatPrefs, resolveTarget } = require('./prefs.js');
 const { CONFIG } = require('../config.js');
 const { decryptForUser } = require('../crypto/setup.js');
 const { db } = require('../db/database.js');
 const { Stmt } = require('../db/statements.js');
 const { pruneBlobHashes, tx } = require('../db/transactions.js');
-const { groupPolicies, readGroup } = require('../groups/store.js');
+const { groupPolicies, healGroupSummary, readGroup } = require('../groups/store.js');
 const { rejectRateLimitedMessage } = require('../http/helpers.js');
 const { json, securityHeaders } = require('../http/responses.js');
 const { notifyUser, pushNameOf } = require('../push/vapid.js');
@@ -79,6 +79,12 @@ function getChatsSummary(req, res, url, data, actor) {
     try {
     const raw = row.last_data ? decryptForUser(uuid, row.last_data) : null;
     last = raw ? JSON.parse(raw) : null;
+    /* Copia cifrada que YA no se puede leer (quedó con la clave anterior a la
+       corrección de la rotación): el resumen es una caché, se reconstruye
+       desde el último mensaje. Solo en ese caso: un resumen vacío a propósito
+       (mensaje borrado "para mí") se queda como está. */
+    if (!last && raw === null && String(row.last_data || '').startsWith('PCE3:'))
+        last = healSummary(uuid, row.peer, row.unread);
     } catch { }
     const name = resolveName(row.peer);
     const pref = prefs['dm:' + name] || {};
@@ -91,11 +97,18 @@ function getChatsSummary(req, res, url, data, actor) {
     // servidor, no cada cliente por su cuenta.
     for (const row of Stmt.listGroupSummaries.all(uuid)) {
         let last = null;
-        try {
-            const raw = row.last_data ? decryptForUser(uuid, row.last_data) : null;
-            last = raw ? JSON.parse(raw) : null;
-        } catch { }
-        if (!last && row.last_data) {
+        const cifrado = String(row.last_data || '').startsWith('PCE3:');
+        if (cifrado) {
+            try {
+                const raw = row.last_data ? decryptForUser(uuid, row.last_data) : null;
+                last = raw ? JSON.parse(raw) : null;
+                // Misma regla que los DMs: solo se reconstruye lo ilegible.
+                if (!last && raw === null) {
+                    const sanado = healGroupSummary(uuid, row.gid);
+                    if (sanado) last = sanado.last;
+                }
+            } catch { }
+        } else if (row.last_data) {
             // Formato antiguo (resúmenes de grupo guardados en claro).
             try { last = JSON.parse(row.last_data); } catch { }
         }

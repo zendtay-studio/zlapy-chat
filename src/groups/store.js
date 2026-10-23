@@ -218,6 +218,19 @@ function writeGroupSummary(owner, gid, entry) {
     Stmt.upsertGroupSummary.run(owner, gid, entry.unread || 0, encryptForUser(owner, JSON.stringify(entry.last || null)));
 }
 
+/* Igual que los DMs: si la copia cifrada del resumen quedó ilegible, se
+   reconstruye desde el último mensaje del grupo (que sí se descifra) y se
+   reescribe. Devuelve el arreglo { gid, unread, last }. */
+function healGroupSummary(owner, gid) {
+    const row = Stmt.lastMessage.get('group:' + gid);
+    const m = row ? rowToMessage(row) : null;
+    if (!m) return null;
+    const existing = readGroupSummary(owner, gid);
+    const entry = { gid, unread: (existing && existing.unread) || 0, last: groupLastEntry(m) };
+    writeGroupSummary(owner, gid, entry);
+    return entry;
+}
+
 function groupSummaryFor(owner, gid) {
     const existing = readGroupSummary(owner, gid);
     if (existing) return existing;
@@ -274,6 +287,7 @@ module.exports = {
     groupLastEntry,
     readGroupSummary,
     writeGroupSummary,
+    healGroupSummary,
     deleteGroupSummary,
     groupSummaryFor,
     updateGroupMessageSummaries,

@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const { findMessage } = require('./messages.js');
+const { findMessage, rowToMessage } = require('./messages.js');
 const { decryptForUser, encryptForUser } = require('../crypto/setup.js');
 const { Stmt } = require('../db/statements.js');
 const { users } = require('../state.js');
@@ -44,6 +44,19 @@ function readSummaryEntry(owner, peer) {
 
 function writeSummaryEntry(owner, peer, entry) {
     Stmt.upsertSummary.run(owner, peer, entry.unread || 0, encryptForUser(owner, JSON.stringify(entry.last || null)));
+}
+
+/* El resumen es una CACHÉ del último mensaje. Si su copia cifrada quedó
+   ilegible —una rotación de clave anterior a que la rotación re-cifrara esta
+   tabla, o una fila corrupta—, se reconstruye desde el propio mensaje, que sí
+   se descifra. Se reescribe para no repetirlo, y así el chat vuelve a tener
+   vista previa y su fecha real en la lista (orden incluido). */
+function healSummary(owner, peerId, unread = 0) {
+    const row = Stmt.lastMessage.get('chat:' + [owner, peerId].sort().join('__'));
+    const last = row ? lastEntryFromMsg(rowToMessage(row) || {}) : null;
+    if (!last || !last.id) return null;
+    writeSummaryEntry(owner, peerId, { unread: unread || 0, last });
+    return last;
 }
 
 function lastEntryFromMsg(msg) {
@@ -135,4 +148,5 @@ module.exports = {
     onMessageDeletedSummary,
     onChatDeletedSummary,
     renamePeerInSummaries,
+    healSummary,
 };
