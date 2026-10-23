@@ -8,7 +8,7 @@
 'use strict';
 
 const crypto = require('crypto');
-const { CONFIG } = require('../config.js');
+const { CONFIG, tlsState } = require('../config.js');
 const { promisify } = require('util');
 
 const scryptAsync = promisify(crypto.scrypt);
@@ -94,9 +94,11 @@ function requestEncrypted(req) {
 /* ¿La cookie debe marcarse como `Secure`?
    Sí si la conexión va cifrada, y también con FORCE_TLS activo: en ese modo
    toda petición en claro se redirige a HTTPS, así que la cookie solo puede
-   acabar en una conexión cifrada. */
+   acabar en una conexión cifrada. Se lee de tlsState (el valor EFECTIVO):
+   si el repliegue sin certificados lo bajó, la cookie no se marca Secure
+   sobre HTTP o el navegador la rechazaría. */
 function cookieSecure(req) {
-    return requestEncrypted(req) || CONFIG.forceTls;
+    return requestEncrypted(req) || tlsState.forceTls;
 }
 /* Par local (loopback IPv4/IPv6): quien habla con el servidor desde la propia
    máquina, es decir el túnel o un proxy inverso local. */

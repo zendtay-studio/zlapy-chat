@@ -22,7 +22,7 @@ const { withMentions } = require('../chat/mentions.js');
 const { deleteMessageById, filterForViewer, readMessagePage, resolveReply, rowToMessage, updateStoredMessage } = require('../chat/messages.js');
 const { getChatsSummary, getChatPreferences, getHave, getRoute2197, postChatDelete, postChatPreferences, postMessages, postMsgDelete, postMsgEdit, postPollVote, postReceipt, postSeen, postSend } = require('../chat/routes.js');
 const { decorateForClient } = require('../chat/summaries.js');
-const { CONFIG, PUBLIC } = require('../config.js');
+const { CONFIG, PUBLIC, tlsState } = require('../config.js');
 const { getContactsRequests, getContactsRequestsSent, postBlock, postContacts, postContactsCancel, postContactsRemove, postContactsRespond } = require('../contacts/routes.js');
 const { Stmt } = require('../db/statements.js');
 const { pruneBlobHashes, removeBlobAccess, tx } = require('../db/transactions.js');
@@ -60,7 +60,7 @@ const handleRequest = (req, res) => {
     // las rutas públicas), de modo que las credenciales y la cookie de sesión
     // nunca viajen sin cifrar. `requestEncrypted` ya cubre el caso del proxy
     // de confianza que termina TLS, así que no se entra en bucle.
-    if (CONFIG.forceTls && !requestEncrypted(req) && url.pathname !== '/healthz') {
+    if (tlsState.forceTls && !requestEncrypted(req) && url.pathname !== '/healthz') {
         const host = req.headers.host;
         if (host) {
             res.writeHead(301, {

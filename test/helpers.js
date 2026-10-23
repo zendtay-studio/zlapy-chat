@@ -29,10 +29,17 @@ async function startServer(options = {}) {
     const port = await freePort();
     const dataDir = options.dataDir || fs.mkdtempSync(path.join(os.tmpdir(), 'zlapy-test-'));
     const child = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
-        /* FORCE_TLS=false: las pruebas hablan HTTP contra una instancia local
-           y desechable. El forzado de TLS se comprueba aparte, en
-           test/tls-force.test.js, sobre la configuración. */
-        env: { ...process.env, PORT: String(port), DATA_DIR: dataDir, FORCE_TLS: 'false', BIND_HOST: 'auto' },
+        /* FORCE_TLS=false por defecto: las pruebas hablan HTTP contra una
+           instancia local y desechable. Un test puede PASAR POR ENCIMA (p. ej.
+           para el repliegue sin certificados) con options.env. */
+        env: {
+            ...process.env,
+            PORT: String(port),
+            DATA_DIR: dataDir,
+            FORCE_TLS: 'false',
+            BIND_HOST: 'auto',
+            ...(options.env || {})
+        },
         stdio: ['ignore', 'pipe', 'pipe']
     });
     let log = '';
