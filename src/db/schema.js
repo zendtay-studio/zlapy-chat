@@ -305,8 +305,8 @@ CREATE INDEX IF NOT EXISTS idx_ba_story ON blob_access(story_user) WHERE story_u
    tener acceso a lo que se publique después. */
 CREATE TABLE IF NOT EXISTS blob_access_members (
     hash     TEXT NOT NULL,
-    message_id TEXT NOT NULL,
-    user_id  TEXT NOT NULL,
+    message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    user_id  TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     PRIMARY KEY (hash, user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_bam_message ON blob_access_members(message_id);
@@ -471,6 +471,10 @@ function deleteAccountRows(db, userId, username) {
     hashes.push(...deleteMessageRowsWhere(db, "chat LIKE 'chat:%' AND instr(chat, ?) > 0", userId));
     // 3) Mensajes del usuario en cualquier chat (grupos incluidos).
     hashes.push(...deleteMessageRowsWhere(db, 'from_id = ?', userId));
+    // 3b) La foto de miembros del momento en la que aún era miembro: bases
+    //     creadas antes de que blob_access_members llevara FK no limpian
+    //     estas filas solas al borrar la cuenta.
+    db.prepare('DELETE FROM blob_access_members WHERE user_id = ?').run(userId);
     // 4) Historias del usuario.
     hashes.push(...db.prepare('SELECT DISTINCT hash FROM blob_access WHERE story_user = ?').pluck().all(userId));
     // 5) Historial de llamadas donde era el otro extremo.
