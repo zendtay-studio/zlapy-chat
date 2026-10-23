@@ -55,8 +55,21 @@ function getHave(req, res, url, data, actor) {
     return json(res, 200, { ok: blobAvailableTo(req.authUser, h) && Stmt.hasBlob.get(h) });
 }
 
+/* Orden de la lista de chats: lo manda el SERVIDOR. Fijados primero (el más
+   recientemente fijado por delante) y luego por actividad del último mensaje.
+   El cliente lo respeta tal cual, así que entrar en un chat no puede recolocar
+   la lista: el orden no depende de nada que cambie al leer. */
+function summarySort(a, b) {
+    if ((b.pinned ? 1 : 0) !== (a.pinned ? 1 : 0)) return (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0);
+    if ((b.pinnedAt || 0) !== (a.pinnedAt || 0)) return (b.pinnedAt || 0) - (a.pinnedAt || 0);
+    return ((b.last && b.last.ts) || 0) - ((a.last && a.last.ts) || 0);
+}
+
 function getChatsSummary(req, res, url, data, actor) {
     const uuid = req.authUser.id;
+    // Preferencias una vez: el orden (fijados, actividad) y los estados viajan
+    // en la misma respuesta, para que la lista sea un solo viaje.
+    const prefs = readChatPrefs(uuid);
     const chats = [];
     for (const row of Stmt.listSummaries.all(uuid)) {
     // El resumen se guarda cifrado con la clave del titular: se
@@ -67,9 +80,34 @@ function getChatsSummary(req, res, url, data, actor) {
     const raw = row.last_data ? decryptForUser(uuid, row.last_data) : null;
     last = raw ? JSON.parse(raw) : null;
     } catch { }
-    chats.push({ peer: resolveName(row.peer), peerId: row.peer, unread: row.unread, last });
+    const name = resolveName(row.peer);
+    const pref = prefs['dm:' + name] || {};
+    chats.push({
+        peer: name, peerId: row.peer, unread: row.unread, last,
+        pinned: pref.pinned === true, pinnedAt: pref.pinnedAt || 0, archived: pref.archived === true
+    });
     }
-    chats.sort((a, b) => ((b.last && b.last.ts) || 0) - ((a.last && a.last.ts) || 0));
+    // Los grupos van con el mismo trato: así la lista ENTERA la ordena el
+    // servidor, no cada cliente por su cuenta.
+    for (const row of Stmt.listGroupSummaries.all(uuid)) {
+        let last = null;
+        try {
+            const raw = row.last_data ? decryptForUser(uuid, row.last_data) : null;
+            last = raw ? JSON.parse(raw) : null;
+        } catch { }
+        if (!last && row.last_data) {
+            // Formato antiguo (resúmenes de grupo guardados en claro).
+            try { last = JSON.parse(row.last_data); } catch { }
+        }
+        const pref = prefs['group:' + row.gid] || {};
+        const group = readGroup(row.gid);
+        chats.push({
+            group: row.gid, groupName: (group && group.name) || '',
+            unread: row.unread, last,
+            pinned: pref.pinned === true, pinnedAt: pref.pinnedAt || 0, archived: pref.archived === true
+        });
+    }
+    chats.sort(summarySort);
     return json(res, 200, { chats });
 }
 

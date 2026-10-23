@@ -10417,6 +10417,14 @@
                 const brief = groupBrief[groupId] || { last: null, total: 0 };
                 if (!brief.last || (message.ts || 0) >= (brief.last.ts || 0)) brief.last = group.last;
                 groupBrief[groupId] = brief;
+                /* El resumen del servidor es el que manda en el orden: con un
+                   mensaje nuevo se actualiza TAMBIÉN, para que el chat suba en
+                   la lista en vivo (no solo al refrescar). */
+                const gs = groupSummary[groupId] || { group: groupId, unread: 0, last: null };
+                if (!gs.last || (message.ts || 0) >= (gs.last.ts || 0)) {
+                    gs.last = { id: message.id, kind: message.kind, ts: message.ts || 0, from: message.from, text: message.kind === 'text' && !message.once ? String(message.data || '').slice(0, 200) : '' };
+                    groupSummary[groupId] = gs;
+                }
             }
             function lastPreview(peer) {
                 const list = conv[peer] || [];
@@ -10498,7 +10506,7 @@
                 return date.toLocaleDateString([], { day: '2-digit', month: 'short' });
             }
             // Sin prototipo: se indexan por id de chat/grupo.
-            let chatSummary = Object.create(null), groupBrief = Object.create(null);
+            let chatSummary = Object.create(null), groupBrief = Object.create(null), groupSummary = Object.create(null);
             /* Preferencias de la lista de chats (fijado, silencio y "no leído").
                Las guarda el SERVIDOR: así la lista es la misma en el móvil y en
                el portátil. La clave canónica de una conversación es
@@ -10714,7 +10722,15 @@
             }
             /* Chats archivados: aparte de la lista, con su propio menú. */
             function archivedChatKeys() {
-                return Object.keys(chatPrefs).filter(key => chatPrefs[key] && chatPrefs[key].archived);
+                const keys = Object.keys(chatPrefs).filter(key => chatPrefs[key] && chatPrefs[key].archived);
+                /* También lo que el SERVIDOR marca como archivado: en un
+                   dispositivo nuevo la caché local todavía no lo sabe y el chat
+                   desaparecería de las dos listas. */
+                for (const [peer, s] of Object.entries(chatSummary))
+                    if (s && s.archived) { const k = dmPrefKey(peer); if (!keys.includes(k)) keys.push(k); }
+                for (const [gid, s] of Object.entries(groupSummary))
+                    if (s && s.archived) { const k = groupPrefKey(gid); if (!keys.includes(k)) keys.push(k); }
+                return keys;
             }
             function openArchivedChats() {
                 const keys = archivedChatKeys();
@@ -10805,6 +10821,15 @@
                 try {
                     const r = await fetch('/chats/summary', { cache: 'no-store' }).then(r => r.json()).catch(() => null);
                     for (const c of (r && r.chats) || []) {
+                        if (c.group) {
+                            /* Grupo: el servidor manda ts y fijado; el cliente
+                               solo pinta. Así entrar en un grupo no recoloca. */
+                            const current = groupSummary[c.group];
+                            if (!current || !current.last || !c.last || (c.last.ts || 0) >= (current.last.ts || 0))
+                                groupSummary[c.group] = { ...current, ...c };
+                            if (c.unread > 0) unread[c.group] = c.unread;
+                            continue;
+                        }
                         const current = chatSummary[c.peer];
                         if (!current || !current.last || !c.last || (c.last.ts || 0) >= (current.last.ts || 0))
                             chatSummary[c.peer] = { ...current, ...c };
@@ -11244,13 +11269,21 @@
                 const box = document.getElementById('contacts');
                 const prevTop = box.scrollTop;
                 const tsOf = key => {
+                    /* El orden lo manda el servidor: su `ts` es la verdad. El
+                       historial local (conv) solo entra cuando el servidor no
+                       tiene resumen todavía — así entrar en un chat NO puede
+                       mover la ficha en la lista. */
+                    const chatTs = chatSummary[key] && chatSummary[key].last ? chatSummary[key].last.ts || 0 : 0;
+                    if (chatTs > 0) return chatTs;
+                    /* Grupo: mismo trato — el ts del servidor manda. */
+                    const gTs = groupSummary[key] && groupSummary[key].last ? groupSummary[key].last.ts || 0 : 0;
+                    if (gTs > 0) return gTs;
                     const l = conv[key] || [];
                     const conversationTs = l.length ? l[l.length - 1].ts || 0 : 0;
-                    const chatTs = chatSummary[key] && chatSummary[key].last ? chatSummary[key].last.ts || 0 : 0;
                     const group = groups.find(item => item.id === key);
                     const groupTs = group && group.last ? group.last.ts || 0 : 0;
                     const briefTs = groupBrief[key] && groupBrief[key].last ? groupBrief[key].last.ts || 0 : 0;
-                    return Math.max(conversationTs, chatTs, groupTs, briefTs);
+                    return Math.max(conversationTs, groupTs, briefTs);
                 };
                 const contactRows = await Promise.all(contacts.map(async c => {
                     const p = await getProfile(c.username);
@@ -11261,14 +11294,18 @@
                     const act = activeKind === 'dm' && active === c.username;
                     const key = dmPrefKey(c.username);
                     const pref = chatPref(key);
-                    if (pref.archived) return null;   // los archivados van aparte
+                    /* El servidor manda fijado/archivado en su respuesta: una
+                       sola fuente de verdad para el orden y el estado. */
+                    const serverPref = chatSummary[c.username] || {};
+                    const pinnedAt = serverPref.pinnedAt || pref.pinnedAt;
+                    if (serverPref.archived || pref.archived) return null;   // los archivados van aparte
                     const unreadCount = contactUnreadCount(key);
                     const stamp = lastMessage ? `<span class="contactStamp">${chatTime(lastMessage.status === 'read' && lastMessage.readAt ? lastMessage.readAt : lastMessage.ts)}${lastMessage.from === me.username ? TICK({ ...lastMessage, mine: true }) : ''}</span>` : '<span class="contactStamp"></span>';
-                    const stateIcons = `${pref.muted ? '<span title="Silenciado" aria-label="Chat silenciado"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h12"/><path d="M10 21h4"/><path d="m3 3 18 18"/></svg></span>' : ''}${pref.pinned ? '<span title="Fijado" aria-label="Chat fijado"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 9V4l1-1V2H7v1l1 1v5l-2 2v2h5v8l1 2 1-2v-8h5v-2l-2-2Z"/></svg></span>' : ''}`;
+                    const stateIcons = `${pref.muted ? '<span title="Silenciado" aria-label="Chat silenciado"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h12"/><path d="M10 21h4"/><path d="m3 3 18 18"/></svg></span>' : ''}${pinnedAt > 0 ? '<span title="Fijado" aria-label="Chat fijado"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 9V4l1-1V2H7v1l1 1v5l-2 2v2h5v8l1 2 1-2v-8h5v-2l-2-2Z"/></svg></span>' : ''}`;
                     return {
                         ts: tsOf(c.username),
-                        pinnedAt: pref.pinnedAt,
-                        html: `<div class="contact contact-list-row${act ? ' active' : ''}${pref.pinned ? ' pinned' : ''}${pref.muted ? ' muted' : ''}" data-chat-peer="${escapeHtml(key)}">
+                        pinnedAt,
+                        html: `<div class="contact contact-list-row${act ? ' active' : ''}${pinnedAt > 0 ? ' pinned' : ''}${pref.muted ? ' muted' : ''}" data-chat-peer="${escapeHtml(key)}">
       <div class="avatar"><img src="${escapeHtml(p && p.avatar ? p.avatar : avatarUrl(c.username, p && p.id))}" alt="">${c.online ? '<span class="onlineDot" aria-label="en línea"></span>' : ''}</div>
       <div class="meta"><div class="contactMetaTop"><div class="name" title="${escapeHtml(presenceText(c))}">${escapeHtml(p && p.name ? p.name : c.username)}</div></div><div class="sub" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${sub}</div></div>
       <div class="contactAside">${stamp}<div class="contactStateIcons">${stateIcons}${unreadCount ? `<div class="unread">${unreadCount}</div>` : ''}</div></div>
@@ -11282,14 +11319,17 @@
                     const act = activeKind === 'group' && activeGroup && activeGroup.id === g.id;
                     const key = groupPrefKey(g.id);
                     const pref = chatPref(key);
-                    if (pref.archived) return null;   // los archivados van aparte
+                    /* Grupo: fijado/archivado también del servidor. */
+                    const serverPref = groupSummary[g.id] || {};
+                    const pinnedAt = serverPref.pinnedAt || pref.pinnedAt;
+                    if (serverPref.archived || pref.archived) return null;   // los archivados van aparte
                     const unreadCount = contactUnreadCount(key);
                     const stamp = lastMessage ? `<span class="contactStamp">${chatTime(lastMessage.ts)}</span>` : '';
-                    const stateIcons = `${pref.muted ? '<span title="Silenciado" aria-label="Grupo silenciado"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h12"/><path d="M10 21h4"/><path d="m3 3 18 18"/></svg></span>' : ''}${pref.pinned ? '<span title="Fijado" aria-label="Grupo fijado"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 9V4l1-1V2H7v1l1 1v5l-2 2v2h5v8l1 2 1-2v-8h5v-2l-2-2Z"/></svg></span>' : ''}`;
+                    const stateIcons = `${pref.muted ? '<span title="Silenciado" aria-label="Grupo silenciado"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h12"/><path d="M10 21h4"/><path d="m3 3 18 18"/></svg></span>' : ''}${pinnedAt > 0 ? '<span title="Fijado" aria-label="Grupo fijado"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 9V4l1-1V2H7v1l1 1v5l-2 2v2h5v8l1 2 1-2v-8h5v-2l-2-2Z"/></svg></span>' : ''}`;
                     return {
                         ts: tsOf(g.id),
-                        pinnedAt: pref.pinnedAt,
-                        html: `<div class="contact contact-list-row${act ? ' active' : ''}${pref.pinned ? ' pinned' : ''}${pref.muted ? ' muted' : ''}" data-chat-peer="${escapeHtml(key)}">
+                        pinnedAt,
+                        html: `<div class="contact contact-list-row${act ? ' active' : ''}${pinnedAt > 0 ? ' pinned' : ''}${pref.muted ? ' muted' : ''}" data-chat-peer="${escapeHtml(key)}">
       <div class="avatar groupGrid">${groupAvHTML(g)}</div>
       <div class="meta"><div class="contactMetaTop"><div class="name">${escapeHtml(g.name)}</div></div><div class="sub" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(last || g.members.length + ' participantes')}</div></div>
       <div class="contactAside">${stamp}<div class="contactStateIcons">${stateIcons}${unreadCount ? `<div class="unread">${unreadCount}</div>` : ''}</div></div>
@@ -11297,8 +11337,12 @@
                     };
                 });
                 const mixedRows = [...contactRows.filter(Boolean), ...groupRows]
+                    /* Mismo criterio que el servidor (summarySort): fijados
+                       primero, el más recientemente fijado por delante, y
+                       luego por actividad. Al entrar a un chat no se toca
+                       ningún ts, así que la lista no salta. */
                     .sort((a, b) => (b.pinnedAt ? 1 : 0) - (a.pinnedAt ? 1 : 0) ||
-                        (a.pinnedAt && b.pinnedAt ? a.pinnedAt - b.pinnedAt : 0) || b.ts - a.ts)
+                        (b.pinnedAt || 0) - (a.pinnedAt || 0) || b.ts - a.ts)
                     .map(row => row.html).join('');
                 const archivedCount = archivedChatKeys().length;
                 const archivedRow = archivedCount ? `<div class="contact archivedEntry" onclick="openArchivedChats()">
@@ -16002,6 +16046,7 @@
       <button class="mBtn" id="addAccount">Agregar cuenta</button>
       <div class="setHead accountSectionHead"><b>Seguridad de la cuenta</b><span>Los cambios sensibles (contraseña, usuario o borrado) exigen tu contraseña actual.</span></div>
       <button class="mBtn" id="changePassword">Cambiar contraseña</button>
+      <button class="mBtn" id="editNote">Nota personal</button>
       <button class="mBtn" id="regenerateKey">Regenerar clave de cifrado</button>
       <button class="mBtn peligro" id="logoutAccount">Cerrar sesión de esta cuenta</button>
       <button class="mBtn peligro" id="deleteAccountButton">Eliminar cuenta</button>`;
@@ -16011,6 +16056,7 @@
                     main.querySelectorAll('[data-remove-id]').forEach(button =>
                         button.onclick = () => removeLinkedAccount(button.dataset.removeId));
                     document.getElementById('changePassword').onclick = changeAccountPassword;
+                    document.getElementById('editNote').onclick = editPersonalNote;
                     document.getElementById('regenerateKey').onclick = regenerateAccountKey;
                     document.getElementById('logoutAccount').onclick = logout;
                     document.getElementById('deleteAccountButton').onclick = deleteAccount;
@@ -16560,7 +16606,7 @@
             function askAccountFields(title, fields) {
                 return Modal.vivo({
                     titulo: title,
-                    html: fields.map(field => `<input id="accountField-${field.name}" type="${field.type}" maxlength="${field.maxlength || 128}" placeholder="${escapeHtml(field.label)}" autocomplete="${field.autocomplete || 'off'}" style="width:100%;margin:4px 0;padding:12px;border-radius:8px;border:1px solid #374045;background:#111b21;color:#e9edef">`).join(''),
+                    html: fields.map(field => `<input id="accountField-${field.name}" type="${field.type}" maxlength="${field.maxlength || 128}" value="${field.value === undefined || field.value === null ? '' : escapeHtml(String(field.value))}" placeholder="${escapeHtml(field.label)}" autocomplete="${field.autocomplete || 'off'}" style="width:100%;margin:4px 0;padding:12px;border-radius:8px;border:1px solid #374045;background:#111b21;color:#e9edef">`).join(''),
                     acciones: [{ txt: 'Cancelar', valor: null }, { txt: 'Continuar', valor: '__OK__', tipo: 'ok' }],
                     onMount(sheet, close) {
                         sheet.querySelector('.mBtns').lastChild.onclick = () => {
@@ -16645,18 +16691,51 @@
                 delete values.confirmPassword;
                 await updateAccountCredentials(values);
             }
+            /* Nota personal de estado: antes el servidor la aceptaba (POST
+               /notes) pero el cliente nunca la usaba, así que solo se veía la
+               de otros y no se podía poner la tuya. */
+            async function editPersonalNote() {
+                const current = (profilesCache[me.username] && profilesCache[me.username].note) || '';
+                const values = await askAccountFields('Nota personal', [
+                    { name: 'text', label: 'Tu nota (visible para tus contactos)', type: 'text', value: current, maxlength: 500 }
+                ]);
+                if (!values || values.text === current) return;
+                try {
+                    const response = await fetch('/notes', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ data: values.text ? { text: values.text } : '' })
+                    });
+                    if (!response.ok) throw new Error('No se pudo guardar la nota.');
+                    const p = profilesCache[me.username] || (profilesCache[me.username] = {});
+                    p.note = values.text;
+                    p.noteTs = values.text ? Date.now() : 0;
+                    toast(values.text ? 'Nota actualizada.' : 'Nota borrada.');
+                    renderContacts();
+                } catch (error) {
+                    console.error('[account] No se pudo guardar la nota:', error);
+                    toast(error.message);
+                }
+            }
             async function regenerateAccountKey() {
                 const confirmed = await Modal.confirmar({
                     titulo: 'Regenerar clave de cifrado',
                     texto: 'Se creará una clave nueva para tu cuenta y se volverá a cifrar todo tu contenido (mensajes, resúmenes, perfil, notas, llamadas, push e historias). No se pierde el historial, pero la clave anterior deja de existir y la operación no se puede deshacer.',
-                    acciones: [{ txt: 'Cancelar', valor: false }, { txt: 'Regenerar clave', valor: true, tipo: 'peligro' }]
+                    acciones: [{ txt: 'Cancelar', valor: false }, { txt: 'Continuar', valor: true, tipo: 'peligro' }]
                 });
                 if (!confirmed) return;
+                // El servidor EXIGE la contraseña: con solo la cookie de sesión,
+                // un XSS o una cookie robada bastaban para dejar el historial de
+                // la víctima inaccesible. Se pide igual que al cambiarla.
+                const values = await askAccountFields('Confirma tu contraseña', [
+                    { name: 'password', label: 'Contraseña actual', type: 'password', autocomplete: 'current-password' }
+                ]);
+                if (!values || !values.password) return;
                 try {
                     const response = await fetch('/account/regenerate-key', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({})
+                        body: JSON.stringify({ password: values.password })
                     });
                     const result = await response.json().catch(() => ({}));
                     if (!response.ok) throw new Error(result.error || 'No se pudo regenerar la clave.');
@@ -17509,6 +17588,12 @@
                         const el = document.getElementById(id);
                         if (el && el.srcObject && el.paused) el.play().catch(() => { });
                     }
+                });
+                /* Al volver a la app se refresca la lista: el orden lo manda el
+                   servidor (fijados + actividad), así que lo que cambió en otros
+                   dispositivos se refleja sin recolocar nada a mano. */
+                document.addEventListener('visibilitychange', () => {
+                    if (!document.hidden && !call && typeof loadChatSummary === 'function') loadChatSummary();
                 });
                 const deep = new URLSearchParams(location.search);
                 Promise.all([
