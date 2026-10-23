@@ -137,6 +137,12 @@ const Stmt = {
     blobAccessMemberCount: db.prepare('SELECT COUNT(*) AS c FROM blob_access_members WHERE hash = ?'),
     blobAccessMembersByMessage: db.prepare('SELECT hash FROM blob_access_members WHERE message_id = ?'),
     deleteBlobAccessMembersByMessage: db.prepare('DELETE FROM blob_access_members WHERE message_id = ?'),
+    /* Purga de filas de acceso cuyo mensaje ya no existe (borrados masivos por
+       SQL, como el vaciado de chats o de cuentas, no pueden avisar a ninguna
+       statement JS). Las historias viven en la tabla `stories`, no en
+       `messages`, así que en blob_access se conservan. */
+    pruneOrphanBlobAccessMembers: db.prepare('DELETE FROM blob_access_members WHERE message_id NOT IN (SELECT id FROM messages)'),
+    pruneOrphanBlobAccess: db.prepare("DELETE FROM blob_access WHERE kind <> 'story' AND message_id NOT IN (SELECT id FROM messages)"),
     getBlobAccessStory: db.prepare(`SELECT story_user FROM blob_access WHERE hash = ? AND kind = 'story' LIMIT 1`),
 
     // Blobs

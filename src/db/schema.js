@@ -415,6 +415,7 @@ function deleteMessageRowsWhere(db, where, ...params) {
     if (rows.length) {
         const marks = rows.map(() => '?').join(',');
         db.prepare(`DELETE FROM blob_access WHERE message_id IN (${marks})`).run(...rows);
+        db.prepare(`DELETE FROM blob_access_members WHERE message_id IN (${marks})`).run(...rows);
         db.prepare(`DELETE FROM messages WHERE id IN (${marks})`).run(...rows);
     }
     return hashes;

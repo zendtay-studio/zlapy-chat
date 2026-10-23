@@ -88,3 +88,68 @@ test('el barrido identifica solo los adjuntos que nadie referencia', () => {
     // Sin huérfanos no hay nada que hacer.
     assert.deepEqual(orphanBlobHashes(guardados, guardados), []);
 });
+
+// Las filas de acceso (y su foto de miembros) deben desaparecer con su mensaje
+// en TODAS las vías de borrado, también en los DELETE masivos por SQL (vaciar
+// chats, borrar grupos): ahí no pasa ninguna statement JS que avise.
+function accessRowsHuerfanas(dataDir) {
+    const dbz = new Database(path.join(dataDir, 'zlapy.db'), { readonly: true });
+    const miembros = dbz.prepare(`
+        SELECT COUNT(*) AS c FROM blob_access_members m
+        WHERE NOT EXISTS (SELECT 1 FROM messages ms WHERE ms.id = m.message_id)`).get().c;
+    const acceso = dbz.prepare(`
+        SELECT COUNT(*) AS c FROM blob_access a
+        WHERE a.kind <> 'story'
+          AND NOT EXISTS (SELECT 1 FROM messages ms WHERE ms.id = a.message_id)`).get().c;
+    const totalMiembros = dbz.prepare('SELECT COUNT(*) AS c FROM blob_access_members').get().c;
+    dbz.close();
+    return { miembros, acceso, totalMiembros };
+}
+
+test('vaciar chats y borrar grupos no deja filas de acceso huérfanas', async () => {
+    const srv = await startServer();
+    try {
+        const ana = await register(srv.base, 'anahuerfana');
+        const beto = await register(srv.base, 'betohuerfano');
+        const sol = await api(srv.base, 'POST', '/contacts', { username: 'betohuerfano' }, ana.cookie);
+        assert.equal(sol.status, 200, 'ana debe poder pedir contacto');
+        const resp = await api(srv.base, 'POST', '/contacts/respond', { username: 'anahuerfana', accept: true }, beto.cookie);
+        assert.equal(resp.status, 200, 'beto debe poder aceptar el contacto');
+
+        // Adjunto en el chat 1:1 (fila blob_access kind='chat').
+        const a1 = adjunto(96);
+        const envio = await api(srv.base, 'POST', '/send',
+            { to: 'betohuerfano', kind: 'image', hash: a1.hash, data: a1.data }, ana.cookie);
+        assert.equal(envio.status, 200, 'ana debe poder enviar el adjunto a beto');
+
+        // Grupo abierto con los dos dentro y adjunto con foto de miembros
+        // (filas blob_access kind='group' + blob_access_members).
+        const grupo = await api(srv.base, 'POST', '/groups',
+            { name: 'purga', visibility: 'public', joinPolicy: 'open' }, ana.cookie);
+        assert.equal(grupo.status, 200);
+        const gid = grupo.json.id;
+        const join = await api(srv.base, 'POST', `/groups/${gid}`, { join: true }, beto.cookie);
+        assert.equal(join.status, 200, 'beto debe poder entrar al grupo público');
+        const a2 = adjunto(96);
+        const pubGrupo = await api(srv.base, 'POST', `/groups/${gid}`,
+            { message: { kind: 'image', hash: a2.hash, data: a2.data } }, ana.cookie);
+        assert.equal(pubGrupo.status, 200, 'ana debe poder publicar el adjunto en el grupo');
+
+        let filas = accessRowsHuerfanas(srv.dataDir);
+        assert.ok(filas.totalMiembros >= 2, 'precondición: la foto de miembros existe');
+        assert.ok(filas.acceso === 0 && filas.miembros === 0, 'precondición: sin huérfanos antes de borrar');
+
+        // Vaciar el chat 1:1 (borrado masivo por SQL)…
+        const vaciar = await api(srv.base, 'POST', '/chat/delete',
+            { peers: ['betohuerfano'], clearBoth: true }, ana.cookie);
+        assert.equal(vaciar.status, 200, 'vaciar el chat debe funcionar');
+
+        // …y borrar el grupo entero (el admin es ana).
+        const borrar = await api(srv.base, 'POST', `/groups/${gid}`, { deleteGroup: true }, ana.cookie);
+        assert.ok([200, 204].includes(borrar.status));
+
+        filas = accessRowsHuerfanas(srv.dataDir);
+        assert.equal(filas.miembros, 0, 'ninguna fila de miembros puede quedar sin su mensaje');
+        assert.equal(filas.acceso, 0, 'ningún acceso (salvo historias) puede quedar sin su mensaje');
+    } finally { await stop(srv); }
+});

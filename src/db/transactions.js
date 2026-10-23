@@ -45,6 +45,10 @@ function sweepOrphanBlobs(limit = ORPHAN_SWEEP_BATCH, log = () => { }, sources =
     // Transacción única: o se van todos los de la tanda o ninguno.
     const purge = blobDb.transaction(hashes => {
         for (const hash of hashes) Stmt.deleteBlobByHash.run(hash);
+        // De paso, filas de acceso cuyo mensaje desapareció por una vía SQL
+        // (vaciar chats, borrar cuentas, purgar grupos).
+        Stmt.pruneOrphanBlobAccessMembers.run();
+        Stmt.pruneOrphanBlobAccess.run();
     });
     purge(huerfanos);
     log(`[blobs] purgados ${huerfanos.length} adjuntos huérfanos`);
