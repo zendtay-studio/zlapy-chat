@@ -13,7 +13,7 @@ const net = require('net');
 const fs = require('fs');
 const path = require('path');
 
-const { CONFIG, PORT, ROOT } = require('../config.js');
+const { CONFIG, PORT, ROOT, TLS_CERT_FILE, TLS_KEY_FILE, tlsState } = require('../config.js');
 const { db, blobDb } = require('../db/database.js');
 const { users } = require('../state.js');
 const { handler } = require('./router.js');
@@ -21,15 +21,15 @@ const { wsUpgrade } = require('../realtime/websocket.js');
 
 
 // Arranque de servidores
-// Los certificados viven en la raiz del proyecto (cert.pem / key.pem).
-const certPath = path.join(ROOT, 'cert.pem'), keyPath = path.join(ROOT, 'key.pem');
-const useTls = fs.existsSync(certPath) && fs.existsSync(keyPath);
+// Los certificados viven por defecto en la raíz del proyecto (cert.pem/key.pem).
+const useTls = fs.existsSync(TLS_CERT_FILE) && fs.existsSync(TLS_KEY_FILE);
 
 /* Sin certificados no hay HTTPS al que redirigir: forzar TLS dejaría el
-   servicio inaccesible, así que el forzado se desactiva solo. El usuario puede
+   servicio inaccesible, así que el forzado se desactiva solo (sobre
+   tlsState, que es mutable: CONFIG está congelada). El usuario puede
    recuperarlo con FORCE_TLS=true cuando instale los certificados. */
-if (CONFIG.forceTls && !useTls) {
-    CONFIG.forceTls = false;
+if (tlsState.forceTls && !useTls) {
+    tlsState.forceTls = false;
     console.warn('[tls] FORCE_TLS desactivado: no hay cert.pem/key.pem. El tráfico (y la cookie de sesión) viajará sin cifrar.');
 }
 /* Interfaz de escucha: 'loopback' restringe a la propia máquina (proxy
@@ -39,7 +39,7 @@ const bindHost = CONFIG.bindHost === 'loopback' ? '127.0.0.1' : '0.0.0.0';
 const SOCKET_IDLE_TIMEOUT_MS = 60 * 1000;
 
 const httpSrv = http.createServer(handler);
-const httpsSrv = useTls ? require('https').createServer({ cert: fs.readFileSync(certPath), key: fs.readFileSync(keyPath) }, handler) : null;
+const httpsSrv = useTls ? require('https').createServer({ cert: fs.readFileSync(TLS_CERT_FILE), key: fs.readFileSync(TLS_KEY_FILE) }, handler) : null;
 
 httpSrv.on('upgrade', wsUpgrade);
 if (httpsSrv) httpsSrv.on('upgrade', wsUpgrade);
@@ -78,7 +78,7 @@ dispatcher.listen({ port: PORT, host: bindHost, exclusive: false }, () => {
     /* Con el forzado de TLS activo solo se anuncian las URL cifradas: ofrecer
        la de HTTP invitaría a usar una vía que el servidor va a redirigir (y en
        la que, si FORCE_TLS estuviera apagado, la cookie viajaría sin proteger). */
-    if (!CONFIG.forceTls) {
+    if (!tlsState.forceTls) {
         console.log(`\n   Esta PC:   http://localhost:${PORT}`);
         ips.forEach(ip => console.log(`   Tu red:    http://${ip}:${PORT}`));
     }

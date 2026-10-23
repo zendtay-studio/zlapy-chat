@@ -12,7 +12,7 @@ const crypto = require('crypto');
 const http = require('http');
 const { getSessionFromCache, hashSessionToken, originAllowed, requestEncrypted, sessionCookie } = require('../auth/sessions.js');
 const { addCall, endUserCalls, hasCall, updateCall } = require('../calls/store.js');
-const { CONFIG } = require('../config.js');
+const { CONFIG, tlsState } = require('../config.js');
 const { decryptForUser } = require('../crypto/setup.js');
 const { db } = require('../db/database.js');
 const { Stmt } = require('../db/statements.js');
@@ -48,7 +48,7 @@ const wsUpgradeInner = (req, socket) => {
     /* Misma regla que para HTTP: con FORCE_TLS activo el canal en tiempo real
        solo se abre por una conexión cifrada. Responder 426 en vez de redirigir
        porque una petición de upgrade no puede seguir un 301. */
-    if (CONFIG.forceTls && !requestEncrypted(req))
+    if (tlsState.forceTls && !requestEncrypted(req))
         return rejectUpgrade(socket, 426, 'Upgrade Required');
     // Handshake: validar lo mínimo que exige RFC 6455 antes de responder 101.
     if (String(req.headers.upgrade || '').toLowerCase() !== 'websocket' ||

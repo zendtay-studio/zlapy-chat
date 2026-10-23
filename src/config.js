@@ -126,11 +126,29 @@ const DATA = CONFIG.dataDir ? path.resolve(CONFIG.dataDir) : path.join(ROOT, 'da
 const DB_PATH = path.join(DATA, 'zlapy.db');
 const BLOB_DB_PATH = path.join(DATA, 'blob.db');
 
+/* Valor EFECTIVO de FORCE_TLS. CONFIG está congelada a propósito (los ajustes
+ * no se recalculan en caliente), pero el repliegue sin certificados necesita
+ * rebajarlo al arrancar: sin este portador mutable, la asignación lanza
+ * TypeError y el servidor muere al arrancar en cualquier instalación nueva
+ * sin cert.pem/key.pem (lo cazó el CI porque el checkout no lleva certificados). */
+const tlsState = { forceTls: CONFIG.forceTls };
+
+/* Rutas de los certificados TLS (avanzado): por defecto, en la raíz del
+ * proyecto. Se pueden apuntar a otro sitio para pruebas o para instalaciones
+ * servidas tras un proxy que termina el TLS. */
+const TLS_CERT_FILE = typeof process.env.TLS_CERT_FILE === 'string' && process.env.TLS_CERT_FILE.trim()
+    ? path.resolve(process.env.TLS_CERT_FILE.trim()) : path.join(ROOT, 'cert.pem');
+const TLS_KEY_FILE = typeof process.env.TLS_KEY_FILE === 'string' && process.env.TLS_KEY_FILE.trim()
+    ? path.resolve(process.env.TLS_KEY_FILE.trim()) : path.join(ROOT, 'key.pem');
+
 module.exports = {
     DEFAULTS,
     loadConfig,
     ROOT,
     CONFIG,
+    tlsState,
+    TLS_CERT_FILE,
+    TLS_KEY_FILE,
     GIPHY_API_KEY,
     PORT,
     PUBLIC,
