@@ -18,7 +18,7 @@ const { db } = require('../db/database.js');
 const { Stmt } = require('../db/statements.js');
 const { pruneBlobHashes, removeBlobAccess } = require('../db/transactions.js');
 const { readGroup } = require('../groups/store.js');
-const { profileLimiter } = require('../http/rate-limit.js');
+const { loginAttempts, profileLimiter, registerAttempts } = require('../http/rate-limit.js');
 const { notifyUser, pushNameOf } = require('../push/vapid.js');
 const { MAX_BUFFER_BYTES, closeFrame, parseFrames } = require('./frames.js');
 const { acceptHandshake, openFrame } = require('./encrypted.js');
@@ -341,14 +341,23 @@ setInterval(() => {
     pruneBlobHashes(removedHashes);
 }, 60000).unref();
 
-// Limpieza de sesiones expiradas y de los mapas de intentos (una vez cada 10 min)
-setInterval(() => {
-    try { Stmt.deleteExpiredSessions.run(Date.now()); } catch { }
-    const now = Date.now();
-    for (const [key, entry] of [...loginAttempts]) if (entry.until <= now) loginAttempts.delete(key);
-    for (const [key, entry] of [...registerAttempts]) if (entry.until <= now) registerAttempts.delete(key);
-    for (const [hash, session] of [...sessionCache]) if (session.expiresAt <= now) sessionCache.delete(hash);
-}, 600000).unref();
+// Limpieza de sesiones expiradas y de los mapas de intentos (una vez cada 10 min).
+// Exportada y probada directamente: un ReferenceError aquí (identificador sin
+// importar) mataba el servidor cada 10 minutos con la suite entera en verde,
+// porque los tests paran sus servidores antes de que el temporizador dispare.
+// Cada familia lleva su propio try: una limpieza rota se AVISA (y se ve en el
+// log del supervisor), pero ni tumba el proceso ni deja sin hacer a las demás.
+function pruneAuthState(now = Date.now()) {
+    try { Stmt.deleteExpiredSessions.run(now); } catch (e) { console.error('[pruneAuthState] sesiones:', e.message); }
+    try {
+        for (const [key, entry] of [...loginAttempts]) if (entry.until <= now) loginAttempts.delete(key);
+        for (const [key, entry] of [...registerAttempts]) if (entry.until <= now) registerAttempts.delete(key);
+    } catch (e) { console.error('[pruneAuthState] intentos:', e.message); }
+    try {
+        for (const [hash, session] of [...sessionCache]) if (session.expiresAt <= now) sessionCache.delete(hash);
+    } catch (e) { console.error('[pruneAuthState] caché de sesiones:', e.message); }
+}
+setInterval(() => pruneAuthState(), 600000).unref();
 
 // Limpieza de notas personales caducadas: la caducidad (24 h) se aplica
 // también al almacenamiento, para que la nota caducada no siga en la base
@@ -377,4 +386,5 @@ module.exports = {
     rejectUpgrade,
     wsUpgradeInner,
     wsUpgrade,
+    pruneAuthState,
 };
