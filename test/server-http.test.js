@@ -57,15 +57,18 @@ test('auth: registro, login, duplicado, contraseña débil y nombres reservados'
     } finally { await stop(srv); }
 });
 
-test('8 logins fallidos bloquean y el 9º recibe 429', async () => {
+test('los accesos fallidos frenan con retardo progresivo y nunca bloquean al legitimo', async () => {
     const srv = await startServer();
     try {
+        const ana = await register(srv.base, 'ana');
         let last = null;
-        for (let i = 0; i < 8; i++)
+        for (let i = 0; i < 10; i++)
             last = await api(srv.base, 'POST', '/auth/login', { username: 'ana', password: 'malaclave99' });
-        assert.notEqual(last.status, 429, 'el 8º intento aún no bloquea');
-        const blocked = await api(srv.base, 'POST', '/auth/login', { username: 'ana', password: 'malaclave99' });
-        assert.equal(blocked.status, 429);
+        // El freno es retardo, no bloqueo: sigue respondiendo 401, no 429.
+        assert.equal(last.status, 401, 'un intento fallido sigue siendo 401, nunca un 429 que deje fuera al legitimo');
+        // Y con la clave correcta se entra (el contador de esa cuenta se limpia).
+        const ok = await api(srv.base, 'POST', '/auth/login', { username: 'ana', password: 'pruebachat1' });
+        assert.equal(ok.status, 200);
     } finally { await stop(srv); }
 });
 

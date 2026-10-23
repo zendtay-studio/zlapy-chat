@@ -19,6 +19,28 @@ const { blockedSet, notesMap, profiles, sessionCache, usernameIndex, users } = r
 const { normPriv } = require('../users/privacy.js');
 const { accountByName, loadUserFromRow, saveUserToDb } = require('../users/store.js');
 
+/* Umbrales de los frenos de fuerza bruta.
+ *
+ * El contador por CUENTA e IP mide retardo progresivo, NO bloqueo: tras unos
+ * fallos cada intento espera el doble que el anterior (con tope). Un atacante
+ * pierde toda la ventaja de la fuerza bruta (no puede probar contraseñas a
+ * ritmo) y, sobre todo, **no puede dejar a la víctima sin poder entrar**: su
+ * acceso legítimo solo tarda unos segundos más y el contador se borra en
+ * cuanto acierta. Es la diferencia con un 429 por cubo, que tras el túnel (todo
+ * sale de la misma IP) habría permitido bloquear a terceros a voluntad.
+ *
+ * El contador GLOBAL sí bloquea un minuto, pero solo cruza su umbral con cientos
+ * de fallos: es la respuesta a quien rota direcciones o nombres para no acumular
+ * nunca en el mismo cubo. */
+const LOGIN_DELAY_FROM = 4;
+const LOGIN_DELAY_MAX_MS = 10 * 1000;
+const LOGIN_WINDOW_MS = 10 * 60 * 1000;
+const LOGIN_GLOBAL_LIMIT = 300;
+const LOGIN_GLOBAL_COOLDOWN_MS = 60 * 1000;
+/* Retardo que corresponde a un número de fallos: 500 ms, 1 s, 2 s, 4 s… hasta
+   el tope. Nunca bloquea: solo frena. */
+const loginDelayMs = fails => Math.min(LOGIN_DELAY_MAX_MS, 500 * Math.pow(2, Math.max(0, fails - LOGIN_DELAY_FROM)));
+
 function getAuthSession(req, res, url, data, actor) {
     const token = sessionCookie(req);
     const user = sessionUser(req);
@@ -63,16 +85,33 @@ function postKey(req, res, url, data, actor) {
 
 async function postAuthRegister(req, res, url, data, actor) {
     // El registro ejecuta scrypt por petición: sin cota es un
-    // DoS de CPU y una fábrica de cuentas basura.
+    // DoS de CPU y una fábrica de cuentas basura. El contador usa la IP del
+    // socket (no una cabecera) y se complementa con uno global, para que rotar
+    // direcciones no sirva de nada.
     const regIp = clientIp(req);
+    const regNow = Date.now();
+    const regGlobal = registerAttempts.get('global:registros');
+    if (regGlobal && regGlobal.until > regNow)
+        return json(res, 429, { error: 'Demasiados registros. Prueba más tarde.' });
     const regCurrent = registerAttempts.get(regIp);
-    if (regCurrent && regCurrent.until > Date.now() && regCurrent.count >= 15)
+    if (regCurrent && regCurrent.until > regNow && regCurrent.count >= 15)
         return json(res, 429, { error: 'Demasiados registros desde esta red. Prueba más tarde.' });
-    const regEntry = regCurrent && regCurrent.until > Date.now()
+    const regEntry = regCurrent && regCurrent.until > regNow
         ? regCurrent
         : { count: 0, until: Date.now() + 60 * 60 * 1000 };
     regEntry.count++;
     registerAttempts.set(regIp, regEntry);
+    /* Contador global de registros: 60 por hora en todo el servicio. Cruza ese
+       umbral solo una fuerza bruta o una fábrica de cuentas, nunca el uso
+       normal de una instancia doméstica. */
+    const g0 = regGlobal && regGlobal.count !== undefined ? regGlobal : { count: 0, until: 0 };
+    g0.count++;
+    if (g0.count >= 60) {
+        g0.until = regNow + 15 * 60 * 1000;
+        g0.count = 30;
+        console.warn('[register] 60 registros en una hora: enfriamiento de 15 minutos.');
+    }
+    registerAttempts.set('global:registros', g0);
     if (typeof data.username === 'string') data.username = data.username.trim().toLowerCase();
     if (!validUsername(data.username) || typeof data.password !== 'string' || data.password.length < 8 || data.password.length > 128)
         return json(res, 400, { error: 'Invalid username or password.' });
@@ -111,36 +150,42 @@ async function postAuthRegister(req, res, url, data, actor) {
 async function postAuthLogin(req, res, url, data, actor) {
     const ip = clientIp(req);
     const name = typeof data.username === 'string' ? data.username.trim().toLowerCase() : '';
-    // Límite por CUENTA objetivo: detrás del túnel todas las
-    // conexiones comparten IP, así que un tope solo por IP
-    // bloquearía el login de todo el mundo. El tope por IP existe
-    // pero es mucho más suave (30).
-    // El bloqueo por cuenta se guarda POR CUENTA E IP: con la IP
-    // en la clave, el bloqueo alcanza a quien falla desde esa
-    // misma IP y no a la víctima. El 429 se devuelve antes de
-    // comprobar la contraseña, así que con el contador agotado
-    // ni un acierto pasa.
+    /* Contadores de fallos, en dos niveles:
+       · por CUENTA e IP → retardo progresivo (nunca bloqueo), ver las
+         constantes de arriba.
+       · GLOBAL → enfriamiento corto para quien rota direcciones o nombres.
+       La IP es siempre la del socket (nunca una cabecera), así que no se puede
+       falsear para girar entre cubos. */
     const acct = loginAttempts.get('acct:' + name + '@' + ip);
-    const byIp = loginAttempts.get('ip:' + ip);
-    if ((acct && acct.until > Date.now() && acct.count >= 8) ||
-        (byIp && byIp.until > Date.now() && byIp.count >= 30))
-        return json(res, 429, { error: 'Too many login attempts.' });
+    const global = loginAttempts.get('global:logins');
+    const now = Date.now();
+    if (global && global.until > now) return json(res, 429, { error: 'Demasiados intentos fallidos. Espera un minuto.' });
     const user = name ? accountByName(name) : null;
     let valid = false;
     if (user && typeof data.password === 'string' && data.password.length <= 128)
         valid = safeEqualHex(user.passwordHash, await passwordDigest(data.password, user.passwordSalt));
     else await passwordDigest('invalid-password', '00'.repeat(16));
     if (!valid) {
-        for (const key of ['acct:' + name + '@' + ip, 'ip:' + ip]) {
-            const current = loginAttempts.get(key);
-            const entry = current && current.until > Date.now() ? current : { count: 0, until: Date.now() + 10 * 60 * 1000 };
-            entry.count++;
-            loginAttempts.set(key, entry);
+        // Se registra el fallo y se FRENA el siguiente intento de este cubo.
+        const entry = acct && acct.until > now ? acct : { count: 0, until: now + LOGIN_WINDOW_MS };
+        entry.count++;
+        loginAttempts.set('acct:' + name + '@' + ip, entry);
+        const g = global && global.count !== undefined ? global : { count: 0, until: 0 };
+        g.count++;
+        if (g.count >= LOGIN_GLOBAL_LIMIT) {
+            g.until = now + LOGIN_GLOBAL_COOLDOWN_MS;
+            g.count = Math.floor(LOGIN_GLOBAL_LIMIT / 2);
+            console.warn(`[auth] ${LOGIN_GLOBAL_LIMIT} intentos de acceso fallidos: enfriamiento de ${LOGIN_GLOBAL_COOLDOWN_MS / 1000}s.`);
         }
+        loginAttempts.set('global:logins', g);
+        await new Promise(resolve => setTimeout(resolve, loginDelayMs(entry.count)));
         return json(res, 401, { error: 'Invalid username or password.' });
     }
+    // Acierto: el cubo de esa cuenta e IP se limpia, el acceso legítimo vuelve
+    // a ser inmediato (también el de la víctima tras los fallos de un atacante).
     loginAttempts.delete('acct:' + name + '@' + ip);
-    loginAttempts.delete('acct:' + name);
+    const espera = acct && acct.count >= LOGIN_DELAY_FROM ? loginDelayMs(acct.count) : 0;
+    if (espera > 0) await new Promise(resolve => setTimeout(resolve, espera));
     return json(res, 200, { ok: true, user: createSession(user, req, res) });
 }
 
@@ -148,31 +193,30 @@ async function postAuthAddAccount(req, res, url, data, actor) {
     if (!req.authUser) return json(res, 401, { error: 'authentication required' });
     const ip = clientIp(req);
     const username = typeof data.username === 'string' ? data.username.trim().toLowerCase() : '';
-    // Freno de fuerza bruta: se consultan los contadores por cuenta
-    // e IP antes de validar la contraseña (umbrales 8 y 30). La
-    // cuenta se cuenta junto a la IP para que un atacante no
-    // pueda bloquear a la víctima desde otra red.
+    /* Mismos frenos que el acceso: contador por cuenta e IP con retardo
+       progresivo (nunca bloqueo) más el global anti-rotación. */
     const acct = loginAttempts.get('acct:' + username + '@' + ip);
-    const byIp = loginAttempts.get('ip:' + ip);
-    if ((acct && acct.until > Date.now() && acct.count >= 8) ||
-        (byIp && byIp.until > Date.now() && byIp.count >= 30))
-        return json(res, 429, { error: 'Demasiados intentos. Espera un momento e inténtalo de nuevo.' });
+    const global = loginAttempts.get('global:logins');
+    const now = Date.now();
+    if (global && global.until > now) return json(res, 429, { error: 'Demasiados intentos. Espera un momento e inténtalo de nuevo.' });
     const user = validUsername(username) ? accountByName(username) : null;
     const password = typeof data.password === 'string' ? data.password : '';
     const valid = user && password.length <= 128
         ? safeEqualHex(user.passwordHash, await passwordDigest(password, user.passwordSalt))
         : (await passwordDigest('invalid-password', '00'.repeat(16)), false);
     if (!valid) {
-        for (const key of ['acct:' + username + '@' + ip, 'ip:' + ip]) {
-            const current = loginAttempts.get(key);
-            const entry = current && current.until > Date.now() ? current : { count: 0, until: Date.now() + 10 * 60 * 1000 };
-            entry.count++;
-            loginAttempts.set(key, entry);
-        }
+        const entry = acct && acct.until > now ? acct : { count: 0, until: now + LOGIN_WINDOW_MS };
+        entry.count++;
+        loginAttempts.set('acct:' + username + '@' + ip, entry);
+        const g = global && global.count !== undefined ? global : { count: 0, until: 0 };
+        g.count++;
+        loginAttempts.set('global:logins', g);
+        await new Promise(resolve => setTimeout(resolve, loginDelayMs(entry.count)));
         return json(res, 401, { error: 'Usuario o contraseña incorrectos.' });
     }
     loginAttempts.delete('acct:' + username + '@' + ip);
-    loginAttempts.delete('acct:' + username);
+    const espera = acct && acct.count >= LOGIN_DELAY_FROM ? loginDelayMs(acct.count) : 0;
+    if (espera > 0) await new Promise(resolve => setTimeout(resolve, espera));
     return json(res, 200, { ok: true, user: createLinkedAccountSession(user, req, res) });
 }
 
@@ -204,6 +248,20 @@ function postAuthSwitch(req, res, url, data, actor) {
     // cuenta vinculada.
     try { Stmt.deleteSession.run(hash); } catch { }
     sessionCache.delete(hash);
+    /* También se revoca la sesión SALIENTE (la cookie principal de la cuenta
+       que se abandona). Sin esto, el token anterior seguía siendo válido
+       30 días: quien lo hubiera copiado (una cookie filtrada, otro navegador)
+       mantenía el acceso a la cuenta que el usuario creía haber cerrado. */
+    const outgoing = req.authUser;
+    if (outgoing && outgoing.id !== user.id) {
+        for (const [tokenHash, session] of sessionCache) {
+            if (session.userId === outgoing.id) {
+                sessionCache.delete(tokenHash);
+                try { Stmt.deleteSession.run(tokenHash); } catch { }
+            }
+        }
+        for (const sk of [...(outgoing.sockets || [])]) { try { sk.destroy(); } catch { } }
+    }
     const switched = createSession(user, req, res);
     return json(res, 200, { ok: true, user: switched });
 }

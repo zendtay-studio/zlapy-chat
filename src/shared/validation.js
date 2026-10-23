@@ -65,15 +65,20 @@ const validPushEndpoint = raw => {
         host.endsWith('.push.apple.com');
 };
 
-/* IP real del cliente: tras el túnel todo llega desde loopback, y solo en ese
- * caso se confía en la cabecera que añade el propio proxy (CF-Connecting-IP).
- * Un cliente de la LAN no puede falsearla porque no llega por 127.0.0.1. */
+/* IP del cliente tal y como la ve el servidor: la dirección del socket.
+ *
+ * NO se usa ninguna cabecera (ni `CF-Connecting-IP` ni `X-Forwarded-For`)
+ * para los límites de frecuencia. Detrás del túnel toda conexión llega desde
+ * loopback, así que confiar en una cabecera "solo desde loopback" equivale a
+ * confiar en ella siempre: cualquier cliente que alcance el puerto directamente
+ * (la LAN o la propia máquina) rotaría identificadores a voluntad y anularía el
+ * límite por IP. La dirección del socket no se puede falsificar.
+ *
+ * El proxy inverso que necesite identificar al usuario real debe hacerlo con
+ * `X-Forwarded-For`, que el servidor registra pero no usa para decidir. */
 const clientIp = req => {
-    const remote = req.socket.remoteAddress || 'unknown';
-    const isLoopback = remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
-    if (isLoopback && typeof req.headers['cf-connecting-ip'] === 'string' && req.headers['cf-connecting-ip'])
-        return req.headers['cf-connecting-ip'];
-    return remote;
+    const remote = req && req.socket && req.socket.remoteAddress;
+    return typeof remote === 'string' && remote ? remote : 'unknown';
 };
 const NOTE_TTL = CONFIG.noteTtlMs;
 

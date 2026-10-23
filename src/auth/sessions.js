@@ -8,6 +8,7 @@
 'use strict';
 
 const crypto = require('crypto');
+const { CONFIG } = require('../config.js');
 const { promisify } = require('util');
 
 const scryptAsync = promisify(crypto.scrypt);
@@ -74,16 +75,46 @@ function sessionUser(req) {
     try { Stmt.deleteSession.run(hash); } catch { }
     return null;
 }
+/* ¿El último salto de la petición llegó cifrado?
+ *
+ * Dos casos: conexión TLS directa (`req.socket.encrypted`) o proxy de
+ * confianza que termina TLS y reenvía en claro declarándolo con
+ * `X-Forwarded-Proto`. La cabecera **solo** se acepta desde loopback, que es
+ * el despliegue documentado (el túnel de Cloudflare corre en la misma
+ * máquina): si se confiase en ella desde cualquier origen, un cliente podría
+ * hacerse pasar por HTTPS.
+ *
+ * OJO: `CONFIG.forceTls` NO entra aquí. Es la propia condición la que decide
+ * si hay que redirigir, así que darla por cumplida haría que la redirección
+ * nunca se produjera. */
+function requestEncrypted(req) {
+    if (req.socket && req.socket.encrypted) return true;
+    return req.headers['x-forwarded-proto'] === 'https' && isLoopbackPeer(req);
+}
+/* ¿La cookie debe marcarse como `Secure`?
+   Sí si la conexión va cifrada, y también con FORCE_TLS activo: en ese modo
+   toda petición en claro se redirige a HTTPS, así que la cookie solo puede
+   acabar en una conexión cifrada. */
+function cookieSecure(req) {
+    return requestEncrypted(req) || CONFIG.forceTls;
+}
+/* Par local (loopback IPv4/IPv6): quien habla con el servidor desde la propia
+   máquina, es decir el túnel o un proxy inverso local. */
+function isLoopbackPeer(req) {
+    const address = req && req.socket && req.socket.remoteAddress;
+    if (typeof address !== 'string' || !address) return false;
+    return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1' || address.startsWith('::ffff:127.');
+}
 function setSessionCookie(res, req, token) {
-    const secure = !!req.socket.encrypted || req.headers['x-forwarded-proto'] === 'https';
+    const secure = cookieSecure(req);
     appendCookie(res, `chatlocal_session=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(AUTH_SESSION_TTL / 1000)}${secure ? '; Secure' : ''}`);
 }
 function setAccountSessionCookie(res, req, userId, token) {
-    const secure = !!req.socket.encrypted || req.headers['x-forwarded-proto'] === 'https';
+    const secure = cookieSecure(req);
     appendCookie(res, `${accountCookieName(userId)}=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(AUTH_SESSION_TTL / 1000)}${secure ? '; Secure' : ''}`);
 }
 function clearCookie(res, req, name) {
-    const secure = !!req.socket.encrypted || req.headers['x-forwarded-proto'] === 'https';
+    const secure = cookieSecure(req);
     appendCookie(res, `${name}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secure ? '; Secure' : ''}`);
 }
 const clearSessionCookie = (res, req) => clearCookie(res, req, 'chatlocal_session');
@@ -108,7 +139,10 @@ function createLinkedAccountSession(user, req, res) {
 }
 /* Comprobación de origen: el host del header Origin debe coincidir con el
    que sirve la petición. Es la primera barrera contra el CSRF y también
-   evita que otro sitio abra el WebSocket. */
+   evita que otro sitio abra el WebSocket.
+   Sin Origin la petición sigue admitida: los navegadores siempre lo mandan en
+   las peticiones cross-site (y son las que interesan) y en las same-site de
+   origen propio; los clientes sin navegador ya tienen el token. */
 function originAllowed(req) {
     const origin = req.headers.origin;
     if (!origin) return true;
@@ -145,6 +179,9 @@ module.exports = {
     createSession,
     createLinkedAccountSession,
     originAllowed,
+    requestEncrypted,
+    cookieSecure,
+    isLoopbackPeer,
     passwordDigest,
     safeEqualHex,
 };

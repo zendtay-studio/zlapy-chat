@@ -13,9 +13,11 @@ const http = require('http');
 const https = require('https');
 const path = require('path');
 const { getAuthSession, getKey, postAuthAccountRemove, postAuthAddAccount, postAuthLogin, postAuthLogout, postAuthRegister, postAuthSwitch, postKey } = require('../auth/routes.js');
-const { originAllowed, sessionUser } = require('../auth/sessions.js');
+const { originAllowed, requestEncrypted, sessionUser } = require('../auth/sessions.js');
 const { getCalls, postCallLog } = require('../calls/routes.js');
-const { blobAvailableTo, blobHashOk, storeBlob } = require('../chat/media.js');
+const { blobAvailableTo, blobHashOk, blobQuotaOk, invalidateBlobQuota, storeBlob } = require('../chat/media.js');
+const { rejectRateLimited } = require('../http/helpers.js');
+const { groupCreateLimiter } = require('../http/rate-limit.js');
 const { withMentions } = require('../chat/mentions.js');
 const { deleteMessageById, filterForViewer, readMessagePage, resolveReply, rowToMessage, updateStoredMessage } = require('../chat/messages.js');
 const { getChatsSummary, getChatPreferences, getHave, getRoute2197, postChatDelete, postChatPreferences, postMessages, postMsgDelete, postMsgEdit, postPollVote, postReceipt, postSeen, postSend } = require('../chat/routes.js');
@@ -35,7 +37,7 @@ const { postPushSubscribe, postPushTest, postPushUnsubscribe } = require('../pus
 const { VAPID, notifyUser } = require('../push/vapid.js');
 const { push, pushName, pushRawName, userList } = require('../realtime/notify.js');
 const { createDefaultAvatarSvg, createDefaultGroupAvatarSvg } = require('../shared/avatar.js');
-const { validateGallery } = require('../shared/gallery.js');
+const { storeGallery, validateGallery } = require('../shared/gallery.js');
 const { MESSAGE_LIMITS, characterCount } = require('../shared/limits.js');
 const { resolvePublicFile } = require('../shared/static-path.js');
 const { normalizeContactData, normalizePollData } = require('../shared/types.js');
@@ -53,10 +55,26 @@ const handleRequest = (req, res) => {
     try { url = new URL(req.url, 'http://x'); }
     catch { res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' }); return res.end('bad request'); }
     if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+    // Forzado de TLS: con FORCE_TLS activo y certificados disponibles, toda
+    // petición en claro se redirige a HTTPS antes de tocar nada (ni siquiera
+    // las rutas públicas), de modo que las credenciales y la cookie de sesión
+    // nunca viajen sin cifrar. `requestEncrypted` ya cubre el caso del proxy
+    // de confianza que termina TLS, así que no se entra en bucle.
+    if (CONFIG.forceTls && !requestEncrypted(req) && url.pathname !== '/healthz') {
+        const host = req.headers.host;
+        if (host) {
+            res.writeHead(301, {
+                'Location': `https://${host}${req.url}`,
+                'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+                ...securityHeaders
+            });
+            return res.end();
+        }
+    }
     // CSP por petición (el host propio forma parte de connect-src) y HSTS
-    // cuando la conexión va cifrada.
+    // siempre que la conexión sea (o vaya a ser) cifrada.
     res.setHeader('Content-Security-Policy', cspFor(req.headers.host));
-    if (req.socket.encrypted || req.headers['x-forwarded-proto'] === 'https')
+    if (requestEncrypted(req))
         res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
     if (req.method === 'GET' && url.pathname === '/config')
         return getConfig(req, res, url, data, actor);
@@ -204,8 +222,16 @@ const handleRequest = (req, res) => {
                 data = opened.data;
                 sealResponse(res, opened.session);
             } else {
-                try { data = JSON.parse(rawBody.toString('utf8')); } catch { return json(res, 400, { error: 'Cuerpo JSON inválido.' }); }
-                if (!data || typeof data !== 'object') return json(res, 400, { error: 'El cuerpo debe ser un objeto JSON.' });
+                /* Un POST sin cuerpo es una petición vacía, no un error: se
+                   interpreta como {}. Antes el JSON.parse('') devolvía 400 antes
+                   de ejecutar la ruta, y un logout sin cuerpo dejaba la sesión
+                   abierta con un mensaje que no decía nada. */
+                const text = rawBody.toString('utf8');
+                if (!text.trim()) data = {};
+                else {
+                    try { data = JSON.parse(text); } catch { return json(res, 400, { error: 'Cuerpo JSON inválido.' }); }
+                    if (!data || typeof data !== 'object') return json(res, 400, { error: 'El cuerpo debe ser un objeto JSON.' });
+                }
             }
 
     if (url.pathname === '/key') return postKey(req, res, url, data, actor);
@@ -271,7 +297,7 @@ const handleRequest = (req, res) => {
     // ---- Account ----
     if (url.pathname === '/account/profile') return postAccountProfile(req, res, url, data, actor);
     if (url.pathname === '/account/chat-settings') return postAccountChatSettings(req, res, url, data, actor);
-    if (url.pathname === '/account/regenerate-key') return postAccountRegenerateKey(req, res, url, data, actor);
+    if (url.pathname === '/account/regenerate-key') { await postAccountRegenerateKey(req, res, url, data, actor); return; }
     if (url.pathname === '/account/delete') return postAccountDelete(req, res, url, data, actor);
 
 
@@ -303,7 +329,10 @@ const handleRequest = (req, res) => {
     if (url.pathname === '/block') return postBlock(req, res, url, data, actor);
 
     // ---- Groups: create ----
-    if (url.pathname === '/groups' && req.method === 'POST') return postGroups(req, res, url, data, actor);
+    if (url.pathname === '/groups' && req.method === 'POST') {
+        if (rejectRateLimited(res, groupCreateLimiter, req.authUser.id, 10, 'grupos creados por minuto')) return;
+        return postGroups(req, res, url, data, actor);
+    }
 
     // ---- Groups: actions ----
             let gm = url.pathname.match(/^\/groups\/([^/]+)$/);
@@ -354,7 +383,7 @@ const handleRequest = (req, res) => {
                     m.kind = 'seen'; m.data = ''; m.hash = ''; m.gallery = [];
                     m.once = false;
                     updateStoredMessage(m, row);
-                    pruneBlobHashes(removeBlobAccess('message_id = ?', m.id));
+                    pruneBlobHashes(removeBlobAccess('message_id = ?', m.id)); invalidateBlobQuota(req.authUser.id);
                     for (const username of g.members) pushName(username, {
                         type: 'group-message-seen', groupId: id, messageId: data.seenMessage,
                         signature: m.signature, signingPublicKey: m.signingPublicKey,
@@ -375,7 +404,10 @@ const handleRequest = (req, res) => {
                     if (kind === 'text' && characterCount(source.data, MESSAGE_LIMITS.groupMessageCharacters) > MESSAGE_LIMITS.groupMessageCharacters)
                         return json(res, 400, { error: `Los mensajes de grupo admiten hasta ${MESSAGE_LIMITS.groupMessageCharacters} caracteres.` });
                     if (rejectRateLimitedMessage(res, req.authUser.id)) return;
-                    const gallery = source.gallery === undefined ? [] : validateGallery(req.authUser, source.gallery, blobAvailableTo, storeBlob);
+                    /* Validar sin escribir: los blobs se guardan al final, cuando
+                       el mensaje ya está aceptado (antes una galería rechazada
+                       dejaba adjuntos huérfanos ocupando disco). */
+                    const gallery = source.gallery === undefined ? [] : validateGallery(req.authUser, source.gallery, blobAvailableTo);
                     if (source.gallery !== undefined && (!gallery || kind !== 'image')) return json(res, 400, { error: 'Galería inválida.' });
                     if (['image', 'video', 'audio', 'file'].includes(kind) && !source.hash && !gallery.length) return json(res, 400, { error: 'Falta hash.' });
                     if (kind === 'sticker' && !validStickerData(source.data)) return json(res, 400, { error: 'Sticker inválido.' });
@@ -411,13 +443,22 @@ const handleRequest = (req, res) => {
                         mentions = [...mentioned];
                     }
                     let messageData = gallery.length ? '' : source.data;
-                    if (source.hash) {
-                        if (!blobHashOk(source.hash)) return json(res, 400, { error: 'Hash inválido.' });
-                        source.hash = source.hash.toLowerCase();
-                        if (messageData && !storeBlob(source.hash, messageData)) return json(res, 400, { error: 'Archivo inválido.' });
-                        if (!messageData && !blobAvailableTo(req.authUser, source.hash)) return json(res, 400, { error: 'Archivo no disponible.' });
-                        messageData = '';
+                    let pendingHash = typeof source.hash === 'string' ? source.hash.toLowerCase() : '';
+                    if (pendingHash) {
+                        if (!blobHashOk(pendingHash)) return json(res, 400, { error: 'Hash inválido.' });
+                        // Referenciar un adjunto ya existente exige tener acceso a él.
+                        if (!messageData && !blobAvailableTo(req.authUser, pendingHash)) return json(res, 400, { error: 'Archivo no disponible.' });
                     }
+                    /* Cuota de almacenamiento y, solo entonces, la escritura. */
+                    const bytesNuevos = (messageData && pendingHash ? Buffer.byteLength(messageData) : 0) +
+                        gallery.reduce((total, item) => total + (item.data ? Buffer.byteLength(item.data) : 0), 0);
+                    if (bytesNuevos > 0 && !blobQuotaOk(req.authUser.id, bytesNuevos))
+                        return json(res, 413, { error: 'Has alcanzado el límite de almacenamiento de adjuntos.' });
+                    if (pendingHash && messageData && !storeBlob(pendingHash, messageData))
+                        return json(res, 400, { error: 'Archivo inválido.' });
+                    if (gallery.length && !storeGallery(gallery, storeBlob))
+                        return json(res, 400, { error: 'Galería inválida.' });
+                    if (pendingHash) { source.hash = pendingHash; messageData = ''; }
                     const msg = {
                         id: validMessageId(source.id) ? source.id : crypto.randomUUID(),
                         fromId: req.authUser.id,

@@ -7,13 +7,13 @@
  */
 'use strict';
 
-const { blobAvailableTo, blobHashOk, storeBlob } = require('../chat/media.js');
+const { blobAvailableTo, blobHashOk, blobQuotaOk, invalidateBlobQuota, storeBlob } = require('../chat/media.js');
 const { encryptForUser } = require('../crypto/setup.js');
 const { db } = require('../db/database.js');
 const { Stmt } = require('../db/statements.js');
 const { pruneBlobHashes, removeBlobAccess } = require('../db/transactions.js');
 const { rejectRateLimited } = require('../http/helpers.js');
-const { storyLimiter } = require('../http/rate-limit.js');
+const { storyLimiter, storyViewLimiter } = require('../http/rate-limit.js');
 const { json } = require('../http/responses.js');
 const { liveStories, push, pushStories, storyForViewer } = require('../realtime/notify.js');
 const { MESSAGE_LIMITS, characterCount } = require('../shared/limits.js');
@@ -51,8 +51,14 @@ function postStory(req, res, url, data, actor) {
     if (!validStoryMedia(s.data))
         return json(res, 400, { error: 'Historia inválida: el medio debe ir como hash o como data-URL de imagen/vídeo/audio.' });
     if (data.hash && !blobHashOk(s.hash)) return json(res, 400, { error: 'Hash inválido.' });
-    if (s.hash && data.data && !storeBlob(s.hash, data.data)) return json(res, 400, { error: 'Archivo inválido.' });
     if (s.hash && !data.data && !blobAvailableTo(req.authUser, s.hash)) return json(res, 400, { error: 'Archivo no disponible.' });
+    /* Cuota antes de escribir, y escritura solo cuando la historia ya está
+       aceptada: así un rechazo (límite de frecuencia, fondo inválido) no deja
+       un adjunto huérfano en disco. */
+    const bytesHistoria = s.data ? Buffer.byteLength(s.data) : 0;
+    if (bytesHistoria > 0 && !blobQuotaOk(req.authUser.id, bytesHistoria))
+        return json(res, 413, { error: 'Has alcanzado el límite de almacenamiento de adjuntos.' });
+    if (s.hash && data.data && !storeBlob(s.hash, data.data)) return json(res, 400, { error: 'Archivo inválido.' });
     const fromUser = byName(s.from);
     if (fromUser) {
         const storyId = `story:${fromUser.id}:${s.ts}`;
@@ -65,7 +71,7 @@ function postStory(req, res, url, data, actor) {
             if (s.hash) Stmt.insertBlobAccessStory.run(s.hash.toLowerCase(), storyId, 'story', fromUser.id);
             return hashes;
         })();
-        pruneBlobHashes(replacedHashes);
+        pruneBlobHashes(replacedHashes); invalidateBlobQuota(req.authUser.id);
     }
     stories.push(s);
     pushStories();
@@ -73,6 +79,11 @@ function postStory(req, res, url, data, actor) {
 }
 
 function postStoryLike(req, res, url, data, actor) {
+    /* Ver o marcar "me gusta" consulta la fila completa de la historia y, si
+       cambia algo, la reescribe entera. Con historias grandes eso es caro, así
+       que lleva su propio freno por cuenta. */
+    if (!storyViewLimiter.consume(req.authUser.id).allowed)
+        return softFail ? json(res, 200, { ok: false }) : json(res, 429, { error: 'Demasiadas consultas de historias. Espera un momento.' });
     const row = Stmt.getStory.get(accountId(data.from), data.ts);
     // Respuesta uniforme en like/view: el 404 distinguiría "no
     // existe" de "no me la dejan ver" y serviría de oráculo de
@@ -90,7 +101,7 @@ function postStoryLike(req, res, url, data, actor) {
             Stmt.deleteStory.run(storyUser, data.ts);
             return hashes;
         })();
-        pruneBlobHashes(removedHashes);
+        pruneBlobHashes(removedHashes); invalidateBlobQuota(req.authUser.id);
         pushStories();
         return json(res, 200, { ok: true });
     }

@@ -71,13 +71,7 @@ console.error([
     '',
     android
         ? 'Necesitas las herramientas de compilacion: pkg install python make clang'
-        : 'Si npm es version 12 o superior, los scripts de instalacion de las dependencias',
-    android
-        ? ''
-        : 'estan bloqueados por defecto. Aprueba el de better-sqlite3 y compila:',
-    android
-        ? ''
-        : '  npm install-scripts approve better-sqlite3',
+        : 'Reinstala las dependencias: npm install',
     ''
 ].join('\n'));
 process.exit(1);

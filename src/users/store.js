@@ -191,6 +191,16 @@ function loadFromDb() {
 // del usuario se RE-CIFRA con la clave nueva y solo despues se sustituye
 // la anterior.
 function regenerateAuthKey(userId) {
+    /* Una sola transacción para toda la operación. Antes la clave nueva se
+       instalaba y el contenido se re-cifra fila a fila con `run` sueltos: un
+       fallo a medias (disco lleno, SQLITE_BUSY) dejaba parte del historial
+       cifrado con la clave anterior y la nueva a la vez, es decir ilegible
+       para siempre y sin vuelta atrás. Ahora, o se hace todo o no se hace
+       nada. */
+    return db.transaction(() => regenerateAuthKeyInner(userId))();
+}
+
+function regenerateAuthKeyInner(userId) {
     const oldRec = authKeyRecord(userId);
     const newKey = mtproto.generateAuthKey();
     const newKeyId = mtproto.authKeyId(newKey);

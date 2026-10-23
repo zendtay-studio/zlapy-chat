@@ -1,5 +1,11 @@
 # CI de Zlapy: instala exactamente las dependencias fijadas en package-lock.json
 # y ejecuta la suite de pruebas. Sin secretos: el job no necesita ninguno.
+#
+# Endurecimiento (auditoría de seguridad):
+#   · las acciones se anclan por SHA, no por tag: un tag mutable puede
+#     reapuntar a otro código sin que cambie el fichero;
+#   · `npm audit` sobre las dependencias reales del lockfile;
+#   · permiso mínimo (solo leer el repo).
 name: CI
 
 on:
@@ -18,10 +24,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Clonar el repositorio
-        uses: actions/checkout@v4
+        # actions/checkout@v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
       - name: Instalar Node 22
-        uses: actions/setup-node@v4
+        # actions/setup-node@v4.1.0
+        uses: actions/setup-node@1a4442cacd436585916779262731d5b162bc6ec7
         with:
           node-version: '22'
           # La caché de npm usa package-lock.json (ya versionado): sin él la
@@ -32,6 +40,11 @@ jobs:
       # lockfile no está sincronizado con package.json.
       - name: Instalar dependencias
         run: npm ci
+
+      # Dependencias con vulnerabilidades conocidas. No detiene el build por
+      # avisos de severidad baja, pero sí por alta o crítica.
+      - name: Auditar dependencias
+        run: npm audit --audit-level=high
 
       - name: Ejecutar la suite de pruebas
         run: npm test

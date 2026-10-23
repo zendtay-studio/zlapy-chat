@@ -297,6 +297,20 @@ CREATE INDEX IF NOT EXISTS idx_ba_hash ON blob_access(hash);
 CREATE INDEX IF NOT EXISTS idx_ba_message ON blob_access(message_id);
 CREATE INDEX IF NOT EXISTS idx_ba_group ON blob_access(gid) WHERE gid IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_ba_story ON blob_access(story_user) WHERE story_user IS NOT NULL;
+
+/* Miembros que podían ver un adjunto de grupo EN EL MOMENTO de publicarlo.
+   Sin esta foto, el acceso se decidía por la pertenencia actual y quien entraba
+   en un grupo público podía descargar todos los adjuntos anteriores. Las filas
+   se borran con su mensaje (message_id), así que un miembro expulsado deja de
+   tener acceso a lo que se publique después. */
+CREATE TABLE IF NOT EXISTS blob_access_members (
+    hash     TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    user_id  TEXT NOT NULL,
+    PRIMARY KEY (hash, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_bam_message ON blob_access_members(message_id);
+CREATE INDEX IF NOT EXISTS idx_bam_user ON blob_access_members(user_id);
 CREATE INDEX IF NOT EXISTS idx_ba_chat_a ON blob_access(chat_a) WHERE chat_a IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_ba_chat_b ON blob_access(chat_b) WHERE chat_b IS NOT NULL;
 

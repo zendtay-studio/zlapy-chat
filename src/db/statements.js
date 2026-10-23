@@ -124,13 +124,40 @@ const Stmt = {
     getBlobHashesByMessage: db.prepare('SELECT DISTINCT hash FROM blob_access WHERE message_id = ?'),
     deleteBlobAccessByMessage: db.prepare('DELETE FROM blob_access WHERE message_id = ?'),
     getBlobAccessChat: db.prepare(`SELECT 1 FROM blob_access WHERE hash = ? AND kind = 'chat' AND (chat_a = ? OR chat_b = ?) LIMIT 1`),
-    getBlobAccessGroup: db.prepare(`SELECT 1 FROM blob_access ba JOIN group_members gm ON ba.gid = gm.gid
+    insertBlobAccessMember: db.prepare('INSERT OR IGNORE INTO blob_access_members (hash, message_id, user_id) VALUES (?, ?, ?)'),
+    /* Acceso a un adjunto de grupo: los miembros fotografiados al publicarlo. */
+    getBlobAccessGroup: db.prepare(`SELECT 1 FROM blob_access ba
+        JOIN blob_access_members m ON m.hash = ba.hash
+        WHERE ba.hash = ? AND ba.kind = 'group' AND m.user_id = ? LIMIT 1`),
+    /* Adjuntos publicados antes de existir la foto: se responde con la
+       pertenencia actual (compatibilidad hacia atrás). */
+    getBlobAccessGroupByCurrentMembership: db.prepare(`SELECT 1 FROM blob_access ba
+        JOIN group_members gm ON ba.gid = gm.gid
         WHERE ba.hash = ? AND ba.kind = 'group' AND gm.user_id = ? LIMIT 1`),
+    blobAccessMemberCount: db.prepare('SELECT COUNT(*) AS c FROM blob_access_members WHERE hash = ?'),
+    blobAccessMembersByMessage: db.prepare('SELECT hash FROM blob_access_members WHERE message_id = ?'),
+    deleteBlobAccessMembersByMessage: db.prepare('DELETE FROM blob_access_members WHERE message_id = ?'),
     getBlobAccessStory: db.prepare(`SELECT story_user FROM blob_access WHERE hash = ? AND kind = 'story' LIMIT 1`),
 
     // Blobs
     getBlob: blobDb.prepare('SELECT data FROM blobs WHERE hash = ?'),
     insertBlob: blobDb.prepare('INSERT OR IGNORE INTO blobs (hash, data) VALUES (?, ?)'),
+
+    /* Cuota de almacenamiento. Las dos bases son conexiones separadas, así que
+       no se puede cruzar `blobs` con `blob_access` en una sola consulta: se
+       piden los hashes referenciados por una cuenta (base de datos) y se suman
+       sus tamaños (base de adjuntos). */
+    userBlobHashes: db.prepare(`
+        SELECT hash FROM blob_access WHERE kind = 'chat' AND (chat_a = ? OR chat_b = ?)
+        UNION SELECT ba.hash FROM blob_access ba JOIN group_members gm ON gm.gid = ba.gid
+            WHERE ba.kind = 'group' AND gm.user_id = ?
+        UNION SELECT hash FROM blob_access WHERE kind = 'story' AND story_user = ?`),
+    allBlobHashes: blobDb.prepare('SELECT hash FROM blobs'),
+    referencedBlobHashes: db.prepare('SELECT DISTINCT hash FROM blob_access'),
+    blobSize: blobDb.prepare('SELECT LENGTH(data) AS bytes FROM blobs WHERE hash = ?'),
+    blobBytesGlobal: blobDb.prepare('SELECT COALESCE(SUM(LENGTH(data)), 0) AS bytes FROM blobs'),
+    deleteBlobByHash: blobDb.prepare('DELETE FROM blobs WHERE hash = ?'),
+
     hasBlob: blobDb.prepare('SELECT 1 FROM blobs WHERE hash = ? LIMIT 1'),
 
     // Summaries

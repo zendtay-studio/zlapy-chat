@@ -12,12 +12,13 @@
 const RANK = { sent: 1, delivered: 2, read: 3 };
 
 const crypto = require('crypto');
-const { blobAvailableTo, blobHashOk, readBlob, storeBlob } = require('./media.js');
+const { blobAvailableTo, blobHashOk, blobQuotaOk, invalidateBlobQuota, readBlob, storeBlob } = require('./media.js');
 const { deleteMessageById, filterForViewer, getChatPage, invalidateChatPage, readMessagePage, resolveReply, rowToMessage, updateStoredMessage } = require('./messages.js');
 const { decorateForClient, onChatDeletedSummary, onMessageDeletedSummary, onMessageSentSummary, onReadSummary, readSummaryEntry, resolveName, writeSummaryEntry } = require('./summaries.js');
 const { applyChatPrefs, readChatPrefs, resolveTarget } = require('./prefs.js');
 const { CONFIG } = require('../config.js');
 const { decryptForUser } = require('../crypto/setup.js');
+const { db } = require('../db/database.js');
 const { Stmt } = require('../db/statements.js');
 const { pruneBlobHashes, tx } = require('../db/transactions.js');
 const { groupPolicies, readGroup } = require('../groups/store.js');
@@ -25,7 +26,7 @@ const { rejectRateLimitedMessage } = require('../http/helpers.js');
 const { json, securityHeaders } = require('../http/responses.js');
 const { notifyUser, pushNameOf } = require('../push/vapid.js');
 const { push, pushName } = require('../realtime/notify.js');
-const { validateGallery } = require('../shared/gallery.js');
+const { storeGallery, validateGallery } = require('../shared/gallery.js');
 const { MESSAGE_LIMITS, characterCount } = require('../shared/limits.js');
 const { normalizeContactData, normalizePollData, togglePollVote } = require('../shared/types.js');
 const { clampStr, validMime, validStickerData } = require('../shared/validation.js');
@@ -162,9 +163,13 @@ function postSend(req, res, url, data, actor) {
     const sender = req.authUser;
     const recipient = byName(data.to);
     if (!recipient) return json(res, 404, { error: 'contact does not exist' });
-    if (isBlockedBy(profiles[data.to], actor) || isBlockedBy(profiles[actor], data.to))
+    // Se trabaja con la cuenta resuelta y su nombre canónico: indexar perfiles
+    // con el texto recibido ("Ana9") dejaría fuera el bloqueo y los permisos,
+    // que se guardan con el nombre en minúsculas.
+    const to = recipient.username;
+    if (isBlockedBy(profiles[to], actor) || isBlockedBy(profiles[actor], to))
         return json(res, 200, { ok: false, blocked: true });
-    if (!permite(profiles[data.to], 'mensajes', data.from))
+    if (!permite(profiles[to], 'mensajes', actor))
         return json(res, 200, { ok: false, denied: true });
     if (data.kind === 'text' && (typeof data.data !== 'string' ||
         characterCount(data.data, MESSAGE_LIMITS.directMessageCharacters) > MESSAGE_LIMITS.directMessageCharacters))
@@ -183,7 +188,11 @@ function postSend(req, res, url, data, actor) {
         return json(res, 400, { error: 'Falta hash.' });
     if (data.mime !== undefined && data.mime !== '' && !validMime(data.mime))
         return json(res, 400, { error: 'Tipo de archivo no permitido.' });
-    const gallery = data.gallery === undefined ? [] : validateGallery(sender, data.gallery, blobAvailableTo, storeBlob);
+    // La galería se VALIDA sin escribir nada: los blobs se guardan más abajo,
+    // cuando la petición ya ha pasado todas las comprobaciones (antes se
+    // guardaban durante la validación y una galería acabada en 429 o en 400
+    // dejaba adjuntos huérfanos ocupando disco para siempre).
+    const gallery = data.gallery === undefined ? [] : validateGallery(sender, data.gallery, blobAvailableTo);
     if (data.gallery !== undefined && (!gallery || data.kind !== 'image'))
         return json(res, 400, { error: 'Galería inválida.' });
     // La cuota se consume con el payload ya validado: una petición
@@ -194,13 +203,21 @@ function postSend(req, res, url, data, actor) {
     let messageHash = typeof data.hash === 'string' ? data.hash.toLowerCase() : '';
     if (messageHash) {
         if (!blobHashOk(messageHash)) return json(res, 400, { error: 'Hash inválido.' });
-        if (messageData && !storeBlob(messageHash, messageData)) return json(res, 400, { error: 'Archivo inválido.' });
         // Referenciar un adjunto QUE YA EXISTE exige tener acceso a
         // él (mismo control que la galería): conocer su hash no
         // basta para leer adjuntos de conversaciones ajenas.
         if (!messageData && !blobAvailableTo(sender, messageHash)) return json(res, 400, { error: 'Archivo no disponible.' });
-        messageData = '';
     }
+    /* Cuota de almacenamiento antes de tocar disco (última barrera) y, solo
+       entonces, la escritura de los adjuntos que trae el mensaje. */
+    const bytesNuevos = (messageData && messageHash ? Buffer.byteLength(messageData) : 0) +
+        gallery.reduce((total, item) => total + (item.data ? Buffer.byteLength(item.data) : 0), 0);
+    if (bytesNuevos > 0 && !blobQuotaOk(sender.id, bytesNuevos))
+        return json(res, 413, { error: 'Has alcanzado el límite de almacenamiento de adjuntos.' });
+    if (messageHash && messageData && !storeBlob(messageHash, messageData))
+        return json(res, 400, { error: 'Archivo inválido.' });
+    if (gallery.length && !storeGallery(gallery, storeBlob)) return json(res, 400, { error: 'Galería inválida.' });
+    if (messageHash) messageData = '';
 
     const msg = {
         id: crypto.randomUUID(),
@@ -265,7 +282,7 @@ function postSeen(req, res, url, data, actor) {
     m.gallery = [];
     m.status = 'read';
     m.readAt = readAt;
-    pruneBlobHashes(tx.markSeenMessage(m, row));
+    pruneBlobHashes(tx.markSeenMessage(m, row)); invalidateBlobQuota(req.authUser.id);
     for (const [ownerId, peerId] of [[m.fromId, m.toId], [m.toId, m.fromId]]) {
         const summary = readSummaryEntry(ownerId, peerId);
         if (summary && summary.last && summary.last.id === m.id) {
@@ -433,27 +450,37 @@ function postChatDelete(req, res, url, data, actor) {
     if (clearBoth) {
         // Vaciar para los dos: se borran los mensajes del chat y se avisa a
         // ambas partes para que limpien su copia local.
-        const cleared = [];
-        for (const target of targets) {
-            const chatKey = 'chat:' + target.pk;
-            const hashes = tx.clearChatMessages(chatKey);
-            pruneBlobHashes(hashes);
-            // Si antes se habia borrado "para mi", esa marca se quita: el
-            // historial ya no existe para nadie.
-            Stmt.deleteChatDeletion.run(chatKey, req.authUser.id);
-            Stmt.deleteChatDeletion.run(chatKey, target.peerId);
-            // Los dos resúmenes (el de cada parte) dejan de mostrar el
-            // último mensaje.
-            Stmt.deleteSummary.run(req.authUser.id, target.peerId);
-            Stmt.deleteSummary.run(target.peerId, req.authUser.id);
-            onChatDeletedSummary(req.authUser.id, target.peerId);
-            onChatDeletedSummary(target.peerId, req.authUser.id);
-            invalidateChatPage(target.pk);
-            cleared.push(target.peer);
+        // UNA transacción para todos los chats: si algo falla a medias, antes
+        // quedaba un chat borrado y otro no, con la lista y el contador de no
+        // leídos desincronados.
+        const cleared = db.transaction(() => {
+            const hechos = [];
+            for (const target of targets) {
+                const chatKey = 'chat:' + target.pk;
+                const hashes = tx.clearChatMessages(chatKey);
+                pruneBlobHashes(hashes);
+                // Si antes se habia borrado "para mi", esa marca se quita: el
+                // historial ya no existe para nadie.
+                Stmt.deleteChatDeletion.run(chatKey, req.authUser.id);
+                Stmt.deleteChatDeletion.run(chatKey, target.peerId);
+                // Los dos resúmenes (el de cada parte) dejan de mostrar el
+                // último mensaje.
+                Stmt.deleteSummary.run(req.authUser.id, target.peerId);
+                Stmt.deleteSummary.run(target.peerId, req.authUser.id);
+                onChatDeletedSummary(req.authUser.id, target.peerId);
+                onChatDeletedSummary(target.peerId, req.authUser.id);
+                invalidateChatPage(target.pk);
+                hechos.push(target.peer);
+            }
+            return hechos;
+        })();
+        for (const peer of cleared) {
+            const target = targets.find(t => t.peer === peer);
             for (const account of [users.get(req.authUser.id), users.get(target.peerId)]) {
-                if (account) push(account, { type: 'chat-cleared', peer: target.peer === actor ? req.authUser.id : target.peer, clearedBy: actor });
+                if (account) push(account, { type: 'chat-cleared', peer: peer === actor ? req.authUser.id : peer, clearedBy: actor });
             }
         }
+        invalidateBlobQuota(req.authUser.id);
         return json(res, 200, { ok: true, scope: 'both', cleared });
     }
     const now = Date.now();

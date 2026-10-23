@@ -94,9 +94,15 @@
             menu.hidden = true;
             document.body.appendChild(menu);
         }
+        /* Texto de cada etiqueta escapado: hoy todas son literales del código,
+           pero este es el único `innerHTML` del menú y el día que una etiqueta
+           nazca de un dato de usuario (un nombre de grupo, por ejemplo) no debe
+           convertirse en HTML. */
+        const attr = value => String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const text = value => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         menu.innerHTML = `<div class="zlapyMenuList">${items.map(item => `
-            <button class="zlapyMenuItem${item.danger ? ' danger' : ''}" type="button" role="menuitem" data-menu-id="${String(item.id).replace(/"/g, '&quot;')}">
-                ${iconMarkup(item.icon)}<span class="zlapyMenuLabel">${String(item.label)}</span>
+            <button class="zlapyMenuItem${item.danger ? ' danger' : ''}" type="button" role="menuitem" data-menu-id="${attr(item.id)}">
+                ${iconMarkup(item.icon)}<span class="zlapyMenuLabel">${text(item.label)}</span>
             </button>`).join('')}</div>`;
         menu.classList.add('on');
         menu.hidden = false;

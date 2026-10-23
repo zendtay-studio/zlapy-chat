@@ -21,6 +21,48 @@ function pruneBlobHashes(hashes) {
         if (!stmtBlobHasReference.get(hash)) stmtBlobRemove.run(hash);
 }
 
+/* Barrido de blobs huérfanos: adjuntos que nadie referencia. Los deja una
+   petición que escribe el blob y después es rechazada, o un fallo a medias
+   entre las dos bases. Sin este barrido ocupan disco indefinidamente y son la
+   vía más barata de agotar el almacén.
+   Las dos bases son conexiones separadas, así que la diferencia se calcula en
+   memoria (conjunto de referencias contra conjunto de hashes) y se borra en
+   tandas acotadas: better-sqlite3 es sincrónico y una purga enorme congelaría
+   el servicio. */
+const ORPHAN_SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000;  // cada 6 horas
+const ORPHAN_SWEEP_BATCH = 200;                       // hashes por tanda
+/* Diferencia entre los hashes guardados y los referenciados. Función pura para
+   poder probarla sin abrir ninguna base. */
+function orphanBlobHashes(allHashes, referencedHashes, limit = ORPHAN_SWEEP_BATCH) {
+    const referenciados = new Set(referencedHashes);
+    return allHashes.filter(hash => !referenciados.has(hash)).slice(0, limit);
+}
+function sweepOrphanBlobs(limit = ORPHAN_SWEEP_BATCH, log = () => { }, sources = {}) {
+    const all = (sources.all || Stmt.allBlobHashes.all().map(r => r.hash));
+    const ref = (sources.ref || Stmt.referencedBlobHashes.all().map(r => r.hash));
+    const huerfanos = orphanBlobHashes(all, ref, limit);
+    if (!huerfanos.length) return 0;
+    // Transacción única: o se van todos los de la tanda o ninguno.
+    const purge = blobDb.transaction(hashes => {
+        for (const hash of hashes) Stmt.deleteBlobByHash.run(hash);
+    });
+    purge(huerfanos);
+    log(`[blobs] purgados ${huerfanos.length} adjuntos huérfanos`);
+    return huerfanos.length;
+}
+
+/* Miembros actuales de un grupo (para la foto de acceso a adjuntos). */
+const groupMemberIds = gid => {
+    const { readGroup } = require('../groups/store.js');
+    const g = readGroup(gid);
+    const ids = new Set();
+    for (const member of (g && g.members) || []) {
+        const acc = require('../users/helpers.js').byName(member);
+        if (acc) ids.add(acc.id);
+    }
+    return [...ids];
+};
+
 const blobAccessWhereCache = new Map();
 function removeBlobAccess(where, ...values) {
     // Cada variante de `where` se compila una sola vez y se reutiliza.
@@ -56,19 +98,25 @@ const tx = {
                 const [a, b] = location.slice(5).split('__');
                 Stmt.insertBlobAccessChat.run(hash.toLowerCase(), msg.id, 'chat', a, b);
             } else if (location.startsWith('group:')) {
-                Stmt.insertBlobAccessGroup.run(hash.toLowerCase(), msg.id, 'group', location.slice(6));
+                const gid = location.slice(6);
+                Stmt.insertBlobAccessGroup.run(hash.toLowerCase(), msg.id, 'group', gid);
+                /* Foto de miembros: solo ellos podrán descargar este adjunto,
+                   aunque después entren otros al grupo. */
+                for (const memberId of groupMemberIds(gid)) Stmt.insertBlobAccessMember.run(hash.toLowerCase(), msg.id, memberId);
             }
         }
     }),
     deleteMessage: db.transaction(msgId => {
         const hashes = Stmt.getBlobHashesByMessage.pluck().all(msgId);
         Stmt.deleteBlobAccessByMessage.run(msgId);
+        Stmt.deleteBlobAccessMembersByMessage.run(msgId);
         Stmt.deleteMessage.run(msgId);
         return hashes;
     }),
     markSeenMessage: db.transaction((message, row) => {
         const hashes = Stmt.getBlobHashesByMessage.pluck().all(message.id);
         Stmt.deleteBlobAccessByMessage.run(message.id);
+        Stmt.deleteBlobAccessMembersByMessage.run(message.id);
         const { updateStoredMessage } = require('../chat/messages.js');
         updateStoredMessage(message, row);
         return hashes;
@@ -126,5 +174,9 @@ module.exports = {
     pruneBlobHashes,
     blobAccessWhereCache,
     removeBlobAccess,
+    sweepOrphanBlobs,
+    orphanBlobHashes,
+    ORPHAN_SWEEP_INTERVAL_MS,
+    ORPHAN_SWEEP_BATCH,
     tx,
 };

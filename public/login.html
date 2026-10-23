@@ -8,6 +8,10 @@
   <title>Acceso — Zlapy</title>
   <link rel="stylesheet" href="/css/theme.css">
   <link rel="stylesheet" href="/css/login.css?v=1">
+  <!-- Mismo envoltorio de transporte que la app: las credenciales de acceso
+       viajan cifradas además de bajo HTTPS. -->
+  <script src="/js/transport-crypto.js"></script>
+  <script src="/js/transport.js"></script>
   <script>
     /* Aplica el acento cacheado del usuario antes de pintar para que no parpadee */
     try {

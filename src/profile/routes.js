@@ -31,8 +31,11 @@ function getAccountChatSettings(req, res, url, data, actor) {
 }
 
 function getProfile(req, res, url, data, actor) {
-    const requested = url.searchParams.get('username');
-    const p = profiles[requested];
+    const requested = url.searchParams.get('username') || '';
+    // Resolver por nombre sin distinguir capitalización (igual que el resto de
+    // las rutas) y caer al índice directo para los perfiles sin cuenta.
+    const acc = byName(requested);
+    const p = (acc ? profiles[acc.username] : undefined) || profiles[requested];
     if (!p) return json(res, 200, { username: requested });
     const meQ = req.authUser.username;
     const owner = profiles[p.username];
@@ -184,12 +187,27 @@ function postAccountChatSettings(req, res, url, data, actor) {
     return json(res, 200, { ok: true });
 }
 
-function postAccountRegenerateKey(req, res, url, data, actor) {
+async function postAccountRegenerateKey(req, res, url, data, actor) {
     // Regenerar la clave de cifrado del usuario (equivalente a
     // auth.resetAuthorizations de MTProto). El contenido se
     // re-cifra con la clave nueva para no perder el historial, y
     // la clave de firma tambien se rehace.
-    const result = regenerateAuthKey(req.authUser.id);
+    // EXIGE CONTRASEÑA: con solo la cookie de sesión, un XSS o una cookie
+    // robada bastaban para dejar el historial de la víctima inaccesible. Es la
+    // misma regla que borrar la cuenta o cambiar el nombre.
+    if (rejectRateLimited(res, profileLimiter, req.authUser.id, 5, 'regeneraciones de clave por minuto')) return;
+    if (typeof data.password !== 'string' || !data.password || data.password.length > 128)
+        return json(res, 400, { error: 'Confirma tu contraseña para regenerar la clave.' });
+    const account = accountByName(req.authUser.username);
+    if (!account || !safeEqualHex(account.passwordHash, await passwordDigest(data.password, account.passwordSalt)))
+        return json(res, 401, { error: 'Contraseña incorrecta.' });
+    let result;
+    try {
+        result = regenerateAuthKey(req.authUser.id);
+    } catch (error) {
+        console.error('[regenerate-key] Fallo al re-cifrar el contenido:', error);
+        return json(res, 500, { error: 'No se pudo regenerar la clave. Inténtalo de nuevo.' });
+    }
     return json(res, 200, { ok: true, keyId: result.keyId, reencrypted: result.reencrypted });
 }
 

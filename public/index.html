@@ -10029,7 +10029,7 @@
                             if (!blobResponse.ok) throw new Error('No se pudo leer la imagen.');
                             return { ...item, plain: await blobResponse.blob() };
                         }));
-                    } else if (!m.data && m.hash) m.data = await fetch('/blob/' + m.hash).then(r => r.text());
+                    } else if (!m.data && m.hash) m.data = await fetch('/blob/' + encodeURIComponent(m.hash)).then(r => r.text());
                     if (m.kind === 'sticker') plain = m.data;
                     else if (m.kind === 'text') plain = (m.data != null ? m.data : '');
                     else if (m.data) plain = await (await fetch(m.data)).blob();
@@ -11717,7 +11717,7 @@
             async function addIncomingAt(list, m) {
                 let plain = null;
                 try {
-                    if (!m.data && m.hash) m.data = await fetch('/blob/' + m.hash).then(r => r.text());
+                    if (!m.data && m.hash) m.data = await fetch('/blob/' + encodeURIComponent(m.hash)).then(r => r.text());
                     if (m.kind === 'text') plain = m.data;
                     else if (m.data) plain = await (await fetch(m.data)).blob();
                 } catch { }
@@ -17460,6 +17460,22 @@
                 document.getElementById('localVideo').srcObject = null;
                 loadCallLog();
             }
+
+            /* Aviso de transporte sin cifrar. El envoltorio de `fetch`/XHR emite
+               `zlapy-transport-insecure` cuando el servidor no ofrece clave:
+               se muestra una vez y de forma discreta, para que la degradación
+               no pase desapercibida. */
+            window.addEventListener('zlapy-transport-insecure', () => {
+                if (document.getElementById('tlsWarn')) return;
+                const bar = document.createElement('div');
+                bar.id = 'tlsWarn';
+                bar.setAttribute('role', 'status');
+                bar.textContent = 'Conexión sin cifrar de transporte: usa HTTPS para proteger tus mensajes en tránsito.';
+                bar.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:9999;padding:8px 12px;' +
+                    'background:#b3261e;color:#fff;font:500 13px/1.4 system-ui,sans-serif;text-align:center';
+                document.body.appendChild(bar);
+                setTimeout(() => bar.remove(), 15000);
+            });
 
             window.addEventListener('load', () => {
                 const L = document.getElementById('storyNavL'), R = document.getElementById('storyNavR');

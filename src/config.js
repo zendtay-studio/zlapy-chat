@@ -60,13 +60,32 @@ function loadConfig(env = process.env) {
         storyTtlMs: integerSetting(env, 'STORY_TTL_MS', 60_000, 30 * 24 * 60 * 60 * 1000),
         authSessionTtlMs: integerSetting(env, 'AUTH_SESSION_TTL_MS', 60_000, 365 * 24 * 60 * 60 * 1000),
         dataDir: typeof env.DATA_DIR === 'string' && env.DATA_DIR.trim() ? env.DATA_DIR.trim() : '',
-        chatMasterKey: typeof env.CHAT_MASTER_KEY === 'string' ? env.CHAT_MASTER_KEY.trim() : ''
+        chatMasterKey: typeof env.CHAT_MASTER_KEY === 'string' ? env.CHAT_MASTER_KEY.trim() : '',
+        // Forzar TLS: toda petición en claro se redirige a HTTPS y la cookie
+        // de sesión se marca como Secure. Solo se apaga a propósito (FORCE_TLS=false),
+        // por ejemplo para un uso exclusivo por HTTP en la red local sin
+        // certificados: en ese modo el tráfico (y la cookie) viaja sin cifrar.
+        forceTls: booleanSetting(env, 'FORCE_TLS', true),
+        // Interfaz de escucha. 'auto' (por defecto) mantiene 0.0.0.0; 'loopback'
+        // restringe el servicio a la máquina local (útil tras un proxy inverso).
+        bindHost: typeof env.BIND_HOST === 'string' && ['auto', 'loopback', '0.0.0.0'].includes(env.BIND_HOST.trim())
+            ? env.BIND_HOST.trim() : 'auto'
     };
     if (settings.maxMessageDataChars > settings.maxHttpBodyBytes)
         throw new Error('MAX_MESSAGE_DATA_CHARS cannot exceed MAX_HTTP_BODY_BYTES.');
     if (settings.maxGalleryEncodedChars > settings.maxHttpBodyBytes)
         throw new Error('MAX_GALLERY_ENCODED_CHARS cannot exceed MAX_HTTP_BODY_BYTES.');
     return Object.freeze(settings);
+}
+
+/* Ajustes booleanos: FORCE_TLS=0/false/no/off desactiva. */
+function booleanSetting(env, name, fallback) {
+    const raw = env[name];
+    if (typeof raw !== 'string' || !raw.trim()) return fallback;
+    const value = raw.trim().toLowerCase();
+    if (['1', 'true', 'yes', 'on'].includes(value)) return true;
+    if (['0', 'false', 'no', 'off'].includes(value)) return false;
+    return fallback;
 }
 
 /* Valores ya resueltos: los usa el servidor y los scripts de operación

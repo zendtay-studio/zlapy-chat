@@ -34,11 +34,20 @@ const isContact = (owner, viewer) => {
     const oA = byName(owner.username), vA = byName(viewer);
     return !!(oA && vA && oA.contacts.includes(vA.id));
 };
+/* ¿El propietario tiene bloqueado a este visor? Se compara por nombre
+   normalizado: el conjunto se indexa por el nombre canónico (minúsculas). */
+
+/* Los nombres de usuario se guardan siempre en minúsculas, pero una petición
+   puede traerlos con cualquier capitalización (la búsqueda de cuentas es
+   case-insensitive). Normalizar aquí, en el único sitio que decide bloqueo y
+   permisos, evita que "Ana9" se salte un bloqueo puesto a "ana9". */
+const normName = value => (typeof value === 'string' ? value.trim().toLowerCase() : value);
 
 const accountsBlocked = (first, second) => {
     if (!first || !second) return false;
-    const s1 = blockedSet.get(first), s2 = blockedSet.get(second);
-    return (s1 && s1.has(second)) || (s2 && s2.has(first)) || false;
+    const a = normName(first), b = normName(second);
+    const s1 = blockedSet.get(a), s2 = blockedSet.get(b);
+    return (s1 && s1.has(b)) || (s2 && s2.has(a)) || false;
 };
 
 const privacyFor = owner => {
@@ -54,23 +63,26 @@ const privacyFor = owner => {
 
 const permite = (owner, key, viewer) => {
     if (!owner) return false;
-    if (viewer === owner.username) return true;
     if (!viewer) return false;
-    if (isBlockedBy(owner, viewer)) return false;
+    // Nombre normalizado para todo: las listas de excepciones guardan nombres
+    // canónicos y la petición puede llegar con cualquier capitalización.
+    const v = normName(viewer);
+    if (v === normName(owner.username)) return true;
+    if (isBlockedBy(owner, v)) return false;
     const p = privacyFor(owner)[key];
     if (p.mode === 'server') return true;
-    if (p.mode === 'contacts') return isContact(owner, viewer);
+    if (p.mode === 'contacts') return isContact(owner, v);
     if (p.mode === 'nobody') return false;
-    if (p.mode === 'only') return isContact(owner, viewer) && p.users.includes(viewer);
+    if (p.mode === 'only') return isContact(owner, v) && p.users.some(u => normName(u) === v);
     // 'except': todos los contactos menos los de la lista.
-    return isContact(owner, viewer) && !p.users.includes(viewer);
+    return isContact(owner, v) && !p.users.some(u => normName(u) === v);
 };
 const permiteDescripcion = (owner, viewer) => permite(owner, 'descripcion', viewer);
 
 const isBlockedBy = (owner, viewer) => {
     if (!owner || !viewer) return false;
-    const set = blockedSet.get(owner.username);
-    return !!(set && set.has(viewer));
+    const set = blockedSet.get(normName(owner.username));
+    return !!(set && set.has(normName(viewer)));
 };
 
 module.exports = {
@@ -78,6 +90,7 @@ module.exports = {
     PRIV_DEF,
     normPriv,
     isContact,
+    normName,
     accountsBlocked,
     privacyFor,
     permite,
