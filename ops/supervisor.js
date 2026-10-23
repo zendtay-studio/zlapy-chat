@@ -28,6 +28,10 @@
  *     src/http/servers.js) y el supervisor espera a su salida antes de
  *     relanzarlo.
  *   - Escribe el PID del hijo en SUPERVISOR_PID_FILE (.zlapy.pid).
+ *   - Un segundo `npm start` con otro server.js vivo se corta con exit 70 y
+ *     un mensaje claro (antes: bucle de "puerto ocupado" sin explicación).
+ *   - SIGINT/SIGTERM/SIGHUP paran al hijo SIEMPRE: SIGTERM primero y SIGKILL
+ *     a los 5 s si lo ignora; cerrar la terminal (SIGHUP) no deja huérfanos.
  *
  * Uso: npm start  (o: node ops/supervisor.js)
  */
@@ -328,8 +332,32 @@ function handleChildExit(code, signal) {
     scheduleRestart(delay);
 }
 
+/* Otro server.js vivo bajo OTRO supervisor arrancado antes: se detecta por
+   el PID guardado. Sin esta guarda, un segundo `npm start` entra en el bucle
+   de "puerto ocupado" sin explicar que el puerto lo tiene una instancia
+   anterior que sigue corriendo — y la impresión es que el servidor
+   "no se deja parar". */
+function aliveServerPid() {
+    try {
+        const pid = Number.parseInt(fs.readFileSync(PID_FILE, 'utf8').trim(), 10);
+        if (!Number.isInteger(pid) || pid <= 0) return 0;
+        // Pid reciclado por otro proceso: no es un server.js.
+        if (!fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').includes('server.js')) return 0;
+        return pid;
+    } catch { return 0; }
+}
+
 function start() {
     if (stopped) return;
+    const otro = aliveServerPid();
+    if (otro) {
+        console.error(
+            `[supervisor] ya hay un server.js vivo (pid ${otro}), seguramente bajo otro supervisor arrancado antes.\n` +
+            `              Para pararlo de verdad hay que parar a ESE supervisor (Ctrl+C en SU terminal o kill a SU pid),\n` +
+            `              no lanzar otro npm start. Este intento se corta aquí (exit 70).`
+        );
+        process.exit(70);
+    }
     console.log(`[supervisor] arrancando servidor (puerto configurado ${CONFIGURED_PORT})…`);
     child = spawn(process.execPath, ['server.js'], {
         cwd: ROOT,
@@ -431,14 +459,23 @@ function shutdown(signal) {
     console.log(`[supervisor] ${signal}: deteniendo…`);
     if (child) {
         // El hijo recibe la señal y hace su apagado ordenado (cierra las
-        // conexiones y libera el puerto); si lo ignora, SIGKILL a los 5 s.
+        // conexiones y libera el puerto)…
         try { child.kill(signal); } catch (e) { /* ya salió */ }
+        // …y si la ignora, SIGKILL: el supervisor NUNCA se va dejando al
+        // hijo vivo, o el puerto queda secuestrado por un huérfano.
+        killTimer = setTimeout(() => {
+            try { if (child) child.kill('SIGKILL'); } catch (e) { /* ya salió */ }
+            process.exit(0);
+        }, SIGKILL_GRACE_MS);
     }
-    setTimeout(() => process.exit(0), 5000).unref();
+    setTimeout(() => process.exit(0), SIGKILL_GRACE_MS + 500).unref();
 }
 
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
+/* Cerrar la ventana/pestaña del terminal manda SIGHUP: sin este manejador el
+   supervisor muere solo y el hijo queda huérfano agarrando el puerto. */
+process.on('SIGHUP', () => shutdown('SIGHUP'));
 
 // Sólo arranca si se ejecuta directamente; importarlo desde un test no debe
 // lanzar un servidor real.
