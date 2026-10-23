@@ -232,7 +232,9 @@ function updateGroupMessageSummaries(group, msg, senderId) {
     // Un solo upsert por miembro: el resumen de cada uno se actualiza con
     // una única sentencia, en vez de un SELECT seguido de INSERT o UPDATE.
     for (const uuid of group.memberIds)
-        Stmt.bumpGroupSummary.run(uuid, group.id, uuid === senderId ? 0 : 1, lastData);
+        // Cifrado con la clave de cada miembro, como writeGroupSummary: el
+        // resumen llevaba el preview del último mensaje en claro.
+        Stmt.bumpGroupSummary.run(uuid, group.id, uuid === senderId ? 0 : 1, encryptForUser(uuid, lastData));
     // Un mensaje nuevo deja de estar marcado a mano como "no leído".
     for (const uuid of group.memberIds) {
         if (uuid === senderId) continue;

@@ -192,6 +192,7 @@ const Stmt = {
 
     // Group summaries
     getGroupSummary: db.prepare('SELECT unread, last_data FROM group_summaries WHERE owner = ? AND gid = ?'),
+    listGroupSummaries: db.prepare('SELECT gid, unread, last_data FROM group_summaries WHERE owner = ?'),
     upsertGroupSummary: db.prepare('INSERT OR REPLACE INTO group_summaries (owner, gid, unread, last_data) VALUES (?, ?, ?, ?)'),
     bumpGroupSummary: db.prepare(`INSERT INTO group_summaries (owner, gid, unread, last_data) VALUES (?, ?, ?, ?)
         ON CONFLICT(owner, gid) DO UPDATE SET unread = unread + excluded.unread, last_data = excluded.last_data`),
