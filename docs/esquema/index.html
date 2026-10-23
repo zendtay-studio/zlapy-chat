@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zlapy · Esquema de la base de datos</title>
+<link rel="stylesheet" href="esquema.css">
+</head>
+<body>
+
+<header class="topbar">
+    <div class="brand">
+        <h1>Esquema de la base de datos <span class="ver">v3</span></h1>
+        <p>
+            <code>data/zlapy.db</code> + <code>data/blob.db</code>
+            · fuente: <code>src/db/schema.js</code> y <code>src/db/statements.js</code>
+            · instantánea: <time>22/10/2026</time>
+        </p>
+    </div>
+
+    <div class="stats" id="stats"></div>
+
+    <div class="controls">
+        <input id="search" type="search" placeholder="Buscar tabla o columna…" autocomplete="off" spellcheck="false">
+        <label class="toggle" title="Relaciones que no son claves ajenas: chat codificado, nombres, hashes">
+            <input type="checkbox" id="tgl-logical" checked> lógicas
+        </label>
+        <div class="zoom">
+            <button id="zout" title="Alejar">−</button>
+            <button id="zlabel" title="Restablecer al 100 %">100%</button>
+            <button id="zin" title="Acercar">+</button>
+            <button id="zfit" title="Ajustar a la ventana">Ajustar</button>
+        </div>
+    </div>
+</header>
+
+<div id="viewport">
+    <div id="sizer">
+        <div id="canvas">
+            <svg id="edges" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                    <marker id="ar-cascade" viewBox="0 0 10 10" refX="9" refY="5"
+                            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                        <path d="M0,0 L10,5 L0,10 z" fill="context-stroke"></path>
+                    </marker>
+                </defs>
+            </svg>
+            <div id="regions"></div>
+            <div id="cards"></div>
+        </div>
+    </div>
+</div>
+
+<footer class="footer">
+    <div class="legend" id="legend"></div>
+    <div class="hint">
+        Clic en una tabla para aislar sus relaciones · <kbd>Esc</kbd> para limpiar ·
+        arrastra el fondo para desplazarte · <kbd>Ctrl</kbd> + rueda para zoom
+    </div>
+</footer>
+
+<script src="esquema.js"></script>
+</body>
+</html>
