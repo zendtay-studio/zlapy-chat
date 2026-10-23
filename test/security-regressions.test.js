@@ -205,22 +205,19 @@ test('un mensaje WS de privacidad sin la matriz no reinicia la privacidad', asyn
     } finally { await stop(srv); }
 });
 
-test('el bloqueo de login no afecta a la misma cuenta desde otra IP', async () => {
+test('los accesos fallidos de un atacante no dejan fuera a la victima', async () => {
+    // Regresion V-06: el contador por cuenta e IP frena con retardo, nunca
+    // bloquea. Antes, 8 fallos devolvian 429 y quien compartia red con el
+    // atacante (o el propio detras del tunel) se quedaba sin poder entrar.
     const srv = await startServer();
     try {
         await register(srv.base, 'ana');
-        for (let i = 0; i < 8; i++)
+        for (let i = 0; i < 12; i++)
             await api(srv.base, 'POST', '/auth/login', { username: 'ana', password: 'malaclave99' });
-        const bloqueado = await api(srv.base, 'POST', '/auth/login', { username: 'ana', password: 'malaclave99' });
-        assert.equal(bloqueado.status, 429, 'la misma IP queda bloqueada');
-
-        // Otra red: la víctima puede entrar con su contraseña correcta.
-        const res = await fetch(`${srv.base}/auth/login`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': '203.0.113.9' },
-            body: JSON.stringify({ username: 'ana', password: 'pruebachat1' })
-        });
-        assert.equal(res.status, 200, 'otra IP no debe quedar bloqueada por los intentos de otra');
+        // La clave correcta sigue entrando, aunque el ultimo intento haya sido
+        // fallido: el acceso legitimo solo tarda unos segundos mas.
+        const ok = await api(srv.base, 'POST', '/auth/login', { username: 'ana', password: 'pruebachat1' });
+        assert.equal(ok.status, 200);
     } finally { await stop(srv); }
 });
 

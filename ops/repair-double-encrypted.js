@@ -139,9 +139,16 @@ if (!changes.length) {
 
 // Copia de seguridad antes de escribir.
 const backupDir = path.join(ROOT, 'backups');
-if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
+if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true, mode: 0o700 });
 const stamp = new Date().toISOString().replace(/[:.]/g, '-');
 const backupFile = path.join(backupDir, `zlapy-${stamp}-pre-reparacion.db`);
 db.prepare('VACUUM INTO ?').run(backupFile);
+/* La copia contiene mensajes y perfiles cifrados con la llave del usuario: solo
+   el propietario debe poder leerla. `VACUUM INTO` crea el fichero con el umask
+   del proceso, así que el modo se fuerza a continuación. */
+try {
+    fs.chmodSync(backupDir, 0o700);
+    fs.chmodSync(backupFile, 0o600);
+} catch (e) { /* best-effort: en algunos sistemas de ficheros no se puede */ }
 console.log(`\nCopia de seguridad: ${backupFile}`);
 console.log('Reparación aplicada.');

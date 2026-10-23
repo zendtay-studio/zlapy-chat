@@ -22,13 +22,18 @@ const parseJsonSafe = (text, fallback = null) => {
 };
 
 const byId = id => (typeof id === 'string' ? users.get(id) : undefined);
+/* Búsqueda de cuenta por nombre: sin distinguir mayúsculas ni espacios
+   sobrantes, que es exactamente lo que acepta el registro. Normalizar aquí
+   evita que " Ana9 " resuelva de forma distinta a "ana9" en según qué ruta. */
 const byName = name => {
     if (typeof name !== 'string') return undefined;
-    const uuid = usernameIndex.get(name) || usernameIndex.get(name.toLowerCase());
+    const trimmed = name.trim();
+    const key = trimmed.toLowerCase();
+    const uuid = usernameIndex.get(trimmed) || usernameIndex.get(key);
     if (!uuid) return undefined;
     const acc = users.get(uuid);
     // Índice obsoleto (apunta a una cuenta borrada): se limpia solo.
-    if (!acc) { usernameIndex.delete(name); usernameIndex.delete(name.toLowerCase()); return undefined; }
+    if (!acc) { usernameIndex.delete(trimmed); usernameIndex.delete(key); return undefined; }
     return acc;
 };
 const usernameTakenInDb = (username, exceptId = '') => {

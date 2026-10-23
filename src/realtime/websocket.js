@@ -10,7 +10,7 @@
 
 const crypto = require('crypto');
 const http = require('http');
-const { getSessionFromCache, hashSessionToken, originAllowed, sessionCookie } = require('../auth/sessions.js');
+const { getSessionFromCache, hashSessionToken, originAllowed, requestEncrypted, sessionCookie } = require('../auth/sessions.js');
 const { addCall, endUserCalls, hasCall, updateCall } = require('../calls/store.js');
 const { CONFIG } = require('../config.js');
 const { decryptForUser } = require('../crypto/setup.js');
@@ -18,7 +18,7 @@ const { db } = require('../db/database.js');
 const { Stmt } = require('../db/statements.js');
 const { pruneBlobHashes, removeBlobAccess } = require('../db/transactions.js');
 const { readGroup } = require('../groups/store.js');
-const { loginAttempts, registerAttempts } = require('../http/rate-limit.js');
+const { profileLimiter } = require('../http/rate-limit.js');
 const { notifyUser, pushNameOf } = require('../push/vapid.js');
 const { MAX_BUFFER_BYTES, closeFrame, parseFrames } = require('./frames.js');
 const { acceptHandshake, openFrame } = require('./encrypted.js');
@@ -45,6 +45,11 @@ const wsUpgradeInner = (req, socket) => {
     try { url = new URL(req.url, 'http://x'); } catch { return rejectUpgrade(socket, 400, 'Bad Request'); }
     if (url.pathname !== '/ws') return rejectUpgrade(socket, 404, 'Not Found');
     if (!originAllowed(req)) return rejectUpgrade(socket, 403, 'Forbidden');
+    /* Misma regla que para HTTP: con FORCE_TLS activo el canal en tiempo real
+       solo se abre por una conexión cifrada. Responder 426 en vez de redirigir
+       porque una petición de upgrade no puede seguir un 301. */
+    if (CONFIG.forceTls && !requestEncrypted(req))
+        return rejectUpgrade(socket, 426, 'Upgrade Required');
     // Handshake: validar lo mínimo que exige RFC 6455 antes de responder 101.
     if (String(req.headers.upgrade || '').toLowerCase() !== 'websocket' ||
         req.headers['sec-websocket-version'] !== '13' ||
@@ -207,6 +212,16 @@ const wsUpgradeInner = (req, socket) => {
                     }
                     p.privacy = merged;
                 }
+                /* Mismo freno que HTTP /profile (10 guardados por minuto): este
+                   frame reescribía la cuenta completa y avisaba a todos los
+                   usuarios conectados en cada mensaje, sin cota. */
+                if (!profileLimiter.consume(u.id).allowed) {
+                    /* Mismo tope que HTTP /profile (10/minuto): el canal de
+                       tiempo real no puede ser una vía más barata. Al ser un
+                       socket, el "429" es el cierre del frame. */
+                    try { socket.close(1008, 'rate limited'); } catch { }
+                    return;
+                }
                 /* Guarda contra el doble cifrado: si el cliente devuelve un
                    texto que YA venía cifrado (el servidor se lo pintó así),
                    se conserva el valor real del perfil. Sin esta comprobación
@@ -231,8 +246,18 @@ const wsUpgradeInner = (req, socket) => {
                 if (typeof m.desc === 'string' && !cifradoDeVuelta(m.desc) &&
                     characterCount(m.desc, MESSAGE_LIMITS.profileDescriptionCharacters) <= MESSAGE_LIMITS.profileDescriptionCharacters) p.desc = m.desc;
                 if (validAvatar(m.avatar)) p.avatar = m.avatar;
-                saveUserToDb(u);
-                for (const user of users.values()) push(user, { type: 'profile', username: from });
+                /* Solo se escribe si algo cambió: `saveUserToDb` reescribe la
+                   cuenta completa (varias sentencias sobre 8 tablas), así que
+                   guardar sin cambios era puro desgaste. */
+                if (profiles[from]._dirty !== false) saveUserToDb(u);
+                /* El aviso va a los contactos del dueño, no a todo el mundo:
+                   el fan-out global convertía cada guardado en una tormenta de
+                   eventos para usuarios ajenos. */
+                for (const userId of u.contacts || []) {
+                    const user = users.get(userId);
+                    if (user) push(user, { type: 'profile', username: from });
+                }
+                broadcastUsers();
                 return;
             }
             if (m.type === 'call-accept') {

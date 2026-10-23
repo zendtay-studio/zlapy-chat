@@ -9,6 +9,8 @@
 
 const { Stmt } = require('../db/statements.js');
 const { json } = require('../http/responses.js');
+const { contactLimiter } = require('../http/rate-limit.js');
+const { rejectRateLimited } = require('../http/helpers.js');
 const { notifyUser } = require('../push/vapid.js');
 const { broadcastUsersAround, connectContacts, push, pushName, pushStories, removeContacts, updateContactRequests } = require('../realtime/notify.js');
 const { validAvatar } = require('../shared/validation.js');
@@ -53,6 +55,10 @@ function getContactsRequestsSent(req, res, url, data, actor) {
 }
 
 function postContacts(req, res, url, data, actor) {
+    /* Cada solicitud crea avisos en la cuenta ajena (y un correo push si la
+       tiene): sin cota era la forma barata de bombardear a alguien con
+       notificaciones. El par "solicitud y respuesta" comparte tope. */
+    if (rejectRateLimited(res, contactLimiter, req.authUser.id, 20, 'solicitudes de contacto por minuto')) return;
     const target = byName(typeof data.username === 'string' ? data.username.trim() : '');
     if (!target) return json(res, 404, { error: 'No account found.' });
     if (target.id === req.authUser.id) return json(res, 400, { error: 'No puedes agregarte.' });
@@ -97,6 +103,7 @@ function postContactsCancel(req, res, url, data, actor) {
 }
 
 function postContactsRespond(req, res, url, data, actor) {
+    if (rejectRateLimited(res, contactLimiter, req.authUser.id, 20, 'solicitudes de contacto por minuto')) return;
     const requester = byName(typeof data.username === 'string' ? data.username : '');
     if (!requester || requester.id === req.authUser.id) return json(res, 404, { error: 'No disponible.' });
     const row = Stmt.listContactRequestsTo.all(req.authUser.id).find(r => r.from_id === requester.id);

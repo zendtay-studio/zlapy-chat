@@ -48,8 +48,16 @@ self.addEventListener('push', e => {
 self.addEventListener('notificationclick', e => {
   e.notification.close();
   const url = (e.notification.data && e.notification.data.url) || '/';
+  /* Solo se navega a rutas propias: la URL viene del servidor (no del
+     usuario), pero el service worker es el último sitio donde conviene
+     comprobarlo antes de abrir una ventana. */
+  let destino = '/';
+  try {
+    const parsed = new URL(url, self.location.origin);
+    destino = parsed.origin === self.location.origin ? parsed.pathname + parsed.search : '/';
+  } catch (err) { destino = '/'; }
   e.waitUntil(clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
-    for (const c of list) { if ('focus' in c) { c.navigate(url); return c.focus(); } }
-    if (clients.openWindow) return clients.openWindow(url);
+    for (const c of list) { if ('focus' in c) { c.navigate(destino); return c.focus(); } }
+    if (clients.openWindow) return clients.openWindow(destino);
   }));
 });

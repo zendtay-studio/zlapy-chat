@@ -31,6 +31,27 @@ const TIME_HEADER = 'x-zlapy-time';
 /* ¿La petición trae un sobre cifrado? */
 const isEncrypted = req => Boolean(req.headers[ENC_HEADER]);
 
+/* Anti-replay del sobre HTTP.
+ * El sobre ata método, ruta y hora (AAD ±60 s), pero sin recordar los nonces
+ * ya usados un observador podía reenviar la MISMA petición cifrada y repetir
+ * el efecto (un mensaje duplicado, un contacto solicitado dos veces). El canal
+ * WebSocket ya se protegía con un contador monótono; aquí se hace con la
+ * memoria de nonces durante la ventana de validez del sobre. */
+const usedNonces = new Map();   // nonce -> caduca en
+const NONCE_MEMORY_MS = MAX_CLOCK_SKEW_MS + 30_000;
+/* Solo se guardan los nonces vistos: la memoria se purga con la ventana, así
+   que no crece sin límite. */
+function nonceUsado(nonce) {
+    const ahora = Date.now();
+    const caduca = usedNonces.get(nonce);
+    if (caduca && caduca > ahora) return true;
+    usedNonces.set(nonce, ahora + NONCE_MEMORY_MS);
+    if (usedNonces.size > 4096) {
+        for (const [key, expira] of usedNonces) if (expira <= ahora) usedNonces.delete(key);
+    }
+    return false;
+}
+
 /* Descifra el cuerpo de una petición.
  * Devuelve { data, session } o { error } con el motivo del rechazo. */
 function openRequest(req, url, rawBody) {
@@ -40,6 +61,9 @@ function openRequest(req, url, rawBody) {
         return { error: 'Marca de tiempo fuera de rango.' };
     const ephemeral = Buffer.from(String(req.headers[EPHEMERAL_HEADER] || ''), 'base64');
     const nonce = Buffer.from(String(req.headers[NONCE_HEADER] || ''), 'base64');
+    /* El nonce identifica al sobre: reenviarlo es la definición de replay. */
+    if (nonce.length > 0 && nonceUsado(nonce.toString('base64')))
+        return { error: 'Sobre ya utilizado.' };
     const opened = decryptEnvelope({
         method: req.method,
         path: url.pathname,
@@ -105,4 +129,6 @@ module.exports = {
     isEncrypted,
     openRequest,
     sealResponse,
+    nonceUsado,
+    NONCE_MEMORY_MS,
 };

@@ -78,7 +78,12 @@ test('regenerar la clave re-cifra el contenido y el historial se conserva', asyn
         const before = db.prepare('SELECT key_id FROM user_auth_keys WHERE user_id = (SELECT id FROM users WHERE username = ?)').get('ana');
         db.close();
 
-        const regen = await api(srv.base, 'POST', '/account/regenerate-key', {}, ana.cookie);
+        /* Sin contraseña se rechaza: con solo la cookie de sesión, un XSS o una
+           cookie robada bastaban para dejar el historial inaccesible. */
+        const sinClave = await api(srv.base, 'POST', '/account/regenerate-key', {}, ana.cookie);
+        assert.equal(sinClave.status, 400, 'regenerar la clave exige confirmar la contraseña');
+
+        const regen = await api(srv.base, 'POST', '/account/regenerate-key', { password: 'pruebachat1' }, ana.cookie);
         assert.equal(regen.status, 200);
         assert.notEqual(regen.json.keyId, before.key_id, 'la clave debe cambiar');
 

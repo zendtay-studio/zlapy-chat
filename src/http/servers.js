@@ -13,7 +13,7 @@ const net = require('net');
 const fs = require('fs');
 const path = require('path');
 
-const { PORT, ROOT } = require('../config.js');
+const { CONFIG, PORT, ROOT } = require('../config.js');
 const { db, blobDb } = require('../db/database.js');
 const { users } = require('../state.js');
 const { handler } = require('./router.js');
@@ -25,6 +25,19 @@ const { wsUpgrade } = require('../realtime/websocket.js');
 const certPath = path.join(ROOT, 'cert.pem'), keyPath = path.join(ROOT, 'key.pem');
 const useTls = fs.existsSync(certPath) && fs.existsSync(keyPath);
 
+/* Sin certificados no hay HTTPS al que redirigir: forzar TLS dejaría el
+   servicio inaccesible, así que el forzado se desactiva solo. El usuario puede
+   recuperarlo con FORCE_TLS=true cuando instale los certificados. */
+if (CONFIG.forceTls && !useTls) {
+    CONFIG.forceTls = false;
+    console.warn('[tls] FORCE_TLS desactivado: no hay cert.pem/key.pem. El tráfico (y la cookie de sesión) viajará sin cifrar.');
+}
+/* Interfaz de escucha: 'loopback' restringe a la propia máquina (proxy
+   inverso local); 'auto' y '0.0.0.0' mantienen el acceso por red. */
+const bindHost = CONFIG.bindHost === 'loopback' ? '127.0.0.1' : '0.0.0.0';
+/* Tiempo máximo sin enviar nada antes de cortar la conexión. */
+const SOCKET_IDLE_TIMEOUT_MS = 60 * 1000;
+
 const httpSrv = http.createServer(handler);
 const httpsSrv = useTls ? require('https').createServer({ cert: fs.readFileSync(certPath), key: fs.readFileSync(keyPath) }, handler) : null;
 
@@ -34,7 +47,13 @@ if (httpsSrv) httpsSrv.on('upgrade', wsUpgrade);
 // SO_REUSEADDR permite reenganchar el puerto justo tras un reinicio: sin él,
 // el socket previo en TIME_WAIT provoca EADDRINUSE y el proceso muere.
 const dispatcher = net.createServer({ allowHalfOpen: false }, sock => {
+    /* Timeout de inactividad: un socket que se conecta y no envía nada se quedaba
+       abierto indefinidamente (los timeouts de Node solo se aplican a sockets ya
+       delegados al servidor HTTP). Con una conexión vacía por socket, abrir
+       muchos era la forma más barata de agotar los descriptores. */
+    sock.setTimeout(SOCKET_IDLE_TIMEOUT_MS, () => { try { sock.destroy(); } catch { } });
     sock.once('readable', () => {
+        sock.setTimeout(0);   // a partir de aquí manda el timeout del servidor
         const first = sock.read(1);
         if (!first) return;
         sock.unshift(first);
@@ -52,16 +71,24 @@ dispatcher.on('error', e => {
 
 // Reenganchar el puerto sin esperar a que expire TIME_WAIT (reinicios del
 // supervisor y recargas en caliente). En Node esto equivale a SO_REUSEADDR.
-dispatcher.listen({ port: PORT, host: '0.0.0.0', exclusive: false }, () => {
+dispatcher.listen({ port: PORT, host: bindHost, exclusive: false }, () => {
     const nets = require('os').networkInterfaces();
     const ips = Object.values(nets).flat().filter(n => n && n.family === 'IPv4' && !n.internal).map(n => n.address);
     console.log(`\n✅ Zlapy (SQLite) en el puerto ${PORT}`);
-    console.log(`\n   Esta PC:   http://localhost:${PORT}`);
-    ips.forEach(ip => console.log(`   Tu red:    http://${ip}:${PORT}`));
+    /* Con el forzado de TLS activo solo se anuncian las URL cifradas: ofrecer
+       la de HTTP invitaría a usar una vía que el servidor va a redirigir (y en
+       la que, si FORCE_TLS estuviera apagado, la cookie viajaría sin proteger). */
+    if (!CONFIG.forceTls) {
+        console.log(`\n   Esta PC:   http://localhost:${PORT}`);
+        ips.forEach(ip => console.log(`   Tu red:    http://${ip}:${PORT}`));
+    }
     if (useTls) {
         console.log(`\n   HTTPS:`);
         console.log(`               https://localhost:${PORT}`);
         ips.forEach(ip => console.log(`               https://${ip}:${PORT}`));
+    } else {
+        console.warn('\n   ⚠️  Sin certificados (cert.pem/key.pem): no hay HTTPS.');
+        console.warn('   ⚠️  El tráfico y la cookie de sesión viajan SIN CIFRAR. Úsalo solo en una red de confianza.\n');
     }
     console.log('');
 });
