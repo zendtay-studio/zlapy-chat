@@ -404,7 +404,7 @@ Definidas en `src/http/responses.js:17-39` y aplicadas a **toda** respuesta:
 | `src/push/` | Suscripciones push, VAPID y envío de notificaciones. | `routes.js`, `vapid.js` |
 | `src/meta/` | `/healthz` y volcado de configuración. | `routes.js` |
 | `src/shared/` | Utilidades puras sin estado: validación, límites, tipos, galería, apariencia, ruta estática, avatar. | `validation.js`, `limits.js`, `types.js`, `gallery.js`, `appearance.js`, `message-data.js`, `static-path.js`, `avatar.js` |
-| `ops/` | Scripts de operación (no forman parte del servidor). | `supervisor.js`, `tunnel.js`, `backup.js`, `generate-master-key.js`, `migrate-to-mtproto.js` |
+| `ops/` | Scripts de operación (no forman parte del servidor). | `supervisor.js`, `tunnel.js`, `backup.js`, `generate-master-key.js` |
 
 ### 4.2 Ficheros clave
 

@@ -259,11 +259,24 @@ npm run key -- --null   # vacía CHAT_MASTER_KEY (vuelve a .zlapymasterkey)
 El mismo puerto sirve **http y https**: el dispatcher lee el primer byte de la
 conexión y, si es el handshake de TLS (`0x16`), lo pasa al servidor HTTPS.
 
-Genera los certificados autofirmados (en la raíz del proyecto):
+Genera los certificados autofirmados (en la raíz del proyecto). **El `subjectAltName`
+es obligatorio**: los navegadores modernos ignoran el `CN` y sin el SAN de tu IP
+te dicen «el certificado no coincide con la dirección»:
 
 ```bash
-openssl req -x509 -newkey rsa:2048 -nodes -keyout key.pem -out cert.pem -days 365 -subj "/CN=zlapy"
+openssl req -x509 -newkey rsa:2048 -sha256 -days 397 -nodes \
+  -keyout key.pem -out cert.pem -subj "/CN=zlapy" \
+  -addext "subjectAltName=DNS:localhost,IP:127.0.0.1,IP:192.168.100.184" \
+  -addext "basicConstraints=critical,CA:TRUE"
+chmod 600 key.pem cert.pem
 ```
+
+Sustituye `192.168.100.184` por la IP actual de la máquina (`ip addr` / `ifconfig`);
+si tu router cambia la IP por DHCP, reserva una fija en el router o repite el
+comando. El `CA:TRUE` permite **instalar el certificado como CA de confianza** en
+el móvil (Ajustes → Seguridad → Cifrado y credenciales → Instalar certificado →
+certificado CA) y que deje de avisar del todo. Reinicia el servidor tras
+regenerarlos (el certificado se lee al arrancar).
 
 > **Las llamadas y el push en el móvil exigen `https`**: los navegadores solo
 > dan cámara/micrófono en un contexto seguro, y Web Push solo funciona sobre
@@ -433,17 +446,9 @@ para los chats normales, **no** el de los chats secretos de extremo a extremo).
 
 **El servidor NO migra al arrancar**: lee los dos formatos (el antiguo y el
 nuevo) y escribe siempre el nuevo, así que el contenido viejo se re-cifra solo
-a medida que se reescribe. Para convertir el histórico entero de golpe:
-
-```bash
-npm run migrate:mtproto            # simulación: dice lo que haría, no escribe nada
-npm run migrate:mtproto -- --apply # migra de verdad (con respaldo previo en backups/)
-```
-
-El script es **independiente y eliminable** (`ops/migrate-to-mtproto.js`): el
-servidor no lo importa para nada. Conviene **parar el servidor** mientras
-migra, es **idempotente** y **verifica cada registro** (ida y vuelta) antes de
-tocarlo.
+a medida que se reescribe — y `POST /account/regenerate-key` re-cifra el
+histórico entero de una vez. No hay ningún paso de migración: arrancar es todo
+lo que hay que hacer.
 
 **Perfiles cifrados dos veces (reparación puntual).** Si el servidor llegó a
 pintar un texto ya cifrado (porque al arrancar leía el perfil con la función
@@ -600,7 +605,6 @@ ops/                   scripts de operación (se ejecutan a mano)
   tunnel.js            publica el servidor con Cloudflare (npm run tunnel)
   backup.js            copia consistente de las bases (npm run backup)
   generate-master-key.js  crea la llave maestra (npm run key)
-  migrate-to-mtproto.js   migración manual al cifrado en la nube
   repair-double-encrypted.js  repara los perfiles que quedaron cifrados dos veces
 public/                el cliente web (PWA): index.html, login.html, profile.html,
                        view.html, stories.html, privacy.html, sw.js, theme.css,
@@ -615,7 +619,7 @@ test/                  pruebas unitarias y de integración (node --test)
   security-regressions.test.js  regresiones de la auditoría de seguridad (2026-10-19)
   mtproto.test.js        tests del esquema de cifrado en la nube (MTProto 2.0)
   mtproto-server.test.js tests de integración del cifrado en la nube en el servidor
-  migrate-to-mtproto.test.js  migración manual al cifrado en la nube
+  legacy-read.test.js    el servidor lee el esquema de cifrado antiguo sin migrar
   supervisor.test.js      arranque del supervisor y reinicio del hijo
 .github/workflows/ci.yml        CI: npm ci + npm test
 data/                  persistencia (sobrevive reinicios; no se versiona)
