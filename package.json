@@ -36,7 +36,6 @@
     "backup": "node ops/backup.js",
     "postinstall": "node ops/check-native.js",
     "rebuild:sqlite": "node ops/build-sqlite.js",
-    "migrate:mtproto": "node ops/migrate-to-mtproto.js",
     "repair:double-encrypted": "node ops/repair-double-encrypted.js"
   },
   "engines": {

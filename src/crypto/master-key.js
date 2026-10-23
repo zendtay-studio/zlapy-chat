@@ -85,10 +85,33 @@ const getMasterKeyBytes = () => {
     // guarda en `.zlapymasterkey` para que el servidor arranque sin pasos
     // manuales. El fichero está en `.gitignore` y lo copia `npm run backup`.
     const b = crypto.randomBytes(32);
-    fs.writeFileSync(MASTER_KEY_PATH, b, { mode: 0o600, flag: 'wx' });
-    try { fs.chmodSync(MASTER_KEY_PATH, 0o600); } catch { }
-    console.log(`[crypto] llave maestra generada en ${path.relative(ROOT, MASTER_KEY_PATH)} (primera instalación).`);
-    return b;
+    try {
+        fs.writeFileSync(MASTER_KEY_PATH, b, { mode: 0o600, flag: 'wx' });
+        try { fs.chmodSync(MASTER_KEY_PATH, 0o600); } catch { }
+        console.log(`[crypto] llave maestra generada en ${path.relative(ROOT, MASTER_KEY_PATH)} (primera instalación).`);
+        return b;
+    } catch (e) {
+        /* Carrera de primera instalación: otro proceso (los servidores de
+           prueba arrancan en paralelo, y lo mismo valdría para una op manual
+           junto al supervisor) creó la llave entre nuestra comprobación de
+           existencia y esta escritura exclusiva. La llave es un SECRETO
+           COMPARTIDO, no un valor por proceso: se usa la del ganador. */
+        if (e.code !== 'EEXIST') throw e;
+        // La escritura del ganador puede no haber completado todavía: se
+        // reintenta la lectura unos instantes antes de darla por inválida.
+        for (let intento = 0; intento < 50; intento++) {
+            try {
+                const key = fs.readFileSync(MASTER_KEY_PATH);
+                if (key.length === 32) {
+                    try { fs.chmodSync(MASTER_KEY_PATH, 0o600); } catch { }
+                    return key;
+                }
+            } catch { }
+            // Espera activa mínima: dos procesos arrancando a la vez.
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+        }
+        throw new Error(`${MASTER_KEY_PATH} must contain exactly 32 bytes.`);
+    }
 };
 
 module.exports = {
