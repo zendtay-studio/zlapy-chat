@@ -5,6 +5,11 @@
  * correcto, genera una clave aleatoria de 32 bytes en base64 o vacía la
  * existente. La clave nunca se muestra por pantalla.
  *
+ * La llave maestra vive SOLO en el `.env`: no hay fichero aparte
+ * (`.zlapymasterkey` quedó eliminado). El servidor genera la clave él mismo
+ * en el primer arranque de una instalación nueva (base sin datos) usando la
+ * misma función `setEnvValue` de aquí, con escritura atómica.
+ *
  * Si el `.env` no existe (instalación nueva) se crea a partir de
  * `.env.example` antes de escribir la clave, para que el comando funcione
  * también en la primera instalación.
@@ -13,25 +18,11 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
+const { writeSecretFile, setEnvValue, readEnvValue } = require('./env-writer.js');
 
-// Modo con el que debe quedar el fichero que guarda el secreto: sólo el
-// propietario puede leerlo. Se fija de forma INCONDICIONAL (no depende del
-// umask) porque el fichero contiene la clave maestra de cifrado en reposo.
-const SECRET_FILE_MODE = 0o600;
-// El directorio que lo contiene tampoco debe ser legible por otros.
-const SECRET_DIR_MODE = 0o700;
-
-// Escribe el contenido con el modo correcto: `writeFileSync` sólo aplica
-// `mode` al CREAR el fichero (si ya existe conserva el suyo), así que además
-// se fuerza con chmod. El directorio padre sólo se crea si falta: si ya
-// existe se respeta su modo (aquí suele ser la raíz del proyecto, que no es
-// asunto de este script).
-function writeSecretFile(filePath, contents) {
-    const dir = path.dirname(filePath);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true, mode: SECRET_DIR_MODE });
-    fs.writeFileSync(filePath, contents, { mode: SECRET_FILE_MODE });
-    try { fs.chmodSync(filePath, SECRET_FILE_MODE); } catch (e) { /* best-effort */ }
-}
+// Módulo diminuto de escritura atómica (paso a env-writer para
+// compartirlo con el motor de re-cifrado). El CLI, además, es quien decide
+// girar la llave CON re-cifrado cuando la base ya tiene datos.
 
 /**
  * Crea el `.env` a partir de `.env.example` si todavía no existe.
@@ -56,28 +47,51 @@ function ensureEnvFile(envPath) {
 function generateMasterKey(envPath = path.join(__dirname, '..', '.env'), { force = false, clear = false } = {}) {
     ensureEnvFile(envPath);
     const contents = fs.readFileSync(envPath, 'utf8');
-    const newline = contents.includes('\r\n') ? '\r\n' : '\n';
-    const lines = contents.split(/\r?\n/);
-    const keyLines = [];
-
-    for (let index = 0; index < lines.length; index++) {
-        if (/^\s*CHAT_MASTER_KEY\s*=/.test(lines[index])) keyLines.push(index);
-    }
-    if (keyLines.length !== 1) {
+    // `[ \t]*`, no `\s*`: en JS el `\s` cruza saltos de línea y agarra el
+    // comentario siguiente como si fuera el valor.
+    const match = contents.match(/^[ \t]*CHAT_MASTER_KEY[ \t]*=[ \t]*(.*)$/m);
+    if (match === null)
         throw new Error(`Expected exactly one CHAT_MASTER_KEY assignment in ${envPath}.`);
-    }
-
-    const lineIndex = keyLines[0];
-    const match = lines[lineIndex].match(/^(\s*CHAT_MASTER_KEY\s*=\s*)(.*)$/);
-    const currentValue = match[2].trim();
+    const currentValue = match[1].trim();
     const unquotedValue = currentValue.replace(/^(["'])(.*)\1$/, '$2').trim();
     if (clear) {
-        lines[lineIndex] = match[1];
-        writeSecretFile(envPath, lines.join(newline));
+        setEnvValue(envPath, 'CHAT_MASTER_KEY', '');
         return;
     }
     if (unquotedValue && !force) {
-        throw new Error('La clave maestra ya está configurada. Para generar otra, ejecuta: npm run key -- --force (o la forma corta: npm run key -- -f).');
+        throw new Error('La clave maestra ya está configurada. Para girarla (generando otra y re-cifrando los datos si la base ya tiene contenido), ejecuta: npm run key -- --force (o la forma corta: npm run key -- -f).');
+    }
+
+    // El `.env` vive SIEMPRE al lado de `data/` (raíz del proyecto en
+    // producción, raíz temporal en las pruebas), así que el directorio de
+    // datos se deriva de su padre: una sola regla que sirve a ambos.
+    const root = path.dirname(envPath);
+    const dataDir = path.join(root, 'data');
+    const dbPath = path.join(dataDir, 'zlapy.db');
+    const blobPath = path.join(dataDir, 'blob.db');
+
+    if (unquotedValue && force) {
+        // Rotación con re-cifrado cuando la base YA tiene material que
+        // depende de la maestra. Requiere que el `.env` contenga la llave
+        // que descifra esos datos: sin ella no hay punto de partida.
+        const { hasMasterDataAtRest, rotateMasterKey } = require('./reencrypt-master.js');
+        const { createMessageCrypto } = require('../src/crypto/message-crypto.js');
+        if (hasMasterDataAtRest(dbPath, blobPath)) {
+            // Buffer.from nunca lanza con formato inválido (se salta los
+            // caracteres que no son base64): lo que filtra de verdad es la
+            // longitud del resultado.
+            const oldKey = Buffer.from(unquotedValue, 'base64');
+            if (oldKey.length !== 32) {
+                throw new Error('La base de datos ya contiene datos, pero CHAT_MASTER_KEY no codifica una llave válida de 32 bytes. ' +
+                    'Restaura en el .env la clave del respaldo antes de intentar girarla.');
+            }
+            const newKey = crypto.randomBytes(32);
+            const stats = rotateMasterKey({
+                dbPath, blobPath, envPath, oldKey, newKey, cryptoFactory: createMessageCrypto
+            });
+            return { rotated: true, ...stats };
+        }
+        // Sin material dependiente: sustitución clásica de la línea.
     }
 
     const generatedKey = crypto.randomBytes(32).toString('base64');
@@ -86,8 +100,8 @@ function generateMasterKey(envPath = path.join(__dirname, '..', '.env'), { force
     if (Buffer.from(generatedKey, 'base64').length !== 32) {
         throw new Error('La clave generada no codifica 32 bytes.');
     }
-    lines[lineIndex] = `${match[1]}${generatedKey}`;
-    writeSecretFile(envPath, lines.join(newline));
+    setEnvValue(envPath, 'CHAT_MASTER_KEY', generatedKey);
+    return { rotated: false };
 }
 
 if (require.main === module) {
@@ -101,32 +115,24 @@ if (require.main === module) {
         const clear = args.includes('--null') || args.includes('-n');
         if (force && clear) throw new Error('No combines la opción para generar con la opción para vaciar.');
         const envPath = path.join(__dirname, '..', '.env');
-        const masterKeyPath = path.join(__dirname, '..', '.zlapymasterkey');
-        // Si el servidor ya generó `.zlapymasterkey` (arranque en una
-        // instalación nueva), escribir otra clave en el `.env` la dejaría sin
-        // efecto y haría ilegibles los datos cifrados con la anterior.
-        if (!force && !clear && fs.existsSync(masterKeyPath)) {
-            const enFichero = fs.readFileSync(masterKeyPath);
-            const contents = fs.readFileSync(envPath, 'utf8');
-            const match = contents.match(/^\s*CHAT_MASTER_KEY\s*=\s*(.*)$/m);
-            const valor = match ? match[1].trim().replace(/^["']|["']$/g, '') : '';
-            const enEnv = valor ? Buffer.from(valor, 'base64') : Buffer.alloc(0);
-            if (enEnv.length !== enFichero.length || !enEnv.equals(enFichero)) {
-                throw new Error(
-                    `Ya existe ${masterKeyPath} (llave maestra en uso). El .env tiene prioridad sobre ese ` +
-                    'fichero, así que generar una clave nueva aquí dejaría los datos cifrados inaccesibles. ' +
-                    'Si de verdad quieres cambiarla, borra el fichero de llave (y el .env) y vuelve a arrancar.'
-                );
-            }
-        }
-        generateMasterKey(envPath, { force, clear });
+        const resultado = generateMasterKey(envPath, { force, clear });
         if (clear) {
-            console.log('CHAT_MASTER_KEY se vació en .env. El servidor usará .zlapymasterkey si existe.');
+            console.log('CHAT_MASTER_KEY se vació en .env.');
+            console.log('  · Si la base de datos ya tiene cuentas, el servidor NO arrancará hasta que definas una clave (la generación automática sólo ocurre en una instalación nueva).');
+            console.log('  · Si la base está vacía, en el siguiente arranque se generará una clave nueva y quedará guardada en este mismo .env.');
         } else {
-            if (force) {
-                console.warn('Aviso: se reemplazó la clave anterior. Los datos cifrados con ella podrían quedar inaccesibles.');
+            if (resultado.rotated) {
+                console.log('CHAT_MASTER_KEY girada y TODO el material dependiente re-cifrado con la nueva:');
+                console.log(`  · auth_key de usuarios re-envueltas: ${resultado.authKeys}`);
+                console.log(`  · material E2E de grupos re-cifrado: ${resultado.groups}`);
+                console.log(`  · meta (VAPID) re-cifrada: ${resultado.meta}`);
+                console.log(`  · adjuntos en blob.db re-cifrados: ${resultado.blobs}`);
+                console.log('La llave nueva está en el .env (no se muestra). Guárdala aparte junto a tus respaldos.');
+            } else if (force) {
+                console.log('CHAT_MASTER_KEY generada y guardada en .env (la base no tiene material dependiente de la maestra: no había nada que re-cifrar).');
+            } else {
+                console.log('CHAT_MASTER_KEY generada y guardada en .env. No se muestra la clave.');
             }
-            console.log('CHAT_MASTER_KEY generada y guardada en .env. No se muestra la clave.');
         }
     } catch (error) {
         console.error(`No se pudo generar CHAT_MASTER_KEY: ${error.message}`);
@@ -134,4 +140,4 @@ if (require.main === module) {
     }
 }
 
-module.exports = { generateMasterKey, ensureEnvFile };
+module.exports = { generateMasterKey, ensureEnvFile, setEnvValue, writeSecretFile };

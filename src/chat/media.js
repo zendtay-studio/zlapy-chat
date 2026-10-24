@@ -16,6 +16,12 @@ const { permite } = require('../users/privacy.js');
 
 // Blobs (adjuntos)
 const blobHashOk = h => typeof h === 'string' && /^[a-f0-9]{64}$/i.test(h);
+/* Contenido ACTIVO en blobs: prohibido. /blob/:hash se sirve como text/plain
+   con nosniff, así que hoy es inerte; si un día sirviera con su MIME real o
+   otro cliente lo renderizara sin sanear, HTML/SVG/JS en un blob serían XSS.
+   Se rechazan en la puerta (allowlist de tipos ejecutables), sin romper los
+   ficheros binarios genéricos (zip, pdf, octet-stream…). */
+const BLOB_ACTIVE_MIME_RE = /^(?:text\/(?:html|javascript|ecmascript)|application\/(?:xhtml\+xml|javascript|ecmascript)|image\/svg\+xml|text\/xml|application\/xml)$/i;
 
 /* Cuota de almacenamiento por cuenta y global, en bytes ya descifrados.
    Sin ella, una sesión válida puede llenar el disco del servidor (cada
@@ -60,9 +66,12 @@ function blobQuotaOk(userId, extraBytes) {
 
 function storeBlob(hash, value) {
     if (!blobHashOk(hash) || typeof value !== 'string') return false;
-    const match = value.match(/^data:[^,]*;base64,([a-z0-9+/]*={0,2})$/i);
+    const match = value.match(/^data:([^,]*);base64,([a-z0-9+/]*={0,2})$/i);
     if (!match) return false;
-    const bytes = Buffer.from(match[1], 'base64');
+    // MIME del data-URL (sin parámetros): los tipos activos no se almacenan.
+    const mime = match[1].trim().toLowerCase().split(';')[0].trim();
+    if (BLOB_ACTIVE_MIME_RE.test(mime)) return false;
+    const bytes = Buffer.from(match[2], 'base64');
     if (crypto.createHash('sha256').update(bytes).digest('hex') !== hash.toLowerCase()) return false;
     Stmt.insertBlob.run(hash.toLowerCase(), encryptAtRest(value));
     return true;

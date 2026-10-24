@@ -15,7 +15,7 @@ const { Stmt } = require('../db/statements.js');
 const { pruneBlobHashes, tx } = require('../db/transactions.js');
 const { groupLastEntry, invalidateGroupPubCache, lastGroupMessage, pub, readGroup, readGroupSummary, writeGroupSummary } = require('../groups/store.js');
 const { rejectRateLimited } = require('../http/helpers.js');
-const { profileLimiter } = require('../http/rate-limit.js');
+const { passwordCheckLimiter, profileLimiter } = require('../http/rate-limit.js');
 const { json } = require('../http/responses.js');
 const { broadcastUsers, push, pushName, pushStories } = require('../realtime/notify.js');
 const { normalizeChatAppearanceSettings } = require('../shared/appearance.js');
@@ -45,8 +45,8 @@ function getProfile(req, res, url, data, actor) {
     username: p.username,
     signingPublicKey: messageCrypto.getSigningPublicKey(profileId)
     };
-    // Identificador de la clave de cifrado del usuario (auth_key_id de
-    // MTProto): dos dispositivos pueden compararlo para saber que
+    // Identificador de la clave de cifrado del usuario (key_id, SHA-256
+    // truncado): dos dispositivos pueden compararlo para saber que
     // comparten la misma clave de nube.
     const authRow = Stmt.getAuthKey.get(profileId);
     out.encryptionKeyId = authRow ? authRow.key_id : null;
@@ -95,9 +95,12 @@ function getNotes(req, res, url, data, actor) {
 }
 
 async function postAccountProfile(req, res, url, data, actor) {
-    // Cambiar la identidad o la contraseña exige siempre la
-    // contraseña actual: una sesión viva —dispositivo prestado o
-    // pestaña abierta— no basta para renombrar la cuenta.
+    // Cada intento ejecuta un scrypt completo (~64 ms de CPU): sin cota, una
+    // sesión válida martilleando el endpoint era un DoS de proceso barato.
+    // La contraseña actual se exige SIEMPRE para cambiar identidad o
+    // contraseña: una sesión viva —dispositivo prestado o pestaña abierta—
+    // no basta para renombrar la cuenta.
+    if (rejectRateLimited(res, passwordCheckLimiter, req.authUser.id, 5, 'verificaciones de contraseña por minuto')) return;
     if (typeof data.currentPassword !== 'string' || data.currentPassword.length > 128)
         return json(res, 400, { error: 'Contraseña actual requerida.' });
     if (!safeEqualHex(req.authUser.passwordHash, await passwordDigest(data.currentPassword, req.authUser.passwordSalt)))
@@ -188,9 +191,8 @@ function postAccountChatSettings(req, res, url, data, actor) {
 }
 
 async function postAccountRegenerateKey(req, res, url, data, actor) {
-    // Regenerar la clave de cifrado del usuario (equivalente a
-    // auth.resetAuthorizations de MTProto). El contenido se
-    // re-cifra con la clave nueva para no perder el historial, y
+    // Regenerar la clave de cifrado de contenido del usuario. El contenido
+    // se re-cifra con la clave nueva para no perder el historial, y
     // la clave de firma tambien se rehace.
     // EXIGE CONTRASEÑA: con solo la cookie de sesión, un XSS o una cookie
     // robada bastaban para dejar el historial de la víctima inaccesible. Es la
@@ -215,6 +217,9 @@ async function postAccountDelete(req, res, url, data, actor) {
     const who = req.authUser.username;
     const deletedId = req.authUser.id;
     if (!who) return json(res, 400, { error: 'Cuenta no valida.' });
+    // Cada verificación ejecuta un scrypt completo: mismo freno que el
+    // resto de operaciones que exigen contraseña.
+    if (rejectRateLimited(res, passwordCheckLimiter, req.authUser.id, 5, 'verificaciones de contraseña por minuto')) return;
     // Borrar la cuenta es IRREVERSIBLE (mensajes, grupos e
     // historiales compartidos): se exige la contraseña actual, de
     // modo que ni un XSS en la sesión de la víctima (ni una cookie
@@ -361,6 +366,10 @@ function postNotes(req, res, url, data, actor) {
             return json(res, 400, { error: 'Nota inválida.' });
         const note = { ...data.data, ts: Date.now() };
         if (typeof note.text === 'string') note.text = note.text.slice(0, 500);
+        // Mismo color CSS que en /story: `url(...)` o algo más raro dentro de
+        // bg se interpola en un style del cliente; el fondo es hexadecimal.
+        if (note.bg !== undefined && note.bg !== '' && (typeof note.bg !== 'string' || !/^#[0-9a-f]{6}$/i.test(note.bg)))
+            return json(res, 400, { error: 'Color inválido.' });
         if (JSON.stringify(note).length > 4096)
             return json(res, 400, { error: 'Nota demasiado grande.' });
         notesMap[account.username] = note;

@@ -35,12 +35,10 @@ const Stmt = {
 
     // Claves del dispositivo (cifradas en reposo)
     getKey: db.prepare('SELECT key_cipher FROM user_keys WHERE user_id = ?'),
-    // Clave de cifrado por usuario (auth_key del modelo en la nube de MTProto 2.0)
-    getAuthKey: db.prepare('SELECT auth_key, key_id, salt, session_id, last_msg_id FROM user_auth_keys WHERE user_id = ?'),
-    insertAuthKey: db.prepare('INSERT INTO user_auth_keys (user_id, auth_key, key_id, salt, session_id, last_msg_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'),
-    updateAuthKeySalt: db.prepare('UPDATE user_auth_keys SET salt = ?, updated_at = ? WHERE user_id = ?'),
-    updateAuthKeyMsgId: db.prepare('UPDATE user_auth_keys SET last_msg_id = ?, updated_at = ? WHERE user_id = ?'),
-    replaceAuthKey: db.prepare('UPDATE user_auth_keys SET auth_key = ?, key_id = ?, salt = ?, session_id = ?, last_msg_id = ?, updated_at = ? WHERE user_id = ?'),
+    // Clave de cifrado de contenido por usuario (auth_key, AES-256-GCM)
+    getAuthKey: db.prepare('SELECT auth_key, key_id FROM user_auth_keys WHERE user_id = ?'),
+    insertAuthKey: db.prepare('INSERT INTO user_auth_keys (user_id, auth_key, key_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)'),
+    replaceAuthKey: db.prepare('UPDATE user_auth_keys SET auth_key = ?, key_id = ?, updated_at = ? WHERE user_id = ?'),
     upsertKey: db.prepare(`INSERT INTO user_keys (user_id, key_cipher, updated_at) VALUES (?, ?, ?)
         ON CONFLICT(user_id) DO UPDATE SET key_cipher = excluded.key_cipher, updated_at = excluded.updated_at`),
 
@@ -108,7 +106,8 @@ const Stmt = {
     // Borrados con alcance por usuario
     insertMessageDeletion: db.prepare('INSERT OR REPLACE INTO message_deletions (message_id, user_id, deleted_at) VALUES (?, ?, ?)'),
     messageDeletedFor: db.prepare('SELECT 1 FROM message_deletions WHERE message_id = ? AND user_id = ?'),
-    listUserMessageDeletions: db.prepare('SELECT message_id FROM message_deletions WHERE user_id = ?'),
+    // Los borrados por usuario ya no se materializan por perfil (filterForViewer
+    // consulta SOLO los ids de la página, en messages.js).
     insertChatDeletion: db.prepare('INSERT OR REPLACE INTO chat_deletions (chat, user_id, deleted_at) VALUES (?, ?, ?)'),
     chatDeletedFor: db.prepare('SELECT 1 FROM chat_deletions WHERE chat = ? AND user_id = ?'),
     deleteChatDeletion: db.prepare('DELETE FROM chat_deletions WHERE chat = ? AND user_id = ?'),

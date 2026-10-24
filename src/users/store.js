@@ -27,10 +27,11 @@ function hydrateUserFromDb(acc) {
     const row = Stmt.getProfile.get(acc.id);
     // Los campos de texto del perfil (nombre, bio y nota) se guardan cifrados
     // en reposo con la CLAVE DEL USUARIO (PCE3); los datos anteriores usan la
-    // llave maestra (PCE1). decryptForUser entiende los dos formatos.
-    // Ojo: con decryptAtRest (que solo sabe PCE1) un PCE3 se devolvía TAL
-    // CUAL, así que al reiniciar el servidor el perfil se pintaba con el
-    // texto cifrado en crudo ("PCE3:...") en lugar del nombre real.
+    // llave maestra (PCE1/PCE1v2). decryptForUser entiende los dos formatos.
+    // Ojo: con decryptAtRest (que sólo descifra sobres del cifrado en
+    // reposo) un PCE3 se devolvía TAL CUAL, así que al reiniciar el
+    // servidor el perfil se pintaba con el texto cifrado en crudo
+    // ("PCE3:...") en lugar del nombre real.
     const dec = value => {
         if (typeof value !== 'string' || value === '') return '';
         const out = decryptForUser(acc.id, value);
@@ -184,12 +185,11 @@ function loadFromDb() {
     console.log(`[load] esquema v${SCHEMA_VERSION}: ${users.size} usuarios, ${groupCache.size} grupos, ${stories.length} historias`);
 }
 
-// Regeneracion de la clave de cifrado (MTProto 2.0)
-// En MTProto, regenerar la auth_key hace que el servidor olvide la clave
-// anterior (los mensajes viejos dejan de ser descifrables y solo queda la
-// copia del otro extremo). Aqui, para no perder el historial, el contenido
-// del usuario se RE-CIFRA con la clave nueva y solo despues se sustituye
-// la anterior.
+// Regeneracion de la auth_key de cifrado de contenido.
+// El enfoque "en la nube" de telegram regenera la clave perdiendo los
+// mensajes viejos (solo queda la copia del otro extremo). Aqui, para no
+// perder el historial, el contenido del usuario se RE-CIFRA con la clave
+// nueva y solo despues se sustituye la anterior.
 function regenerateAuthKey(userId) {
     /* Una sola transacción para toda la operación. Antes la clave nueva se
        instalaba y el contenido se re-cifra fila a fila con `run` sueltos: un
@@ -205,28 +205,26 @@ function regenerateAuthKeyInner(userId) {
     const newKey = mtproto.generateAuthKey();
     const newKeyId = mtproto.authKeyId(newKey);
     const now = Date.now();
-    const salt = authKeys.randomUint64();
-    const sessionId = authKeys.randomUint64();
     let reencrypted = 0;
 
     // La clave nueva se instala ANTES de re-cifrar: asi las firmas se rehacen
     // con la clave nueva (si se re-cifrara antes, los mensajes quedarian
     // firmados con la clave vieja y dejarian de verificarse).
-    Stmt.replaceAuthKey.run(encryptAtRest(newKey.toString('hex')), newKeyId, salt, sessionId, '0', now, userId);
+    Stmt.replaceAuthKey.run(encryptAtRest(newKey.toString('hex')), newKeyId, now, userId);
     authKeys.authKeyCache.delete(userId);
     messageCrypto.forgetSigningKey(userId);
 
     const encryptWithNew = plain => {
         if (typeof plain !== 'string' || plain === '') return plain;
-        const msgId = mtproto.nextMsgId('0');
-        return mtproto.encrypt(newKey, plain, { salt, sessionId, msgId, seqNo: 0 }).blob;
+        return mtproto.encrypt(newKey, plain).blob;
     };
-    /* Descifra con la clave ANTERIOR. La rotación ya instaló la nueva, así que
-       `decryptForUser` solo conocería la nueva: las tablas que la usaran
-       quedarían cifradas con la clave vieja PARA SIEMPRE. Ese fue el fallo que
-       dejaba los resúmenes (y notas, perfil, llamadas, push e historias)
-       ilegibles tras regenerar la clave: sin vista previa en la lista y el
-       chat al fondo. Los mensajes ya se descifraban con `oldRec` a mano. */
+    /* Descifra con la clave ANTERIOR. La replaceAuthKey ya instaló la nueva,
+       así que `decryptForUser` solo conocería la nueva: las tablas que la
+       usaran quedarían cifradas con la clave vieja PARA SIEMPRE. Ese fue el
+       fallo que dejaba los resúmenes (y notas, perfil, llamadas, push e
+       historias) ilegibles tras regenerar la clave: sin vista previa en la
+       lista y el chat al fondo. Los mensajes ya se descifraban con `oldRec`
+       a mano. */
     const decryptWithOld = blob => {
         if (typeof blob !== 'string' || blob === '') return blob === '' ? '' : blob;
         if (blob.startsWith('PCE3:')) {
@@ -237,21 +235,18 @@ function regenerateAuthKeyInner(userId) {
         return decryptAtRest(blob);
     };
 
-    // 1) Mensajes del usuario: se descifran con la clave previa (o con la
-    //    maestra si se guardaron con la clave global) y se re-cifran con la
-    //    nueva.
+    // 1) Mensajes del usuario: se descifran con la clave previa y se
+    //    re-cifran con la nueva.
     const messages = db.prepare(`SELECT id, chat, ts, from_id, to_id, kind, data, hash, once, edited,
         crypto_version, crypto_group_id FROM messages WHERE from_id = ?`).all(userId);
     for (const row of messages) {
+        if (!oldRec) continue;
         let plain = null;
         if (typeof row.data === 'string' && row.data.startsWith('PCE3:')) {
-            if (!oldRec) continue;
             const out = mtproto.decrypt(oldRec.key, row.data, messageContextBytes(row));
             if (!out) continue;
             plain = out.body.toString('utf8');
-        } else {
-            try { plain = messageCrypto.decryptMessage(row.data, row); } catch { continue; }
-        }
+        } else continue; // solo existe un formato (PCE3)
         if (plain === null) continue;
         let body;
         try { body = JSON.parse(plain); } catch { continue; }

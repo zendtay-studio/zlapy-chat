@@ -42,6 +42,13 @@ function updateCall(username, id, patch) {
 const hasCall = (username, peer, id) =>
     typeof id === 'string' && !!(callFiles.get(username) || []).find(c => c.id === id && c.peer === peer);
 
+/* ¿Ya hay una oferta de llamada VIVA de este usuario hacia ese par? Sin
+   deduplicación, un frame `call-offer` repetido (con callId aleatorios)
+   insertaba llamadas, reescribía el registro y lanzaba pushes sin cota:
+   saturación de SQLite y amplificación hacia el servicio de push. */
+const hasPendingCall = (username, peer) =>
+    !!username && !!peer && !!(callFiles.get(username) || []).find(c => c && c.state === 'calling' && c.peer === peer);
+
 /* Al cerrarse la ÚLTIMA conexión de un usuario, sus llamadas vivas se cierran
    y se avisa a la contraparte: si un participante se desconecta a mitad de
    llamada, el otro no debe quedarse con la llamada "colgada" para siempre. */
@@ -65,6 +72,7 @@ module.exports = {
     addCall,
     updateCall,
     hasCall,
+    hasPendingCall,
     CALL_TERMINAL_STATES,
     endUserCalls,
 };

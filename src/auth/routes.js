@@ -29,14 +29,19 @@ const { accountByName, loadUserFromRow, saveUserToDb } = require('../users/store
  * cuanto acierta. Es la diferencia con un 429 por cubo, que tras el túnel (todo
  * sale de la misma IP) habría permitido bloquear a terceros a voluntad.
  *
- * El contador GLOBAL sí bloquea un minuto, pero solo cruza su umbral con cientos
- * de fallos: es la respuesta a quien rota direcciones o nombres para no acumular
- * nunca en el mismo cubo. */
+ * El contador por IP también existen, pero SOLO para la IP que falla: rota
+ * nombres o direcciones de cuenta y el freno te sigue. Antes había un
+ * enfriamiento GLOBAL que devolvía 429 a TODOS los usuarios (300 fallos desde
+ * cualquier origen cerraban el acceso del servicio entero un minuto): con eso
+ * un atacante dejaba sin login a usuarios legítimos (DoS de disponibilidad).
+ * Ahora el 429 siempre es por IP. */
 const LOGIN_DELAY_FROM = 4;
 const LOGIN_DELAY_MAX_MS = 10 * 1000;
 const LOGIN_WINDOW_MS = 10 * 60 * 1000;
-const LOGIN_GLOBAL_LIMIT = 300;
-const LOGIN_GLOBAL_COOLDOWN_MS = 60 * 1000;
+/* Caduca el freno por IP: cientos de fallos en una ventana son fuerza bruta,
+ * nunca uso legítimo (un usuario se equivoca dos o tres veces). */
+const LOGIN_IP_LIMIT = 120;
+const LOGIN_IP_COOLDOWN_MS = 60 * 1000;
 /* Retardo que corresponde a un número de fallos: 500 ms, 1 s, 2 s, 4 s… hasta
    el tope. Nunca bloquea: solo frena. */
 const loginDelayMs = fails => Math.min(LOGIN_DELAY_MAX_MS, 500 * Math.pow(2, Math.max(0, fails - LOGIN_DELAY_FROM)));
@@ -153,13 +158,19 @@ async function postAuthLogin(req, res, url, data, actor) {
     /* Contadores de fallos, en dos niveles:
        · por CUENTA e IP → retardo progresivo (nunca bloqueo), ver las
          constantes de arriba.
-       · GLOBAL → enfriamiento corto para quien rota direcciones o nombres.
+       · por IP → circuit breaker que devuelve 429 SOLO a esa dirección,
+         para frenar a quien rota nombres de cuenta. Cada intento de login
+         cuesta un scrypt completo: sin tope por IP, miles de peticiones
+         desde una sola máquina martillean la CPU del proceso compartido.
        La IP es siempre la del socket (nunca una cabecera), así que no se puede
        falsear para girar entre cubos. */
     const acct = loginAttempts.get('acct:' + name + '@' + ip);
-    const global = loginAttempts.get('global:logins');
+    const ipBox = loginAttempts.get('brk:' + ip);
     const now = Date.now();
-    if (global && global.until > now) return json(res, 429, { error: 'Demasiados intentos fallidos. Espera un minuto.' });
+    if (ipBox && ipBox.cooldown > now) {
+        res.setHeader('Retry-After', String(Math.ceil((ipBox.cooldown - now) / 1000)));
+        return json(res, 429, { error: 'Demasiados intentos fallidos desde esta red. Espera un minuto.' });
+    }
     const user = name ? accountByName(name) : null;
     let valid = false;
     if (user && typeof data.password === 'string' && data.password.length <= 128)
@@ -170,14 +181,14 @@ async function postAuthLogin(req, res, url, data, actor) {
         const entry = acct && acct.until > now ? acct : { count: 0, until: now + LOGIN_WINDOW_MS };
         entry.count++;
         loginAttempts.set('acct:' + name + '@' + ip, entry);
-        const g = global && global.count !== undefined ? global : { count: 0, until: 0 };
-        g.count++;
-        if (g.count >= LOGIN_GLOBAL_LIMIT) {
-            g.until = now + LOGIN_GLOBAL_COOLDOWN_MS;
-            g.count = Math.floor(LOGIN_GLOBAL_LIMIT / 2);
-            console.warn(`[auth] ${LOGIN_GLOBAL_LIMIT} intentos de acceso fallidos: enfriamiento de ${LOGIN_GLOBAL_COOLDOWN_MS / 1000}s.`);
+        const brk = ipBox && ipBox.until > now ? ipBox : { count: 0, until: now + LOGIN_WINDOW_MS, cooldown: 0 };
+        brk.count++;
+        if (brk.count >= LOGIN_IP_LIMIT) {
+            brk.cooldown = now + LOGIN_IP_COOLDOWN_MS;
+            brk.count = 0;
+            console.warn(`[auth] ${LOGIN_IP_LIMIT} intentos de acceso fallidos desde ${ip}: enfriamiento de ${LOGIN_IP_COOLDOWN_MS / 1000}s SOLO para esa dirección.`);
         }
-        loginAttempts.set('global:logins', g);
+        loginAttempts.set('brk:' + ip, brk);
         await new Promise(resolve => setTimeout(resolve, loginDelayMs(entry.count)));
         return json(res, 401, { error: 'Invalid username or password.' });
     }
@@ -194,11 +205,14 @@ async function postAuthAddAccount(req, res, url, data, actor) {
     const ip = clientIp(req);
     const username = typeof data.username === 'string' ? data.username.trim().toLowerCase() : '';
     /* Mismos frenos que el acceso: contador por cuenta e IP con retardo
-       progresivo (nunca bloqueo) más el global anti-rotación. */
+       progresivo (nunca bloqueo) más el circuit breaker por IP. */
     const acct = loginAttempts.get('acct:' + username + '@' + ip);
-    const global = loginAttempts.get('global:logins');
+    const ipBox = loginAttempts.get('brk:' + ip);
     const now = Date.now();
-    if (global && global.until > now) return json(res, 429, { error: 'Demasiados intentos. Espera un momento e inténtalo de nuevo.' });
+    if (ipBox && ipBox.cooldown > now) {
+        res.setHeader('Retry-After', String(Math.ceil((ipBox.cooldown - now) / 1000)));
+        return json(res, 429, { error: 'Demasiados intentos desde esta red. Espera un minuto e inténtalo de nuevo.' });
+    }
     const user = validUsername(username) ? accountByName(username) : null;
     const password = typeof data.password === 'string' ? data.password : '';
     const valid = user && password.length <= 128
@@ -208,9 +222,14 @@ async function postAuthAddAccount(req, res, url, data, actor) {
         const entry = acct && acct.until > now ? acct : { count: 0, until: now + LOGIN_WINDOW_MS };
         entry.count++;
         loginAttempts.set('acct:' + username + '@' + ip, entry);
-        const g = global && global.count !== undefined ? global : { count: 0, until: 0 };
-        g.count++;
-        loginAttempts.set('global:logins', g);
+        const brk = ipBox && ipBox.until > now ? ipBox : { count: 0, until: now + LOGIN_WINDOW_MS, cooldown: 0 };
+        brk.count++;
+        if (brk.count >= LOGIN_IP_LIMIT) {
+            brk.cooldown = now + LOGIN_IP_COOLDOWN_MS;
+            brk.count = 0;
+            console.warn(`[auth] ${LOGIN_IP_LIMIT} intentos fallidos desde ${ip} (enlazar cuentas): enfriamiento de ${LOGIN_IP_COOLDOWN_MS / 1000}s SOLO para esa dirección.`);
+        }
+        loginAttempts.set('brk:' + ip, brk);
         await new Promise(resolve => setTimeout(resolve, loginDelayMs(entry.count)));
         return json(res, 401, { error: 'Usuario o contraseña incorrectos.' });
     }

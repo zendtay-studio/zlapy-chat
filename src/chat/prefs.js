@@ -23,6 +23,10 @@ const { byName } = require('../users/helpers.js');
 const DM_PREFIX = 'dm:';
 const GROUP_PREFIX = 'group:';
 const SAVED_KEY = 'saved';
+/* Tope de conversaciones fijadas: sin él, fijar cientos (varios POST por los
+   rate-limits) degradaba el orden y el tamaño de la respuesta de
+   /chats/summary indefinidamente. */
+const MAX_PINNED = 20;
 
 const dmKey = username => DM_PREFIX + username;
 const groupKey = id => GROUP_PREFIX + id;
@@ -106,6 +110,17 @@ function applyChatPrefs(actor, userId, targets, patch) {
         if (update.pinned === undefined && update.muted === undefined && update.unread === undefined && update.archived === undefined) continue;
         updates.push(update);
     }
+    /* Tope de fijados: se descartan los fijados nuevos que excedan el cupo
+       (los que ya estaban fijados no se tocan). */
+    if (patch.pinned === true && updates.some(u => u.pinned === true)) {
+        const pinnedNow = Object.values(readChatPrefs(userId)).filter(p => p.pinned).length;
+        let presupuesto = Math.max(0, MAX_PINNED - pinnedNow);
+        for (const update of updates) {
+            if (update.pinned !== true) continue;
+            if (presupuesto <= 0) update.pinned = false;
+            else presupuesto--;
+        }
+    }
     if (!updates.length) return readChatPrefs(userId);
     tx.applyChatPrefs(userId, updates);
     // El silencio también vive en el perfil en memoria: si no se actualiza,
@@ -130,6 +145,7 @@ module.exports = {
     DM_PREFIX,
     GROUP_PREFIX,
     SAVED_KEY,
+    MAX_PINNED,
     dmKey,
     groupKey,
     parseKey,

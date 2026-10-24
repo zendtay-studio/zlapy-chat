@@ -458,6 +458,8 @@ const handleRequest = (req, res) => {
                         return json(res, 400, { error: 'Archivo inválido.' });
                     if (gallery.length && !storeGallery(gallery, storeBlob))
                         return json(res, 400, { error: 'Galería inválida.' });
+                    // El espacio acaba de crecer: fuera de la caché de cuota.
+                    invalidateBlobQuota(req.authUser.id);
                     if (pendingHash) { source.hash = pendingHash; messageData = ''; }
                     const msg = {
                         id: validMessageId(source.id) ? source.id : crypto.randomUUID(),

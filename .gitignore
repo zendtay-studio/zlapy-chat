@@ -1,19 +1,54 @@
-# Secretos y credenciales
+# ── Secretos y credenciales (nunca al repositorio) ──────────
+# Configuración con secretos (token de Cloudflare, clave Giphy,
+# CHAT_MASTER_KEY). La plantilla .env.example SÍ se versiona.
 .env
+.env.*.local
+# Respaldo que deja la rotación de la llave maestra (npm run key -- --force).
+.env.master-bak
+# Clave maestra de cifrado (raíz de confianza del servidor).
 .zlapymasterkey
-key.pem
-cert.pem
+# Certificados y claves TLS (reales o temporales, cualquier nombre).
+*.pem
+*.key
+*.crt
+*.csr
+*.p12
+*.pfx
 
-# Datos persistentes, respaldos y configuración local de túnel
+# ── Datos persistentes y privados del usuario ───────────────
+# Bases SQLite y todo su volcado (WAL, journals, sobrantes de vistas).
+# Los datos son privados: cualquier .db que aparezca, fuera del repo.
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
 data/
+# Copias de recuperación: se crean al mover "data/" durante un wipe
+# manual (data → data2, data3…). Nunca committearlas.
+data2/
+data3/
+# Respaldos de operaciones (ops/backup.js y migraciones: *.bak).
 backups/
+*.bak
+# Configuración local del túnel con el token (la plantilla
+# zty.yml.example SÍ se versiona).
 zty.yml
 
-# Dependencias
+# ── Estado de ejecución ─────────────────────────────────────
+# PID del servidor hijo mientras corre el supervisor (`npm start`).
+.zlapy.pid
+
+# ── Dependencias ────────────────────────────────────────────
 node_modules/
 # package-lock.json SÍ se versiona: es lo que hace reproducibles las
 # instalaciones (`npm ci`) y permite auditar qué código de terceros entra.
 
-# Estado de ejecución
-# PID del servidor hijo mientras corre el supervisor.
-.zlapy.pid
+# ── Editor y sistema (basura local, específica de cada máquina) ──
+.DS_Store
+Thumbs.db
+desktop.ini
+*~
+*.swp
+*.swo
+.idea/
+.vscode/

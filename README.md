@@ -113,7 +113,7 @@ npm run termux   # actualiza paquetes, instala las herramientas, compila y arran
 | Qué pasa | Resultado |
 | --- | --- |
 | No existe `.env` | Se crea a partir de `.env.example` con los valores por defecto (permisos `600`) |
-| No existe la llave maestra | Se genera y se guarda en `.zlapymasterkey` (permisos `600`) |
+| No existe la llave maestra | Se genera y se guarda sola en el `.env` (`CHAT_MASTER_KEY`, permisos `600`) |
 | No existe la base de datos | Se crea vacía en `data/` |
 
 Si la base de datos **ya tiene cuentas** y falta la llave maestra, el servidor
@@ -157,8 +157,8 @@ npm start        # con supervisor: si el proceso se cae, lo reinicia
 | --- | --- |
 | `npm start` | Arranca el servidor **bajo el supervisor** (`ops/supervisor.js`): health check, backoff exponencial (1 s → 30 s), reinicio automático y cortacircuito ante fallos de arranque |
 | `npm test` | Suite completa (`node --test test/*.test.js`): unitarias + integración en instancias aisladas |
-| `npm run backup` | Respaldo consistente de las dos bases + `.zlapymasterkey` |
-| `npm run key` | Genera la llave maestra (`--force` para reemplazar, `--null` para vaciar) |
+| `npm run backup` | Respaldo consistente de las dos bases (la llave maestra va en el `.env`: copia también ese fichero) |
+| `npm run key` | Genera la llave maestra (`--force` para girarla — re-cifrando el almacenamiento si la base ya tiene datos —, `--null` para vaciar) |
 | `npm run rebuild:sqlite` | Compila `better-sqlite3` en el sitio (obligatorio en Android/Termux) |
 | `npm run termux` | Todo en uno para Termux: actualiza, instala herramientas, compila y arranca |
 | `npm run tunnel` | Publica el servidor con un túnel de Cloudflare |
@@ -214,7 +214,7 @@ cp .env.example .env   # crea tu configuración local
 | --- | ---: | --- |
 | `PORT` | `3000` | Puerto TCP donde escucha (http y https a la vez) |
 | `DATA_DIR` | `data` | Carpeta de las bases y los adjuntos (vacío = `data/` dentro del proyecto) |
-| `CHAT_MASTER_KEY` | vacío | Llave maestra en Base64 (32 bytes). Vacío = usar/generar `.zlapymasterkey` |
+| `CHAT_MASTER_KEY` | vacío | Llave maestra en Base64 (32 bytes). Vacía = el servidor genera una en el primer arranque (base sin datos) y la guarda en el propio `.env` |
 | `MESSAGE_DIRECT_CHAR_LIMIT` | `10000` | Máx. caracteres por mensaje directo |
 | `MESSAGE_GROUP_CHAR_LIMIT` | `15000` | Máx. caracteres por mensaje de grupo |
 | `STORY_TEXT_CHAR_LIMIT` | `140` | Máx. caracteres del texto de una historia |
@@ -240,16 +240,16 @@ error claro en vez de fallar luego en caliente.
 
 El servidor cifra los datos en reposo con una llave de 32 bytes:
 
-- Si `CHAT_MASTER_KEY` está definida, se usa esa.
-- Si no, se usa el fichero `.zlapymasterkey` de la raíz del proyecto; con una
-  base vacía se genera sola, y **con una base que ya tiene datos, si falta la
-  llave el arranque aborta** (regenerarla en silencio haría los datos
-  irrecuperables).
+- Si `CHAT_MASTER_KEY` está definida en el `.env`, se usa esa.
+- Si está vacía y la base **no tiene cuentas todavía**, el servidor genera
+  una llave aleatoria (32 bytes, CSPRNG) y la escribe en el propio `.env`.
+- Si está vacía y la base **ya tiene datos**, el arranque aborta
+  (regenerarla en silencio haría los datos irrecuperables).
 
 ```bash
 npm run key             # genera una llave y la guarda en .env
-npm run key -- --force  # reemplaza la existente (puede dejar datos ilegibles)
-npm run key -- --null   # vacía CHAT_MASTER_KEY (vuelve a .zlapymasterkey)
+npm run key -- --force  # gírala: con base con datos, re-cifra todo el material dependiente con la nueva
+npm run key -- --null   # vacía CHAT_MASTER_KEY (el servidor NO arrancará con datos; en una base vacía se genera otra en el siguiente arranque)
 ```
 
 ---
@@ -627,7 +627,6 @@ data/                  persistencia (sobrevive reinicios; no se versiona)
   blob.db              archivos e imágenes deduplicados por hash SHA-256
 backups/               respaldos manuales (no se versiona)
 cert.pem / key.pem     HTTPS autofirmado (para cámara/micrófono en el móvil)
-.zlapymasterkey        llave maestra (si no se usa CHAT_MASTER_KEY; no se versiona)
 .zlapy.pid             PID del servidor hijo mientras corre el supervisor (no se versiona)
 ```
 
@@ -675,16 +674,17 @@ Copia de forma **consistente** las dos bases (con la API `backup()` de SQLite,
 segura incluso con el servidor corriendo y WAL activo) y la llave maestra, con
 permisos 0600.
 
-> **La llave maestra y las bases siempre van JUNTAS**: sin `.zlapymasterkey`
-> (o sin `CHAT_MASTER_KEY`), los mensajes, historias y adjuntos del respaldo son
-> irrecuperables. Guárdalas en un lugar distinto al disco de la aplicación.
+> **La llave maestra y las bases siempre van JUNTAS**: sin `CHAT_MASTER_KEY`
+> (la línea del `.env`), los mensajes, historias y adjuntos del respaldo son
+> irrecuperables. Guarda una copia del `.env` (o de esa línea) en un lugar
+> distinto al disco de la aplicación.
 
 Para **restaurar**:
 
 1. Para el servidor (`Ctrl+C` o `SIGTERM`: cierra ordenado con checkpoint WAL).
 2. Copia `zlapy.db` y `blob.db` del respaldo a la carpeta de datos (`DATA_DIR`,
-   por defecto `data/`) y `.zlapymasterkey` a la raíz del proyecto (o define
-   `CHAT_MASTER_KEY` con la clave del respaldo).
+   por defecto `data/`) y define la MISMA `CHAT_MASTER_KEY` en el `.env`
+   (la clave del respaldo).
 3. Arranca y comprueba `http://localhost:3000/healthz` → `{"ok":true,...}`.
 
 > Copiar solo el `.db` con el servidor corriendo **no** es un respaldo válido:
@@ -765,7 +765,7 @@ confianza local; conviene revisar las reglas de la cuenta de Cloudflare
 | «Puerto ocupado» | Ya hay una instancia en el mismo puerto | `PORT=3001 npm start`, o para el supervisor: mata la otra instancia |
 | `Cannot find module 'better-sqlite3'` | Falta el binario nativo | Compílalo en el sitio: `cd node_modules/better-sqlite3 && npm exec -- node-gyp rebuild --release --force_build=1` (`npm rebuild better-sqlite3` **no** compila: el paquete no trae script `install`) |
 | «Database crypto version is incompatible» | La base es de un formato anterior | Restaura desde un respaldo de `backups/` o empieza con una base nueva (no hay migraciones) |
-| «falta la llave maestra» | `.zlapymasterkey` no está y la base ya tiene datos | Recupera la llave del respaldo; **no** la borres: sin ella los datos son irrecuperables |
+| «falta la llave maestra» | `CHAT_MASTER_KEY` no está en el `.env` y la base ya tiene datos | Recupera la llave del respaldo y pégala en el `.env`; **no** la pierdas: sin ella los datos son irrecuperables |
 | El móvil no abre la cámara | Contexto no seguro | Usa la dirección `https://` y acepta el certificado |
 | «Marca de tiempo fuera de rango» al enviar | El reloj del dispositivo se desvía más de 60 s | Activa la hora automática en el dispositivo y recarga |
 | Las notificaciones push no llegan | El navegador exige HTTPS o permiso | Sirve por `https://`, concede el permiso y prueba con el botón de Ajustes |

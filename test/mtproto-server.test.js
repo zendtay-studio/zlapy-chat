@@ -1,6 +1,7 @@
-// Tests de integracion del cifrado en la nube (MTProto 2.0) en el servidor:
-// clave por usuario, aislamiento entre cuentas, huella publicada y
-// regeneracion de clave sin perder el historial.
+// Tests de integracion del cifrado de contenido en el servidor: clave de
+// 2048 bits por usuario (AES-256-GCM con contexto autenticado),
+// aislamiento entre cuentas, key_id publicado y regeneracion de clave
+// sin perder el historial.
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const fs = require('node:fs');
@@ -60,7 +61,7 @@ test('el perfil publica el identificador de la clave de cifrado', async () => {
         await api(srv.base, 'POST', '/send', { to: 'ana', kind: 'text', data: 'a mi mismo' }, ana.cookie);
         await new Promise(r => setTimeout(r, 200));
         const profile = await api(srv.base, 'GET', '/profile?username=ana', null, ana.cookie);
-        assert.match(profile.json.encryptionKeyId || '', /^[0-9a-f]{16}$/, 'debe ser el auth_key_id');
+        assert.match(profile.json.encryptionKeyId || '', /^[0-9a-f]{32}$/, 'debe ser el key_id (SHA-256 truncado a 128 bits)');
     } finally { await stop(srv); }
 });
 
@@ -101,7 +102,7 @@ test('regenerar la clave re-cifra el contenido y el historial se conserva', asyn
     } finally { await stop(srv); }
 });
 
-test('cada mensaje lleva en su sobre el key_id de SU autor', async () => {
+test('cada autor cifra con su propia clave y las claves entre autores difieren', async () => {
     const srv = await startServer();
     try {
         const ana = await register(srv.base, 'ana');
@@ -112,23 +113,24 @@ test('cada mensaje lleva en su sobre el key_id de SU autor', async () => {
         await api(srv.base, 'POST', '/send', { to: 'ana', kind: 'text', data: 'de beto' }, beto.cookie);
         await new Promise(r => setTimeout(r, 300));
 
-        const db = dbOf(srv);
-        const keyIds = new Map(
-            db.prepare(`SELECT k.user_id, k.key_id FROM user_auth_keys k
-                JOIN users u ON u.id = k.user_id`).all().map(r => [r.user_id, r.key_id])
-        );
-        const rows = db.prepare(`SELECT m.from_id, m.data FROM messages m
-            JOIN users u ON u.id = m.from_id`).all();
-        db.close();
+        // La autoría se verifica con la FIRMA (verifyMessage + claves publicas
+        // en /contacts); el cifrado usa la auth_key de SU autor. El sobre ya
+        // no lleva el key_id incrustado: la autenticidad la da la firma.
+        const anaProfile = await api(srv.base, 'GET', '/profile?username=ana', null, ana.cookie);
+        const betoProfile = await api(srv.base, 'GET', '/profile?username=beto', null, beto.cookie);
+        assert.match(anaProfile.json.encryptionKeyId || '', /^[0-9a-f]{32}$/);
+        assert.match(betoProfile.json.encryptionKeyId || '', /^[0-9a-f]{32}$/);
+        assert.notEqual(anaProfile.json.encryptionKeyId, betoProfile.json.encryptionKeyId,
+            'claves de cifrado distintas por usuario');
 
-        assert.ok(rows.length >= 2, 'debe haber al menos dos mensajes');
-        const usados = new Set();
-        for (const row of rows) {
-            const sobreKeyId = row.data.split(':')[1];
-            assert.equal(sobreKeyId, keyIds.get(row.from_id),
-                'el key_id del sobre debe ser el de su autor');
-            usados.add(sobreKeyId);
-        }
-        assert.equal(usados.size, rows.length > 1 ? usados.size : 1);
+        const db = dbOf(srv);
+        const sobres = db.prepare(`SELECT m.from_id, m.data FROM messages m WHERE crypto_version = 3`).all();
+        db.close();
+        assert.equal(sobres.length, 2, 'dos mensajes cifrados');
+        // El contenido cifrado de cada autor es distinto aunque ambos usaran
+        // el mismo pivote AES-GCM (claves sale-cifradas distintas).
+        assert.ok(sobres.every(s => s.data.startsWith('PCE3:')));
+        assert.notEqual(sobres[0].data.split(':')[2], sobres[1].data.split(':')[2],
+            'los sobres no pueden repetir cifrado');
     } finally { await stop(srv); }
 });

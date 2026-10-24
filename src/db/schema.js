@@ -230,7 +230,7 @@ CREATE TABLE IF NOT EXISTS messages (
     hash               TEXT,
     once               INTEGER NOT NULL DEFAULT 0 CHECK (once IN (0,1)),
     edited             INTEGER NOT NULL DEFAULT 0 CHECK (edited IN (0,1)),
-    crypto_version     INTEGER NOT NULL DEFAULT 2,
+    crypto_version     INTEGER NOT NULL DEFAULT 3,
     crypto_group_id    TEXT,
     signature          TEXT,
     signing_public_key TEXT
@@ -247,20 +247,18 @@ CREATE INDEX IF NOT EXISTS idx_messages_from ON messages(from_id, ts DESC);
        (los borra el destinatario; el emisor conserva su mensaje).
      · chat_deletions: conversaciones que un usuario ha quitado de su lista.
    Ambas se limpian en cascada al borrarse el mensaje o el usuario. */
-/* ---------------- 14c. auth_key por usuario (MTProto 2.0) ----------------
-   Clave de autorizacion de 2048 bits por usuario, con su identificador
-   (auth_key_id), su sal (se rota cada 30 minutos) y su identificador de
-   sesion. Es el equivalente al modelo "en la nube" de MTProto: el servidor la
-   conoce (por eso puede sincronizar el historial entre dispositivos), pero NO
-   se deriva de una llave global, asi que la llave maestra por si sola no
-   descifra el contenido de nadie. */
+/* ---------------- 14c. auth_key por usuario ----------------
+   Clave de cifrado de contenido de 2048 bits por usuario (independiente por
+   persona), con su identificador (key_id, SHA-256 truncado). El servidor la
+   conoce (por eso puede sincronizar el historial entre dispositivos) y la
+   guarda CIFRADA con la llave maestra (PCE1): la maestra es la raiz de
+   confianza completa y quien la obtenga puede descifrar el contenido de
+   todos. Lo que aporta la auth_key es proteccion ante fuga de la base SIN
+   fuga de la maestra. */
 CREATE TABLE IF NOT EXISTS user_auth_keys (
     user_id     TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     auth_key    TEXT NOT NULL,
     key_id      TEXT NOT NULL,
-    salt        INTEGER NOT NULL DEFAULT 0,
-    session_id  INTEGER NOT NULL DEFAULT 0,
-    last_msg_id TEXT NOT NULL DEFAULT '0',
     created_at  INTEGER NOT NULL DEFAULT 0,
     updated_at  INTEGER NOT NULL DEFAULT 0
 );
