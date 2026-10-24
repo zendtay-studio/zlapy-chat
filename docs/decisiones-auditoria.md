@@ -109,3 +109,83 @@ mantener como severidad propia con o sin CSP.
   hallazgo) y `c164713` (purga de filas de acceso huérfanas).
 - Informe fuente de la auditoría (fuera del repositorio):
   `zlapy-chat/run-1/REPORT.md`.
+
+---
+
+# Ronda SECOA — 23 oct 2026 (segunda auditoría ofensiva, con explotación real)
+
+La segunda auditoría se hizo **ejecutando el servidor en un puerto de
+aislamiento** (`DATA_DIR` temporal, `FORCE_TLS=false`, sin tocar `data/` real)
+y reproduciendo cada hallazgo con peticiones reales antes de tocar una línea.
+Con eso se separaron tres grupos: **hallazgos reales cerrados**, **falsos
+positivos descartados** (el agente los propuso, el código ya los cubría) y
+**decisiones que siguen vivas a propósito**.
+
+## 4. Hallazgos confirmados y cerrados (con la prueba)
+
+Todos se reprodujeron en la sandbox **antes** del parche y se verificó el
+cierre después; la suite completa (`npm test`, 162 pruebas) pasó en verde con
+los cambios puestos.
+
+| Hallazgo | Qué permitía | Cómo quedó |
+| --- | --- | --- |
+| SECOA-I-001 / I-002 | `/send` aceptaba el medio **en línea sin hash** de 24 MB sin gastar cuota de adjuntos, y `POST /messages` amplificaba cada lectura a ~24 MB JSON (330-363 ms) | `MAX_INLINE_MEDIA_CHARS` (256 KiB → `413`), `bytesNuevos` cuenta **siempre** el `data` del mensaje (`src/chat/routes.js:246-284`) |
+| SECOA-I-004 | `/receipt` sin limitador: cada uno recorre hasta 500 ids y descifra cada fila | `receiptLimiter` (120/min, `src/chat/routes.js:376`) |
+| SECOA-A-001 | historias con medio en línea de 24 MB | `STORY_INLINE_CHAR_LIMIT` = 4 000 000 (`src/stories/routes.js`, `413` si pasa) |
+| SECOA-A-002 | un miembro sin rol podía abrir un grupo privado (`visibility`) o dejarlo `joinPolicy: open` | cinco ajustes quedaron **solo-admins** (`src/http/router.js`, `403 "Ese ajuste es solo para admins."`) |
+| SECOA-A-003 | un admin podía **expulsar al propietario**: la comprobación apuntaba a `groups.owner_id` (columna `SET NULL`), no al rol real, y dejaba el grupo huérfano | guarda explícita: `403 "No se puede expulsar al propietario del grupo."` (y se eliminó el bloque muerto) |
+| SECOA-B-001 | `FORCE_TLS` sin certificados: arranque abortado o, si se forzaba, credenciales en claro desde fuera | arranque **degradado** + `503` para `publicAuthPost` desde fuera de loopback (`src/http/router.js:128-130`) |
+| SECOA-C-011 | la caché de páginas sostenía cientos de MB en RAM con páginas de adjuntos grandes | cota global de bytes `CHAT_PAGE_CACHE_MAX_BYTES` (64 MiB) + desalojo (`src/chat/messages.js`) |
+| SECOA-D-001 / E-001 | `data/` nacía `0755` y las bases `0644`: lectura para cualquier usuario local del equipo | `server.js` paso 0: `0700`/`0600` al arrancar, `best-effort` con aviso |
+| SECOA-E-006 | el anti-replay del canal se registraba **antes** de validar el MAC (flood de basura expulsable) | registro del nonce **tras** verificar HMAC + rechazo de nonce vacío (`src/http/transport.js`) |
+| SECOA-I-003 | sesiones sin tope por cuenta | `MAX_SESSIONS_PER_USER` = 20, recorta las más antiguas (`src/auth/sessions.js`) |
+| SECOA-G | grupos sin tope de miembros (coste por mensaje lineal en N) | `MAX_GROUP_MEMBERS` = 200 en creación/`join`/`addMember` |
+| (limpieza) | `.zlapy.pid` en `0644` y un limitador (`keyLimiter`) sin consumidor | PID `0600`; `keyLimiter` eliminado |
+
+## 5. Falsos positivos descartados (no se tocó el código)
+
+El agente auditor los propuso como fallos; la verificación sobre el código
+mostró que **ya estaban resueltos**. Queda aquí para no volver a "arreglarlos":
+
+- **Mismo-origen/CSRF en `POST`**: Origin + `sec-fetch-site` ya se comprobaban
+  en `src/http/router.js`, y el *upgrade* WebSocket tiene su propia comprobación
+  de origen (`src/realtime/websocket.js`).
+- **Índices de `sessions`**: `idx_sessions_user` y `idx_sessions_exp` existen
+  desde el esquema v3 (`src/db/schema.js`).
+- **Caché de sesiones sin validar caducidad**: `getSessionFromCache` ya
+  descarta las expiradas (`src/auth/sessions.js`).
+- **`data.from` falsificable en `/story`**: el router lo sobrescribe con el
+  actor antes de llamar a la ruta.
+- **Duplicación de blobs por `INSERT OR IGNORE`**: el almacén es idempotente
+  por diseño, no había fuga: el hallazgo se retiró.
+
+## 6. Lo que sigue sin cambiar, a propósito
+
+- **La identidad por IP bajo túnel de Cloudflare** (SECOA-C-002): con
+  `X-Forwarded-*` detrás de `cloudflared`, un cliente podría falsear la IP de
+  origen de los limitadores por IP. **Decisión: no se cambia.** Son de
+  referencia para el registro/login, que **ya** tienen además límite por
+  cuenta; elevar "la IP real" a fuente de verdad desde una cabecera
+  introduciría un bypass nuevo. La restricción real de IP se mantiene en el
+  *socket* (`clientIp`), que un cliente de la LAN no puede falsear.
+- **La rotación de clave en una sola transacción** (SECOA-D-004):
+  `regenerateAuthKey` re-cifra todo el material del usuario dentro de una
+  transacción única por atomicidad. **Decisión: se conserva.** Dividirla en
+  trozos reintroduciría estados intermedios ilegibles — que es justo el fallo
+  que se corrigió en `4a16582`/`d3b977f`.
+- **La purga coherente de dos bases** (SECOA-D-005): los blobs huérfanos se
+  barren periódicamente en lugar de purgarse en la misma transacción que
+  borra el mensaje. **Decisión: se conserva**: es un barrido acotado que no
+  bloquea el servicio, y la referencia de acceso es la fuente de verdad.
+- **El pin del compilador nativo** (SECOA-E-013): `better-sqlite3` se compila
+  con el node-gyp del sistema. **Decisión: fuera de alcance**: cambiar el
+  *toolchain* de un proyecto desplegado por `npm ci` es una operación de
+  release, no un parche de seguridad.
+
+## 7. Rutas privadas en el histórico
+
+Tras esta ronda se reescribió el historial del repositorio para **eliminar
+rutas personales del host que se habían colado en dos documentos
+de auditoría; el contenido (commits y mensajes) es el mismo, con hashes nuevos.
+Los informes originales viven **fuera del repositorio** y se citan solo con
+rutas relativas (`zlapy-chat/run-1/REPORT.md`).

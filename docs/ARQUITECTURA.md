@@ -120,10 +120,23 @@ colgado (`npm start` → `node ops/supervisor.js`).
 
 ### 2.1 Secuencia exacta
 
-`server.js` es deliberadamente corto: solo cuatro pasos.
+`server.js` es deliberadamente corto: cinco pasos.
 
 ```
 node server.js
+      │
+      ▼
+┌──────────────────────────────────────────────────────────────┐
+│ 0. Endurecimiento de permisos del almacenamiento            │
+│      data/, data2/ y backups/  → 0700  (chmod)               │
+│      zlapy.db, blob.db, .env  → 0600  (chmod)                │
+│      best-effort: si falla (p. ej. dueño distinto) se sigue  │
+│      arrancando con un aviso; un fallo duro dejaría sin      │
+│      servicio. Antes de la tanda SECOA estos ficheros        │
+│      nacían 0755/0644: LECTURA para cualquier usuario local. │
+│      (ops/backup.js ya exigía estos permisos, pero nadie     │
+│      los aplicaba en el arranque; ahora server.js lo hace.)  │
+└──────────────────────────────────────────────────────────────┘
       │
       ▼
 ┌──────────────────────────────────────────────────────────────┐
@@ -186,6 +199,11 @@ Detalles que importan:
   (`src/db/schema.js:365`) ejecuta un `CREATE TABLE/INDEX IF NOT EXISTS`
   sobre `SCHEMA_SQL` y luego registra `schema_version = 3`. Una base en un
   formato anterior no es compatible: el servidor se niega a arrancar.
+- **Los permisos se aplican antes de abrir las bases**, en el paso 0: las
+  bases SQLite y la carpeta de datos pasan a `0700`/`0600`. Si el `chmod`
+  no es posible (instalaciones donde otro usuario posee los ficheros), el
+  servidor **arranca igualmente** con un aviso (`[perms] …`): sacrificar la
+  disponibilidad a cambio de un permiso sería peor que el aviso.
 - **Hay dos "versiones de cifrado" distintas** y no deben confundirse:
   `meta.crypto_version` (valor `'2'`) es la versión del **formato de la
   base**; `messages.crypto_version` (entero `3`) es la versión del
@@ -247,6 +265,17 @@ const dispatcher = net.createServer({ allowHalfOpen: false }, sock => {
 - `0x16` es el *content type* del primer registro TLS (`handshake`). Si no
   hay `cert.pem`/`key.pem` en la raíz, `useTls` es `false` y todo se sirve
   en HTTP (`src/http/servers.js:27-28`).
+- **Arranque degradado sin certificado** (`tlsState.degradedNoCert`,
+  `src/http/servers.js`): cuando `FORCE_TLS` está activo pero los
+  certificados no existen, el servidor **no aborta**: marca el estado
+  degradado y sigue en HTTP. En ese estado las rutas públicas de
+  autenticación (`POST /auth/register`, `/auth/login`, `/auth/logout`,
+  `/auth/switch`) **solo se aceptan desde loopback**: desde fuera reciben
+  `503 {"error": "HTTPS requerido: instala cert.pem/key.pem o arranca con
+  FORCE_TLS=false para uso HTTP."}`. Es un compromiso consciente:
+  **romper la instalación en LAN por no tener TLS** era peor que permitir
+  el acceso local; lo que nunca se acepta es que las credenciales viajen
+  en claro desde otro equipo.
 - El byte se devuelve al stream con `sock.unshift(first)`, de modo que el
   servidor HTTP/HTTPS real lo lee normalmente.
 - El WebSocket se sirve en **el mismo puerto**: `httpSrv.on('upgrade',
@@ -280,11 +309,15 @@ const dispatcher = net.createServer({ allowHalfOpen: false }, sock => {
  │ 4. Rutas públicas sin sesión:                                    │
  │      GET /config · /healthz · /push/vapid · /auth/session        │
  │      GET /avatar/:id.svg  →  exige sesión (401)                  │
- │ 5. Determinación de lo "público":                                │
- │      publicPage     = GET y (pathname "/" o extensión estática)  │
- │      publicAuthPost = POST en /auth/register|login|logout|switch │
- │      sin sesión y no público → 401                               │
- │ 6. Método distinto de GET/POST → 405                             │
+  │ 5. Determinación de lo "público":                                │
+  │      publicPage     = GET y (pathname "/" o extensión estática)  │
+  │      publicAuthPost = POST en /auth/register|login|logout|switch │
+  │      sin sesión y no público → 401                               │
+  │      TLS degradado (FORCE_TLS sin certificados): publicAuthPost  │
+  │      y el cliente NO viene de loopback → 503                     │
+  │      "HTTPS requerido: instala cert.pem/key.pem o arranca con    │
+  │      FORCE_TLS=false para uso HTTP."                             │
+  │ 6. Método distinto de GET/POST → 405                             │
  │ 7. POST → política de origen (CSRF):                             │
  │      !originAllowed(req) → 403 "cross-origin request rejected"   │
  │      sec-fetch-site: cross-site → 403                            │
@@ -680,7 +713,12 @@ Se pide `lim + 1` filas para saber si hay más (`more = rows.length > lim`).
   los pedidos, se vuelve a la base.
 - **Evacuación**: al insertar, si `chatPageCache.size > CHAT_PAGE_MAX` se
   borra la entrada **más antigua** (`chatPageCache.keys().next().value`,
-  orden de inserción).
+  orden de inserción). Además hay una **cota global de bytes**
+  (`CHAT_PAGE_CACHE_MAX_BYTES`, 64 MiB por defecto): cada entrada cuenta los
+  caracteres de `data` de sus mensajes y, si el total supera la cota —o si una
+  sola página grande llenaría la memoria—, se desalojan también las entradas
+  más antiguas hasta quedar por debajo (durante la auditoría
+  SECOA-I-003: páginas con adjuntos de 24 MB sostenían cientos de MB en RAM).
 - La caché **no** se usa cuando hay `beforeId`: esas páginas se leen
   siempre de la base (`src/chat/routes.js:392`).
 - La caché es **compartida por los dos interlocutores** de un DM. Por eso
@@ -757,6 +795,13 @@ guarda el `seenTs` en `user_group_seen` (`src/http/router.js:486-500`).
 | `giphyLimiter` | 30 | 60 000 ms | `GET /giphy/search` |
 | `profileLimiter` | 10 | 60 000 ms | `POST /profile` |
 | `storyLimiter` | 15 | 60 000 ms | `POST /story` |
+| `storyViewLimiter` | 60 | 60 000 ms | vistas y likes de historias |
+| `contactLimiter` | 20 | 60 000 ms | acciones de contactos y bloqueos |
+| `groupCreateLimiter` | 10 | 60 000 ms | creación de grupos (`src/http/router.js:340`) |
+| `callOfferLimiter` | 5 | 60 000 ms | ofertas de llamada (`src/realtime/websocket.js:171`) |
+| `chatPrefsLimiter` | 20 | 60 000 ms | preferencias y borrado de chats (`src/chat/routes.js:147`) |
+| `passwordCheckLimiter` | 5 | 60 000 ms | operaciones que verifican contraseña (`src/profile/routes.js:103,222`) |
+| `receiptLimiter` | 120 | 60 000 ms | `POST /receipt` (acuses de lectura) |
 
 Implementación: `createMessageRateLimiter(limit, windowMs)`
 (`src/shared/limits.js:32-69`) es una **ventana deslizante** por cuenta:
@@ -768,8 +813,8 @@ respuesta incluye la cabecera `Retry-After` en segundos
 - La cuota de mensajes se consume **después** de validar el contenido, para
   que una petición inválida no gaste cuota
   (`src/chat/routes.js:153`, `src/http/router.js:363`).
-- Purga: `messageRateLimiter.prune()` cada ventana; los otros tres cada
-  60 s (`src/http/rate-limit.js:20-21`).
+- Purga: `messageRateLimiter.prune()` cada ventana; el resto de
+  limitadores cada 60 s (`src/http/rate-limit.js:45-46`).
 
 #### Limitadores por IP y por cuenta objetivo (auth)
 
@@ -795,11 +840,26 @@ respuesta incluye la cabecera `Retry-After` en segundos
 | --- | --- | --- |
 | Cuerpo HTTP máximo | 32 MiB (8 KiB en rutas de auth) | `src/http/router.js:175-181` |
 | Datos de mensaje | 24 000 000 caracteres | `CONFIG.maxMessageDataChars` |
+| Medio en línea en `/send` (sin hash) | 262 144 caracteres (256 KiB) | `CONFIG.maxInlineMediaChars` |
+| Medio en línea en una historia (sin hash) | 4 000 000 caracteres | `CONFIG.storyInlineCharLimit` |
 | Caracteres por mensaje | 10 000 (DM) / 15 000 (grupo) | `MESSAGE_LIMITS` |
+| Miembros por grupo | 200 | `CONFIG.maxGroupMembers` |
 | Elementos de galería | 20 | `CONFIG.maxGalleryItems` |
 | Galería codificada | 24 000 000 caracteres | `CONFIG.maxGalleryEncodedChars` |
 | Texto de historia | 140 | `CONFIG.storyCharacters` |
 | Descripción de perfil | 140 | `CONFIG.profileDescriptionCharacters` |
+| Sesiones activas por cuenta | 20 (`pruneSessionsForUser` borra las más antiguas al inicio de sesión) | `CONFIG.maxSessionsPerUser` |
+| Cuota de adjuntos | 512 MiB por cuenta, 20 GiB globales (`blobQuotaOk`) | `src/chat/media.js:29-30` |
+| Acuses de lectura | 120/min (`receiptLimiter`) | `src/chat/routes.js:376` |
+
+Por qué la cuota de adjuntos cuenta **siempre** los `data` de los mensajes:
+
+- La cuota de blobs se paga con el contenido real que se guarda
+  (`bytesNuevos`); hasta la ronda SECOA el `data` de un medio que entraba
+  **sin hash** (vía en línea) no contaba para el consumo, así que un
+  ataque podía llenar disco sin marcar la cuota. Ahora `bytesNuevos`
+  cuenta `messageData` **siempre** (`src/chat/routes.js:280-284`), y la
+  vía en línea tiene además su propia cota de 256 KiB (`413` si se pasa).
 | Audio de historia | 60 000 ms | `CONFIG.maxAudioDurationMs` |
 | Stickers favoritos | 30 | `src/users/store.js:59` |
 | Llamadas en el registro | 100 | `src/calls/store.js:24` |
@@ -907,6 +967,25 @@ Aceptación (`POST /contacts/respond`):
 | Política de edición | `all`, `admins` | `groups.edit_policy` |
 | Política de mención a todos | `all`, `admins` | `groups.mention_all_policy` |
 
+**Reglas de pertenencia y de ajustes** (ronda SECOA):
+
+- **Tope de 200 miembros** (`CONFIG.maxGroupMembers`): se aplica al crear
+  el grupo (`POST /groups`, 400 si se excede), al entrar (`join`) y al
+  añadir miembros (`addMember`, 400). Con N miembros, el coste de cada
+  mensaje crece linealmente (`groupPubCache`, *keyboxes*).
+- **El propietario no se puede expulsar**: `removeMember` devuelve 403
+  `"No se puede expulsar al propietario del grupo."` si el objetivo es el
+  dueño. Antes el código intentaba una comprobación sobre
+  `groups.owner_id` que era **código muerto** (la tabla guarda el rol
+  `owner` en `group_members`, no en esa columna): el dueño acababa
+  expulsado y el grupo huérfano (SECOA-A-003).
+- **Cinco ajustes son solo para admins** (`visibility`, `join_policy`,
+  `add_policy`, `edit_policy`, `mention_all_policy`): un miembro sin rol
+  recibe 403 `"Ese ajuste es solo para admins."`. Antes se aplicaba
+  `editPolicy: 'all'` también a estos cinco campos, con lo que cualquier
+  miembro podía abrir un grupo privado a internet o dejar que cualquiera
+  entrara (SECOA-A-002).
+
 **Permisos por tipo de contenido** (`groups.content_policy`, JSON;
 `groupPolicies`, `src/groups/store.js:23-32`):
 
@@ -967,7 +1046,7 @@ admins aprueban (`approveJoin`) o rechazan (`rejectJoin`, que empuja
 
 | Fase | Qué ocurre | Dónde |
 | --- | --- | --- |
-| Publicación | Se valida (texto ≤ 140, medio como data-URL o hash, fondo `#rrggbb`), se guarda en `stories` **cifrada con la `auth_key` del autor** y se copia a `stories` en RAM. | `src/stories/routes.js:31-72` |
+| Publicación | Se valida (texto ≤ 140, medio como data-URL o hash, fondo `#rrggbb`) con **tope en línea de 4 000 000 caracteres** si el medio va sin `hash` (413 `"Contenido demasiado grande."`; subirlo por blob ya no paga ese límite), se guarda en `stories` **cifrada con la `auth_key` del autor** y se copia a `stories` en RAM. | `src/stories/routes.js:31-72` |
 | Reparto | `pushStories()` envía a cada usuario **conectado** solo las historias que su privacidad le permite ver, ya transformadas para ese visor (`storyForViewer`). | `src/realtime/notify.js:126-134` |
 | Consulta | `GET /stories` → mismas reglas de privacidad. | `src/stories/routes.js:25-29` |
 | Like / vista | Se anota en `viewers`/`likes` y se re-cifra la fila. | `src/stories/routes.js:98-130` |
@@ -1345,7 +1424,7 @@ base: vigila el proceso hijo (`node server.js`).
 | **Gracia de arranque** | `SUPERVISOR_STARTUP_MS` (30 s) sin exigir respuesta; se acorta cuando llega el banner (el servidor ya escuchó). |
 | **Health check** | `SUPERVISOR_HEALTH_PATH` (`/healthz`), `SUPERVISOR_HEALTH_MS` (15 s), `SUPERVISOR_HEALTH_TIMEOUT_MS` (5 s), `SUPERVISOR_FAILURES_BEFORE_KILL` (3). |
 | **Puerto** | Se empieza con `SUPERVISOR_HEALTH_PORT` o `PORT`; se sustituye por el puerto real del banner. |
-| **PID file** | `SUPERVISOR_PID_FILE`, por defecto `.zlapy.pid` en la raíz. Se escribe al arrancar y se vacía al salir. |
+| **PID file** | `SUPERVISOR_PID_FILE`, por defecto `.zlapy.pid` en la raíz. Se escribe al arrancar y se vacía al salir. Se crea con permisos **0600** (un 0644 deja que cualquier usuario local lea el PID del servidor). |
 | **Señales** | `SIGINT`/`SIGTERM` → propaga al hijo, cancela el reinicio pendiente, `exit(0)` a los 5 s. |
 | **Timer de reinicio** | **Sin `unref()` a propósito**: es lo único que mantiene vivo al supervisor entre la caída del hijo y el siguiente arranque. |
 | **Sondeo** | Nunca se solapan dos sondeos (`pendingProbe`). |

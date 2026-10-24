@@ -1472,9 +1472,19 @@ enrutador vea nada:
 1. `X-Zlapy-Enc` debe ser exactamente la versión soportada. Si no, `400`.
 2. `X-Zlapy-Time` debe ser un número finito y estar a ≤ 60 000 ms del reloj del
    servidor. Si no, `400`.
-3. La clave efímera debe medir 32 bytes y el nonce 12.
+3. La clave efímera debe medir 32 bytes y el nonce 12 (se admite hasta 32).
+   Un nonce **vacío o de más de 32 bytes** se rechaza aquí mismo (`400`,
+   "Sobre inválido."): el nonce identifica al sobre y sin él no hay nada que
+   recordar para el anti-replay.
 4. Se deriva la clave de sesión y se comprueba el HMAC. Si falla, `400`.
-5. Se descifra y se parsea el JSON. Debe ser un objeto; si no, `400`.
+5. **Anti-replay**: el nonce se registra en una memoria de
+   `MAX_CLOCK_SKEW_MS + 30 000 ms` (tope duro de 8192 entradas, con tope
+   y desalojo del más viejo). El registro se hace **solo cuando el sobre
+   era legítimo** (MAC ya verificado): registrarlo antes permitiría a un
+   atacante inundar el mapa con basura y expulsar el nonce que legítimamente
+   se está reenviando (replay por desalojo FIFO). Un nonce repetido dentro
+   de la ventana recibe `400 {"error": "Sobre ya utilizado."}`.
+6. Se descifra y se parsea el JSON. Debe ser un objeto; si no, `400`.
 
 Solo entonces el enrutador recibe el cuerpo ya descifrado y sigue su flujo
 normal: las rutas no saben si el cliente usó el sobre o no. La respuesta se

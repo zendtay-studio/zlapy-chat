@@ -66,22 +66,32 @@ Si alguna falla: `403 { "error": "cross-origin request rejected" }`.
   Ejemplos: `?light=1` (grupo), `?beforeId=...&limit=30` (mensajes de grupo), `?hash=...`
   (`/have`), `?username=...` (`/profile`, `/key`), `?q=...&offset=...&limit=...` (`/giphy/search`).
 - **Cuerpo**: `application/json`. El servidor **no** mira `Content-Type`; hace `JSON.parse`
-  del cuerpo y, si falla, responde `400 {}` (`src/http/router.js:194`).
-- El cuerpo debe ser un objeto JSON: si no lo es, `400 {}` (`src/http/router.js:195`).
+  del cuerpo y, si falla, responde `400 { "error": "Cuerpo JSON inválido." }`
+  (`src/http/router.js:239`). Cuerpo vacío en un `POST` sin `X-Zlapy-Enc` se
+  interpreta como `{}` (por ejemplo: `/auth/logout` sin cuerpo sigue siendo válido).
+- El cuerpo debe ser un objeto JSON: si no lo es, `400 { "error": "..." }`
+  (`src/http/router.js:240-242`).
 
 ### 1.4 Límite de tamaño del cuerpo
 
-`MAX_HTTP_BODY_BYTES` (por defecto **32 MiB**, `src/config.js:18` y `src/config.js:51`).
-Si se supera: `413 { "error": "Contenido demasiado grande." }` (`src/http/router.js:177-193`).
+`MAX_HTTP_BODY_BYTES` (por defecto **32 MiB**, `src/config.js`).
+Si se supera: `413 { "error": "Contenido demasiado grande." }` (`src/http/router.js:204-206`).
 
 Excepción: las rutas de autenticación aceptan como máximo **8 KiB**, porque solo llevan
-usuario y contraseña (`SMALL_BODY_ROUTES`, `src/http/router.js:175-176`):
+usuario y contraseña (`SMALL_BODY_ROUTES`, `src/http/router.js:203-204`):
 
 `/auth/register`, `/auth/login`, `/auth/add-account`, `/auth/switch`, `/auth/logout`,
-`/auth/account/remove`.
+`/auth/account-remove`.
 
-Además, `MAX_MESSAGE_DATA_CHARS` (por defecto 24 000 000) acota el campo `data` de un
-mensaje, y `MAX_GALLERY_ENCODED_CHARS` el tamaño codificado de una galería.
+Además, en el nivel de aplicación (`src/config.js`):
+
+| Límite | Valor por defecto | Qué acota |
+|---|---:|---|
+| `MAX_MESSAGE_DATA_CHARS` | 24 000 000 | campo `data` de un mensaje |
+| `MAX_GALLERY_ENCODED_CHARS` | 24 000 000 | galería codificada |
+| `MAX_INLINE_MEDIA_CHARS` | 262 144 | medio (`image`/`video`/`audio`/`file`) enviado en `/send` **sin `hash`** → `413` si se pasa; el flujo normal sube blob y manda `hash` |
+| `STORY_INLINE_CHAR_LIMIT` | 4 000 000 | medio de una historia publicado **sin `hash`** → `413` si se pasa |
+| Cuota de adjuntos | 512 MiB por cuenta, 20 GiB globales | `src/chat/media.js` → `413`/`429` según el caso |
 
 ### 1.5 Cabeceras de seguridad
 
@@ -98,7 +108,7 @@ adjuntos, al avatar y a los ficheros estáticos:
 | `Cross-Origin-Resource-Policy` | `same-origin` |
 
 Además, en **cada** petición se fija `Content-Security-Policy` calculada con el host propio
-(`cspFor`, `src/http/responses.js:33-39`; se aplica en `src/http/router.js:57`):
+(`cspFor`, `src/http/responses.js:33-39`; se aplica en `src/http/router.js:76`):
 
 ```
 default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';
@@ -108,16 +118,26 @@ font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'self
 ```
 
 `Strict-Transport-Security: max-age=31536000; includeSubDomains` se añade solo cuando la
-conexión va cifrada (`src/http/router.js:58-59`).
+conexión va cifrada (`src/http/router.js:78`).
 
 Las respuestas JSON llevan además `Content-Type: application/json` y `Cache-Control: no-store`
 (`src/http/responses.js:40-43`).
 
 ### 1.6 Métodos
 
-- `OPTIONS` → `204` sin cuerpo, sin ninguna otra cabecera (`src/http/router.js:54`).
+- `OPTIONS` → `204` sin cuerpo, sin ninguna otra cabecera (`src/http/router.js:57`).
 - Un método distinto de `GET`/`POST` → `405 { "error": "method not allowed" }`
-  (`src/http/router.js:102`).
+  (`src/http/router.js:130`).
+
+### 1.6 bis Modo degradado (`FORCE_TLS=true` sin certificados)
+
+Si el servidor arranca con `FORCE_TLS` activo pero no existen `cert.pem`/`key.pem`,
+**sigue en marcha** en HTTP puro (`tlsState.degradedNoCert`), pero las cuatro rutas
+públicas de autenticación (`/auth/register`, `/auth/login`, `/auth/logout`,
+`/auth/switch`) solo se aceptan desde loopback. Desde otra máquina:
+`503 { "error": "HTTPS requerido: instala cert.pem/key.pem o arranca con FORCE_TLS=false para uso HTTP." }`
+(`src/http/router.js:128-130`). El resto del acceso (por ejemplo consultar con sesión ya
+abierta) funciona: el objetivo es que nadie mande credenciales en claro desde fuera.
 
 ### 1.7 Códigos de error habituales
 
@@ -125,13 +145,13 @@ Las respuestas JSON llevan además `Content-Type: application/json` y `Cache-Con
 |---|---|---|
 | `400` | Petición malformada, JSON inválido, campo obligatorio ausente o valor fuera de rango | `{ "error": "..." }` (o `{}` si el JSON no se pudo interpretar) |
 | `401` | Sin cookie de sesión válida, o credenciales incorrectas | `{ "error": "authentication required" }` / `{ "error": "Invalid username or password." }` |
-| `403` | Acción permitida por rol pero no por la política vigente; origen rechazado; bloqueo activo | `{ "error": "Solo admins." }`, `{ "error": "cross-origin request rejected" }` |
+| `403` | Acción permitida por rol pero no por la política vigente; origen rechazado; bloqueo activo; expulsar al propietario del grupo | `{ "error": "Solo admins." }`, `{ "error": "cross-origin request rejected" }`, `{ "error": "No se puede expulsar al propietario del grupo." }`, `{ "error": "Ese ajuste es solo para admins." }` |
 | `404` | Recurso inexistente, no visible para quien pregunta, o ruta desconocida | `{ "error": "..." }` (o `{}` si la ruta no existe) |
 | `409` | Conflicto de estado (usuario ocupado, ID de grupo en uso) | `{ "error": "..." }` |
-| `413` | Cuerpo por encima del límite o `data` de un mensaje demasiado largo | `{ "error": "Contenido demasiado grande." }` |
+| `413` | Cuerpo por encima del límite, `data` de un mensaje demasiado largo, medio en línea por encima de `MAX_INLINE_MEDIA_CHARS` / `STORY_INLINE_CHAR_LIMIT` | `{ "error": "Contenido demasiado grande." }` |
 | `429` | Límite de frecuencia agotado (con cabecera `Retry-After`) | `{ "error": "Límite alcanzado: ...", "retryAfter": <segundos> }` |
 | `500` | Excepción no controlada en el handler | `{ "error": "Error interno del servidor." }` |
-| `502` / `503` | Fallo del proxy de Giphy o de la base de datos | `{ "error": "Giphy no disponible." }`, `{ "error": "database unavailable" }` |
+| `502` / `503` | Fallo del proxy de Giphy o de la base de datos; arranque degradado sin TLS desde fuera de loopback | `{ "error": "Giphy no disponible." }`, `{ "error": "database unavailable" }`, `{ "error": "HTTPS requerido: …" }` |
 
 ### 1.8 Límites de frecuencia
 
@@ -278,7 +298,7 @@ puede suplantar a otro usuario.
 | `/story/view` | Sesión | Registra que se ha visto una historia | `{ from, ts }` | `200 { ok: true }` o `200 { ok: false }` |
 | `/story/edit` | Sesión | Edita el texto y el fondo de una historia propia (solo de tipo texto) | `{ ts, text, bg? }` | `200 { ok: true }`. `404 { error: "No es texto." }`, `400` |
 | `/story/delete` | Sesión | Borra una historia propia | `{ ts }` | `200 { ok: true }`. `404 { ok: false }` |
-| `/groups` | Sesión | Crea un grupo | `{ name, members?, description?, avatar?, visibility?, joinPolicy?, writePolicy?, addPolicy?, editPolicy?, mentionAllPolicy?, contentPolicy?, id? }` | `200` con el objeto de grupo. `400 { error: "Nombre inválido." }`, `403 { error: "Solo contactos." }`, `409 { error: "ID en uso." }` |
+| `/groups` | Sesión | Crea un grupo | `{ name, members?, description?, avatar?, visibility?, joinPolicy?, writePolicy?, addPolicy?, editPolicy?, mentionAllPolicy?, contentPolicy?, id? }` | `200` con el objeto de grupo. `400 { error: "Nombre inválido." }`, `400` si los miembros iniciales superan el tope (200), `403 { error: "Solo contactos." }`, `409 { error: "ID en uso." }` |
 | `/groups/:id` | Sesión | Acciones sobre un grupo (ver §2.3) | según la acción | según la acción |
 | `/messages` | Sesión | Página de mensajes de un chat 1:1 | `{ to, limit?, beforeId? }` (`limit` 1-200, por defecto 20) | `200 { messages: [ … ], more: bool }`. `404 { messages: [], more: false }` |
 | `/call/log` | Sesión | Registra el cierre de una llamada | `{ callId, state?, duration? }` | `200 { ok: true, calls: [ … ] }` |
@@ -290,12 +310,12 @@ Solo una acción por petición; si no se reconoce ninguna: `400 { error: "Acció
 
 | Acción (campo del cuerpo) | Descripción | Requisitos | Respuesta |
 |---|---|---|---|
-| `join: true` | Une al usuario al grupo | `inviteCode` si el grupo es privado; `joinPolicy` `open` o `request` | `200` con el grupo; `200 { ok: true, requested: true }` si la política es `request`; `404 { error: "No disponible." }`; `403 { error: "Cerrado." }` |
+| `join: true` | Une al usuario al grupo | `inviteCode` si el grupo es privado; `joinPolicy` `open` o `request` | `200` con el grupo; `200 { ok: true, requested: true }` si la política es `request`; `400` si el grupo ya alcanzó el tope de miembros; `404 { error: "No disponible." }`; `403 { error: "Cerrado." }` |
 | `cancelJoin: true` | Retira su solicitud de entrada | — | `200 { ok: true }`; `404 { error: "No disponible." }` |
 | `seenMessage: "<id>"` | Marca como vista una historia de "una vez" del grupo | ser miembro; el mensaje debe ser `once` y de otro autor | `200 { ok: true }`; `403 { error: "No abrible." }`; `404 { error: "No existe." }` |
 | `message: { … }` | Envía un mensaje al grupo | `kind` en la allowlist (ver abajo) | `200 { ok: true, message: { … } }`; `400`, `403 { error: "Desactivado." }`, `403 { error: "Solo admins." }`, `429` |
-| `addMember: "<username>"` | Añade un contacto al grupo | `addPolicy: "all"` o ser admin | `200` con el grupo; `403 { error: "Solo admins." }`, `403 { error: "Solo contactos." }`, `404 { error: "No existe." }` |
-| `removeMember` / `removed: "<username>"` | Expulsa a un miembro | ser admin; no puede ser uno mismo | `200` con el grupo; `403 { error: "Solo admins." }`, `400 { error: "Usa salir." }` |
+| `addMember: "<username>"` | Añade un contacto al grupo | `addPolicy: "all"` o ser admin | `200` con el grupo; `403 { error: "Solo admins." }`, `403 { error: "Solo contactos." }`, `404 { error: "No existe." }`, `400` si se supera el tope de miembros |
+| `removeMember` / `removed: "<username>"` | Expulsa a un miembro | ser admin; no puede ser uno mismo **ni el propietario** | `200` con el grupo; `403 { error: "Solo admins." }`, `403 { error: "No se puede expulsar al propietario del grupo." }`, `400 { error: "Usa salir." }` |
 | `leave: true` | Sale del grupo | ser miembro | `200` con el grupo; si el grupo se queda vacío, se elimina |
 | `seenTs: <número>` | Marca el grupo como leído hasta esa marca de tiempo | ≥ 0 | `200 { ok: true, seenTs }` |
 | `deleteGroup: true` | Elimina el grupo | ser admin | `200 { ok: true, deleted: true }`; `403 { error: "Solo admins." }` |
@@ -303,7 +323,7 @@ Solo una acción por petición; si no se reconoce ninguna: `400 { error: "Acció
 | `deleteMessage: "<id>"` | Borra un mensaje del grupo | autor o admin | `200 { ok: true }`; `403 { error: "Sin permiso." }`, `404 { error: "No existe." }` |
 | `approveAdmin` / `removeAdmin: "<username>"` | Da o quita el rol de admin | ser admin; no puede quitarse el rol a sí mismo | `200` con el grupo; `400 { error: "No puedes quitarte tu propio rol." }`, `404 { error: "No está en el grupo." }` |
 | `rename`, `description`, `avatar` | Cambia nombre (≤40), descripción (≤500) o avatar | `editPolicy: "all"` o ser admin | `200` con el grupo; `400 { error: "Nombre inválido." }` / `"Descripción inválida."` / `"Avatar inválido."`; `403 { error: "Solo admins." }` |
-| `visibility`, `joinPolicy`, `writePolicy`, `addPolicy`, `editPolicy`, `mentionAllPolicy` | Cambia políticas | idem | `200` con el grupo; `400 { error: "<clave> inválido." }` |
+| `visibility`, `joinPolicy`, `writePolicy`, `addPolicy`, `editPolicy`, `mentionAllPolicy` | Cambia políticas | **`visibility`, `joinPolicy`, `addPolicy`, `editPolicy` y `mentionAllPolicy` son solo-admins** (reciben `403 { error: "Ese ajuste es solo para admins." }`); `editPolicy: "all"` ya no abre esos cinco campos a los miembros | `200` con el grupo; `400 { error: "<clave> inválido." }` |
 | `contentPolicy` | Cambia la política por tipo de contenido | idem | `200` con el grupo; `400 { error: "contentPolicy inválido." }` |
 
 Valores admitidos:
