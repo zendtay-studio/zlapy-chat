@@ -262,7 +262,7 @@ puede suplantar a otro usuario.
 
 | Ruta | Auth | Descripción | Cuerpo JSON | Respuesta |
 |---|---|---|---|---|
-| `/auth/register` | Pública | Crea una cuenta | `{ username, password }` — usuario `[a-z0-9_.-]{3,24}`, contraseña 8-128 | `201 { ok: true, user: { id, username } }` + cookie de sesión. `400` si los datos no valen, `409 { error: "Username is already taken." }` si el nombre está ocupado, `429` si se superan los registros por IP |
+| `/auth/register` | Pública | Crea una cuenta | `{ username, password, name? }` — usuario `[a-z0-9_.-]{3,24}`, contraseña 8-128, nombre visible opcional (≤64 caracteres) | `201 { ok: true, user: { id, username } }` + cookie de sesión. `400` si los datos no valen, `409 { error: "Username is already taken." }` si el nombre está ocupado, `429` si se superan los registros por IP. El avatar **no** se acepta aquí (el cuerpo está limitado a 8 KiB): se guarda después con `POST /profile` |
 | `/auth/login` | Pública | Inicia sesión | `{ username, password }` | `200 { ok: true, user: { id, username } }` + cookie. `401 { error: "Invalid username or password." }`, `429 { error: "Too many login attempts." }` |
 | `/auth/add-account` | Sesión | Vincula otra cuenta en este navegador | `{ username, password }` (+ `expectedAccountId` opcional: UUID de la cuenta que se espera) | `200 { ok: true, user: { id, username } }` + cookie `chatlocal_account_<uuid>`. `401` si la contraseña no es, `409 { error: "Esas credenciales no son de la cuenta seleccionada." }` si se pasó `expectedAccountId` y las credenciales son de otra cuenta, `429` por intentos |
 | `/auth/switch` | Cookie de cuenta | Cambia a una cuenta vinculada (rota el token de sesión) | `{ accountId }` (UUID) | `200 { ok: true, user: { id, username } }`. `400 { error: "Cuenta inválida." }`, `401 { error: "Sesión no disponible.", relogin: true }` (la cookie de la cuenta caducó o se perdió, pero la cuenta **sigue existiendo**: hay que volver a iniciar sesión) o `401 { error: "Cuenta no disponible.", gone: true }` (la cuenta ya no está en la base: se quita de la lista de cuentas conectadas). **Sin sesión vigente** la respuesta es `401 { error: "Sesión no disponible." }` sin marcas: la ruta es pública y distinguirlas la convertiría en un oráculo de existencia de cuentas |
@@ -734,11 +734,14 @@ límite de mensajes, también el campo `retryAfter` en el cuerpo.
   a diferencia del resto de rutas de listado.
 - **`POST /auth/switch` es "pública" en el enrutador** (`publicAuthPost`, `src/http/router.js:120`)
   pero en la práctica necesita la cookie `chatlocal_account_<uuid>` de la cuenta a la que se
-  quiere cambiar. Si la cookie caducó o el navegador la perdió, la respuesta es
-  `401 { error: "Sesión no disponible.", relogin: true }`: la cuenta **sigue existiendo**, así que
-  el cliente la conserva en la lista y pide la contraseña otra vez. Solo cuando la cuenta ya no
-  está en la base responde `401 { error: "Cuenta no disponible.", gone: true }` y el cliente la
-  quita de la lista.
+  quiere cambiar. Esa cookie lleva una sesión **propia**, distinta de la principal
+  (`src/auth/sessions.js`): al cambiar de cuenta se revocan las sesiones de la cuenta
+  abandonada y acto seguido se le emite una sesión vinculada nueva, de modo que se puede volver
+  a ella sin volver a iniciar sesión. Si la cookie caducó o el navegador la perdió, la respuesta
+  es `401 { error: "Sesión no disponible.", relogin: true }`: la cuenta **sigue existiendo**, así que
+  el cliente la conserva en la lista y explica que hay que volver a agregarla con «Agregar
+  cuenta» (no pide la contraseña). Solo cuando la cuenta ya no está en la base responde
+  `401 { error: "Cuenta no disponible.", gone: true }` y el cliente la quita de la lista.
 - **`POST /auth/logout` revoca todas las cuentas del navegador**, no solo la actual
   (`src/auth/routes.js:309-331`).
 - **Los identificadores de remitente los impone el servidor.** En `/send`, `/receipt`,

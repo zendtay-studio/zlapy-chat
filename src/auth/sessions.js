@@ -134,25 +134,27 @@ function pruneSessionsForUser(user) {
         }
     } catch (error) { console.warn('[sessions] recorte de sesiones:', error.message); }
 }
-function createSession(user, req, res) {
+/* Crea una sesión nueva para la cuenta y devuelve su token. */
+function newSession(user) {
     const token = crypto.randomBytes(32).toString('base64url');
     const hash = hashSessionToken(token);
     const expiresAt = Date.now() + AUTH_SESSION_TTL;
     Stmt.insertSession.run(hash, user.id, expiresAt);
     sessionCache.set(hash, { userId: user.id, expiresAt });
     pruneSessionsForUser(user);
-    setSessionCookie(res, req, token);
-    setAccountSessionCookie(res, req, user.id, token);
+    return token;
+}
+function createSession(user, req, res) {
+    setSessionCookie(res, req, newSession(user));
+    /* La cuenta queda además "conectada" en este navegador, pero con una
+       sesión PROPIA (no la misma que la principal): así el cambio de cuenta
+       puede revocar la sesión principal de la cuenta abandonada sin matar la
+       vinculada, y se puede volver a ella sin volver a iniciar sesión. */
+    setAccountSessionCookie(res, req, user.id, newSession(user));
     return { id: user.id, username: user.username };
 }
 function createLinkedAccountSession(user, req, res) {
-    const token = crypto.randomBytes(32).toString('base64url');
-    const hash = hashSessionToken(token);
-    const expiresAt = Date.now() + AUTH_SESSION_TTL;
-    Stmt.insertSession.run(hash, user.id, expiresAt);
-    sessionCache.set(hash, { userId: user.id, expiresAt });
-    pruneSessionsForUser(user);
-    setAccountSessionCookie(res, req, user.id, token);
+    setAccountSessionCookie(res, req, user.id, newSession(user));
     return { id: user.id, username: user.username };
 }
 /* Comprobación de origen: el host del header Origin debe coincidir con el

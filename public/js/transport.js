@@ -71,7 +71,13 @@
         const nativeSetHeader = NativeXHR.prototype.setRequestHeader;
         const nativeSend = NativeXHR.prototype.send;
         NativeXHR.prototype.open = function (method, url) {
-            this._zt = { method: String(method || 'GET').toUpperCase(), url: String(url || '') };
+            this._zt = { method: String(method || 'GET').toUpperCase(), url: String(url || ''), envelope: null };
+            /* La respuesta de un POST cifrado vuelve cifrada. Se abre aquí,
+               dentro de `open`, para que se ejecute ANTES que el manejador de
+               la aplicación (que se registra después de open). Sin esto, la
+               subida de adjuntos y de notas de voz leía bytes cifrados,
+               fallaba el JSON y el envío parecía no haber salido. */
+            this.addEventListener('load', () => openXhrResponse(this));
             return nativeOpen.apply(this, arguments);
         };
         NativeXHR.prototype.send = function (body) {
@@ -87,9 +93,38 @@
                 catch { transportWarning(); return nativeSend.call(this, body); }
                 for (const name of ['Content-Type', 'X-Zlapy-Enc', 'X-Zlapy-Ephemeral', 'X-Zlapy-Nonce', 'X-Zlapy-Time'])
                     nativeSetHeader.call(this, name, envelope.headers[name]);
+                zt.envelope = envelope;
+                /* La respuesta llega cifrada: hay que leerla como binario para
+                   poder abrirla después. */
+                try { this.responseType = 'arraybuffer'; } catch { }
                 nativeSend.call(this, envelope.body);
             });
         };
+    }
+
+    /* Abre la respuesta de un XHR: si viene cifrada, se descifra y se entrega
+       como texto, igual que si la petición no hubiera ido cifrada. */
+    function openXhrResponse(xhr) {
+        const zt = xhr._zt;
+        if (!zt || !zt.envelope) return;
+        if (xhr.status === 204 || xhr.status === 205 || xhr.status === 304) return;
+        if (xhr.responseType !== 'arraybuffer') return;
+        let raw;
+        try { raw = new Uint8Array(xhr.response || new ArrayBuffer(0)); }
+        catch { return; }
+        let plain = null;
+        if (xhr.getResponseHeader('X-Zlapy-Enc') === T.ALGO) {
+            const nonce = xhr.getResponseHeader('X-Zlapy-Resp-Nonce');
+            if (nonce) {
+                plain = T.decryptResponse(raw, nonce, zt.envelope.method, zt.envelope.path,
+                    zt.envelope.time, xhr.status, zt.envelope.key);
+            }
+        } else {
+            plain = new TextDecoder().decode(raw);
+        }
+        if (plain === null) return;
+        Object.defineProperty(xhr, 'responseText', { value: plain, configurable: true });
+        Object.defineProperty(xhr, 'response', { value: plain, configurable: true });
     }
 
     /* Descifra la respuesta si el servidor la devolvió envuelta. */

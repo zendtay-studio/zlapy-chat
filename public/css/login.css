@@ -195,6 +195,110 @@ body {
         margin-top: -11px
     }
 
+    /* Foto de perfil al crear la cuenta: círculo con el lápiz (elegir) y el
+       distintivo de papelera (quitar), igual que en "Mi perfil". */
+    .authAvatarBlock {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 4px
+    }
+
+    .authAvatarBlock[hidden] {
+        display: none
+    }
+
+    .authAvatarWrap {
+        position: relative;
+        width: 104px;
+        height: 104px
+    }
+
+    .authAvatar {
+        width: 104px;
+        height: 104px;
+        border-radius: 50%;
+        overflow: hidden;
+        background: #1d2229;
+        border: 2px solid #30353d;
+        display: grid;
+        place-items: center;
+        cursor: pointer
+    }
+
+    .authAvatar:focus-visible {
+        outline: 2px solid #cbd5df;
+        outline-offset: 3px
+    }
+
+    .authAvatar img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block
+    }
+
+    /* Sin esto, la regla "display:block" de la imagen ganaría al [hidden] del
+       navegador: la foto reservaría media fila y la inicial quedaría partida
+       en dos mitades. */
+    .authAvatar img[hidden],
+    .authAvatarInitial[hidden],
+    .authAvatarBadge[hidden] {
+        display: none !important
+    }
+
+    /* Inicial del nombre (o del usuario) mientras no haya foto. */
+    .authAvatarInitial {
+        font-size: 38px;
+        line-height: 1;
+        font-weight: 600;
+        color: #8b95a3;
+        user-select: none
+    }
+
+    .authAvatarInitial[hidden] {
+        display: none
+    }
+
+    /* Distintivo de la esquina: elige la foto (cámara) y, cuando ya hay foto,
+       la papelera ocupa su mismo sitio. */
+    .authAvatarBadge {
+        position: absolute;
+        right: -3px;
+        bottom: -3px;
+        z-index: 3;
+        display: grid;
+        place-items: center;
+        width: 32px;
+        height: 32px;
+        padding: 0;
+        border: 3px solid #0b0f13;
+        border-radius: 50%;
+        background: #d3dce3;
+        color: #101318;
+        box-shadow: 0 4px 12px #0007;
+        cursor: pointer
+    }
+
+    .authAvatarBadge[hidden] {
+        display: none
+    }
+
+    .authAvatarBadge svg {
+        width: 16px;
+        height: 16px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.9;
+        stroke-linecap: round;
+        stroke-linejoin: round
+    }
+
+    .authAvatarBadge:hover {
+        filter: brightness(1.06)
+    }
+
     #authError {
         color: #ffaaa4;
         font-size: 13px;

@@ -15,6 +15,7 @@ const { loginAttempts, registerAttempts } = require('../http/rate-limit.js');
 const { json } = require('../http/responses.js');
 const { broadcastUsersAround } = require('../realtime/notify.js');
 const { clientIp, validUsername } = require('../shared/validation.js');
+const { characterCount } = require('../shared/limits.js');
 const { blockedSet, notesMap, profiles, sessionCache, usernameIndex, users } = require('../state.js');
 const { normPriv } = require('../users/privacy.js');
 const { accountByName, loadUserFromRow, saveUserToDb } = require('../users/store.js');
@@ -121,6 +122,12 @@ async function postAuthRegister(req, res, url, data, actor) {
     if (!validUsername(data.username) || typeof data.password !== 'string' || data.password.length < 8 || data.password.length > 128)
         return json(res, 400, { error: 'Invalid username or password.' });
     if (accountByName(data.username)) return json(res, 409, { error: 'Username is already taken.' });
+    /* Nombre visible de la cuenta (opcional): se guarda como el resto del
+       perfil (cifrado en reposo). El avatar NO viene aquí: el cuerpo de
+       /auth/register está limitado a 8 KiB; se manda después con /profile. */
+    const displayName = typeof data.name === 'string' ? data.name.trim() : '';
+    if (displayName && characterCount(displayName, 64) > 64)
+        return json(res, 400, { error: 'El nombre admite hasta 64 caracteres.' });
     try {
         const id = crypto.randomUUID();
         const passwordSalt = crypto.randomBytes(16).toString('hex');
@@ -140,7 +147,7 @@ async function postAuthRegister(req, res, url, data, actor) {
         delete notesMap[data.username];
         users.set(id, user);
         usernameIndex.set(data.username, id);
-        profiles[user.username] = { username: user.username, name: user.username, avatar: '', desc: '', note: '', privacy: normPriv(null) };
+        profiles[user.username] = { username: user.username, name: displayName || user.username, avatar: '', desc: '', note: '', privacy: normPriv(null) };
         blockedSet.set(user.username, new Set());
         saveUserToDb(user);
         const publicUser = createSession(user, req, res);
@@ -297,6 +304,11 @@ function postAuthSwitch(req, res, url, data, actor) {
             }
         }
         for (const sk of [...(outgoing.sockets || [])]) { try { sk.destroy(); } catch { } }
+        /* La cuenta abandonada recibe una sesión vinculada NUEVA: sigue en la
+           lista de cuentas conectadas y se puede volver a ella sin volver a
+           iniciar sesión. Sin esto, el siguiente cambio de cuenta exigiría la
+           contraseña (la cookie vieja quedó revocada con el resto). */
+        createLinkedAccountSession(outgoing, req, res);
     }
     const switched = createSession(user, req, res);
     return json(res, 200, { ok: true, user: switched });
