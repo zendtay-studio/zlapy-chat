@@ -7,6 +7,7 @@
  */
 'use strict';
 
+const { CONFIG } = require('../config.js');
 const { blobAvailableTo, blobHashOk, blobQuotaOk, invalidateBlobQuota, storeBlob } = require('../chat/media.js');
 const { encryptForUser } = require('../crypto/setup.js');
 const { db } = require('../db/database.js');
@@ -50,6 +51,12 @@ function postStory(req, res, url, data, actor) {
         return json(res, 400, { error: `Las historias admiten hasta ${MESSAGE_LIMITS.storyCharacters} caracteres de texto.` });
     if (!validStoryMedia(s.data))
         return json(res, 400, { error: 'Historia inválida: el medio debe ir como hash o como data-URL de imagen/vídeo/audio.' });
+    /* Las historias viven en línea por diseño (data-URL cifrada), pero a 24 MB
+       por historia la RAM de liveStories() y el fan-out por WebSocket se
+       disparaban (SECOA-A-001). El medio inline grande debe ir por blob+hash.
+       (La cuota ya se cobra más abajo: bytesHistoria.) */
+    if (!s.hash && s.data && s.data.length > CONFIG.storyInlineCharLimit)
+        return json(res, 413, { error: 'Contenido demasiado grande.' });
     if (data.hash && !blobHashOk(s.hash)) return json(res, 400, { error: 'Hash inválido.' });
     if (s.hash && !data.data && !blobAvailableTo(req.authUser, s.hash)) return json(res, 400, { error: 'Archivo no disponible.' });
     /* Cuota antes de escribir, y escritura solo cuando la historia ya está

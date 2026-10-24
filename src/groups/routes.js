@@ -9,6 +9,7 @@
 'use strict';
 
 const crypto = require('crypto');
+const { CONFIG } = require('../config.js');
 const { Stmt } = require('../db/statements.js');
 const { groupPolicies, groupSummaryFor, normalizeGroup, pub, readGroup, writeGroupMeta, writeGroupSummary } = require('./store.js');
 const { json } = require('../http/responses.js');
@@ -84,6 +85,10 @@ function postGroups(req, res, url, data, actor) {
     if (readGroup(id)) return json(res, 409, { error: 'ID en uso.' });
     const uniqMembers = uniq([actor, ...(Array.isArray(members) ? members.filter(m => byName(m)) : [])]);
     const memberIds = uniqMembers.map(m => byName(m)?.id).filter(Boolean);
+    // Cota de miembros: el coste por mensaje es O(N) (fan-out a cada uno);
+    // sin techo, un grupo desmedido era un generador de fan-out (SECOA-I-008).
+    if (uniqMembers.length > CONFIG.maxGroupMembers)
+        return json(res, 400, { error: `Los grupos admiten hasta ${CONFIG.maxGroupMembers} miembros.` });
     const g = normalizeGroup({
         id, cryptoId: crypto.randomUUID(), name: name.trim(), description: typeof description === 'string' ? description.slice(0, 500).trim() : '',
         avatar: validAvatar(avatar) ? avatar : '',

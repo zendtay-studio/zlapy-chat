@@ -13,6 +13,7 @@
 const mtproto = require('../crypto/mtproto.js');
 
 const crypto = require('crypto');
+const { CONFIG } = require('../config.js');
 const { db } = require('../db/database.js');
 const { authKeyRecord, decryptAtRest, ensureAuthKey, messageContextBytes, messageCrypto } = require('../crypto/setup.js');
 const { Stmt } = require('../db/statements.js');
@@ -241,12 +242,47 @@ function getChatPage(pairKeyName, limit) {
     }
     const fetchLimit = Math.max(50, limit);
     const page = readMessagePage('chat:' + pairKeyName, { limit: fetchLimit });
-    chatPageCache.set(pairKeyName, { messages: page.messages, savedAt: now, more: page.more });
-    if (chatPageCache.size > CHAT_PAGE_MAX)
-        chatPageCache.delete(chatPageCache.keys().next().value);
+    cacheChatPage(pairKeyName, page, now);
     return { messages: page.messages.slice(-limit), more: page.more };
 }
-function invalidateChatPage(pairKeyName) { chatPageCache.delete(pairKeyName); }
+
+/* Tope global de BYTES de la caché de páginas (además del tope de entradas):
+   cada entrada es una ventana de mensajes completos con adjuntos en línea y,
+   sin cota de bytes, un puñado de páginas con adjuntos grandes sostenía
+   cientos de MB en RAM indefinidamente (SECOA-I-003). El uso se mide por
+   entrada al insertarla: las entradas viejas se desalojan FIFO hasta volver
+   por debajo de la cota; el coste del cálculo es O(entradas), con
+   CHAT_PAGE_MAX=20 por defecto. */
+let chatPageCacheBytes = 0;
+function pageCacheBytes(messages) {
+    let n = 0;
+    for (const m of messages) n += (m && typeof m.data === 'string' ? m.data.length : 0);
+    return n;
+}
+function cacheChatPage(pairKeyName, page, now) {
+    const cached = chatPageCache.get(pairKeyName);
+    if (cached) chatPageCacheBytes -= cached.bytes || 0;
+    const bytes = pageCacheBytes(page.messages);
+    chatPageCache.set(pairKeyName, { messages: page.messages, savedAt: now, more: page.more, bytes });
+    chatPageCacheBytes += bytes;
+    while (chatPageCache.size > CHAT_PAGE_MAX && chatPageCache.size > 0) {
+        const oldest = chatPageCache.keys().next();
+        const evicted = chatPageCache.get(oldest.value);
+        chatPageCacheBytes -= (evicted && evicted.bytes) || 0;
+        chatPageCache.delete(oldest.value);
+    }
+    while (chatPageCacheBytes > CONFIG.chatPageCacheMaxBytes && chatPageCache.size > 1) {
+        const oldest = chatPageCache.keys().next();
+        const evicted = chatPageCache.get(oldest.value);
+        chatPageCacheBytes -= (evicted && evicted.bytes) || 0;
+        chatPageCache.delete(oldest.value);
+    }
+}
+function invalidateChatPage(pairKeyName) {
+    const cached = chatPageCache.get(pairKeyName);
+    if (cached) chatPageCacheBytes -= cached.bytes || 0;
+    chatPageCache.delete(pairKeyName);
+}
 
 function deleteMessageById(id) {
     // Require perezoso: evita un ciclo entre módulos.

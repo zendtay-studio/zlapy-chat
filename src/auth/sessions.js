@@ -120,12 +120,27 @@ function clearCookie(res, req, name) {
     appendCookie(res, `${name}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secure ? '; Secure' : ''}`);
 }
 const clearSessionCookie = (res, req) => clearCookie(res, req, 'chatlocal_session');
+/* Tope de sesiones activas por cuenta: cada login de éxito insertaba una fila
+   nueva sin techo (y sin límite de éxitos), con el riesgo de tabla gigante y
+   cientos de sesiones válidas colgadas. Al crear una, se cierran las más
+   viejas que saturen el tope. */
+function pruneSessionsForUser(user) {
+    try {
+        const max = CONFIG.maxSessionsPerUser;
+        const rows = Stmt.listSessionHashesByUser.all(user.id);
+        for (const row of rows.slice(max)) {
+            Stmt.deleteSession.run(row.token_hash);
+            sessionCache.delete(row.token_hash);
+        }
+    } catch (error) { console.warn('[sessions] recorte de sesiones:', error.message); }
+}
 function createSession(user, req, res) {
     const token = crypto.randomBytes(32).toString('base64url');
     const hash = hashSessionToken(token);
     const expiresAt = Date.now() + AUTH_SESSION_TTL;
     Stmt.insertSession.run(hash, user.id, expiresAt);
     sessionCache.set(hash, { userId: user.id, expiresAt });
+    pruneSessionsForUser(user);
     setSessionCookie(res, req, token);
     setAccountSessionCookie(res, req, user.id, token);
     return { id: user.id, username: user.username };
@@ -136,6 +151,7 @@ function createLinkedAccountSession(user, req, res) {
     const expiresAt = Date.now() + AUTH_SESSION_TTL;
     Stmt.insertSession.run(hash, user.id, expiresAt);
     sessionCache.set(hash, { userId: user.id, expiresAt });
+    pruneSessionsForUser(user);
     setAccountSessionCookie(res, req, user.id, token);
     return { id: user.id, username: user.username };
 }
@@ -181,9 +197,9 @@ module.exports = {
     createSession,
     createLinkedAccountSession,
     originAllowed,
+    isLoopbackPeer,
     requestEncrypted,
     cookieSecure,
-    isLoopbackPeer,
     passwordDigest,
-    safeEqualHex,
+    safeEqualHex
 };

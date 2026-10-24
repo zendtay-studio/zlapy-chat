@@ -27,10 +27,19 @@ const useTls = fs.existsSync(TLS_CERT_FILE) && fs.existsSync(TLS_KEY_FILE);
 /* Sin certificados no hay HTTPS al que redirigir: forzar TLS dejaría el
    servicio inaccesible, así que el forzado se desactiva solo (sobre
    tlsState, que es mutable: CONFIG está congelada). El usuario puede
-   recuperarlo con FORCE_TLS=true cuando instale los certificados. */
+   recuperarlo con FORCE_TLS=true cuando instale los certificados.
+   En ese repliegue el arranque sigue vivo (una instalación nueva sin
+   cert.pem/key.pem no debe morir), pero queda marcado:
+   `tlsState.degradedNoCert` hace que el ROUTER rechace los inicios de
+   sesión/registro desde fuera del propio equipo: entregar cookies de sesión
+   de larga vida por HTTP en claro a la red local (WiFi) es justo el riesgo
+   que FORCE_TLS quería cerrar (SECOA-B-001/C-004). Los clientes por loopback
+   (la misma máquina, un proxy TLS local o las pruebas) siguen operando. */
 if (tlsState.forceTls && !useTls) {
     tlsState.forceTls = false;
-    console.warn('[tls] FORCE_TLS desactivado: no hay cert.pem/key.pem. El tráfico (y la cookie de sesión) viajará sin cifrar.');
+    tlsState.degradedNoCert = true;
+    console.warn('[tls] FORCE_TLS desactivado: no hay cert.pem/key.pem. El tráfico (y la cookie de sesión) viajará sin cifrar. '
+        + 'Los accesos no locales NO podrán iniciar sesión hasta instalar cert.pem/key.pem (o arrancar con FORCE_TLS=false si asumes HTTP en claro).');
 }
 /* Interfaz de escucha: 'loopback' restringe a la propia máquina (proxy
    inverso local); 'auto' y '0.0.0.0' mantienen el acceso por red. */

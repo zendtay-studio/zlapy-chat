@@ -13,7 +13,7 @@ const http = require('http');
 const https = require('https');
 const path = require('path');
 const { getAuthSession, getKey, postAuthAccountRemove, postAuthAddAccount, postAuthLogin, postAuthLogout, postAuthRegister, postAuthSwitch, postKey } = require('../auth/routes.js');
-const { originAllowed, requestEncrypted, sessionUser } = require('../auth/sessions.js');
+    const { originAllowed, isLoopbackPeer, requestEncrypted, sessionUser } = require('../auth/sessions.js');
 const { getCalls, postCallLog } = require('../calls/routes.js');
 const { blobAvailableTo, blobHashOk, blobQuotaOk, invalidateBlobQuota, storeBlob } = require('../chat/media.js');
 const { rejectRateLimited } = require('../http/helpers.js');
@@ -120,6 +120,13 @@ const handleRequest = (req, res) => {
     const publicAuthPost = req.method === 'POST' && ['/auth/register', '/auth/login', '/auth/logout', '/auth/switch'].includes(url.pathname);
     const authUser = sessionUser(req);
     if (!authUser && !publicPage && !publicAuthPost) return json(res, 401, { error: 'authentication required' });
+    /* Modo degradado (FORCE_TLS pedido pero sin cert.pem/key.pem): los inicios
+       de sesión, registro y cambio de cuenta SOLO desde el propio equipo.
+       A la red local no se le entregan cookies de sesión por HTTP en claro:
+       es justo el riesgo que FORCE_TLS quería cerrar (SECOA-B-001) y las
+       pruebas del repliegue corren por loopback, así que siguen pasando. */
+    if (publicAuthPost && tlsState.degradedNoCert && !isLoopbackPeer(req))
+        return json(res, 503, { error: 'HTTPS requerido: instala cert.pem/key.pem o arranca con FORCE_TLS=false para uso HTTP.' });
     if (req.method !== 'GET' && req.method !== 'POST') return json(res, 405, { error: 'method not allowed' });
     if (req.method === 'POST' && (!originAllowed(req) || req.headers['sec-fetch-site'] === 'cross-site'))
         return json(res, 403, { error: 'cross-origin request rejected' });
@@ -350,6 +357,10 @@ const handleRequest = (req, res) => {
                     const invited = typeof data.inviteCode === 'string' && data.inviteCode === g.inviteCode;
                     if (g.visibility !== 'public' && !invited) return json(res, 404, { error: 'No disponible.' });
                     if (g.joinPolicy === 'closed') return json(res, 403, { error: 'Cerrado.' });
+                    /* El coste por mensaje crece con el número de miembros:
+                       sin tope, un grupo popular era un fan-out sin techo. */
+                    if (g.members.length >= CONFIG.maxGroupMembers)
+                        return json(res, 403, { error: 'El grupo está lleno.' });
                     if (g.joinPolicy === 'request') {
                         if (!g.joinRequests.some(r => r.userId === req.authUser.id)) {
                             g.joinRequests.push({ userId: req.authUser.id, username: actor, ts: Date.now() });
@@ -497,6 +508,7 @@ const handleRequest = (req, res) => {
                     const newMember = byName(data.addMember);
                     if (!newMember) return json(res, 404, { error: 'No existe.' });
                     if (!isContact(profiles[req.authUser.username], newMember.username)) return json(res, 403, { error: 'Solo contactos.' });
+                    if (g.members.length >= CONFIG.maxGroupMembers) return json(res, 403, { error: 'El grupo está lleno.' });
                     if (!g.members.includes(newMember.username)) {
                         g.members.push(newMember.username); g.memberIds.push(newMember.id);
                         writeGroupMeta(g);
@@ -510,14 +522,18 @@ const handleRequest = (req, res) => {
                     if (!isAdmin) return json(res, 403, { error: 'Solo admins.' });
                     const removed = byName(removeMember);
                     if (!removed || removed.id === req.authUser.id) return json(res, 400, { error: 'Usa salir.' });
+                    /* El propietario no es expulsable por otro admin: si lo
+                       fuera, cualquier admin robaba el grupo completo
+                       (SECOA-A-003, comprobado empíricamente en la auditoría).
+                       El dueño conserva TODA la autoridad; si quiere irse, usa
+                       "salir él mismo" (/leave), que transfiere sin robo. */
+                    if (removed.id === g.ownerId) return json(res, 403, { error: 'No se puede expulsar al propietario del grupo.' });
                     g.members = g.members.filter(x => x !== removeMember);
                     g.admins = g.admins.filter(x => x !== removeMember);
                     g.memberIds = g.memberIds.filter(id2 => id2 !== removed.id);
-                    // Si el expulsado era el PROPIETARIO del grupo, la
-                    // propiedad pasa a un admin: si no, seguía siendo dueño
-                    // (y podía borrarlo) aunque ya no fuese miembro.
-                    if (g.ownerId === removed.id)
-                        g.ownerId = (g.admins[0] && byName(g.admins[0])?.id) || '';
+                    // El expulsado nunca es el propietario (guard de arriba),
+                    // así que la propiedad no se mueve aquí: el dueño solo se
+                    // va voluntariamente con "salir", que transfiere mando.
                     writeGroupMeta(g);
                     deleteGroupSummary(removed.id, id);
                     notifyGroup('group');
@@ -613,8 +629,16 @@ const handleRequest = (req, res) => {
                     return json(res, 200, pub(g));
                 }
                 const settingsKeys = ['rename', 'description', 'avatar', 'visibility', 'joinPolicy', 'writePolicy', 'addPolicy', 'editPolicy', 'mentionAllPolicy', 'contentPolicy'];
+                /* Ajustes que deciden QUIÉN entra, QUIÉN edita o QUIÉN ve el
+                   grupo: reservados a admins aunque editPolicy sea 'all'.
+                   Con el guard antiguo, cualquier miembro con editPolicy=all
+                   ponía el grupo en público + joinPolicy=open a espaldas del
+                   dueño (SECOA-A-002, comprobado en la auditoría). */
+                const adminOnlySettings = ['visibility', 'joinPolicy', 'addPolicy', 'editPolicy', 'mentionAllPolicy'];
                 if (settingsKeys.some(k => Object.prototype.hasOwnProperty.call(data, k))) {
                     if (!isAdmin && g.editPolicy !== 'all') return json(res, 403, { error: 'Solo admins.' });
+                    if (!isAdmin && adminOnlySettings.some(k => Object.prototype.hasOwnProperty.call(data, k)))
+                        return json(res, 403, { error: 'Ese ajuste es solo para admins.' });
                     if (Object.prototype.hasOwnProperty.call(data, 'rename')) {
                         if (typeof data.rename !== 'string' || !data.rename.trim() || data.rename.length > 40) return json(res, 400, { error: 'Nombre inválido.' });
                         g.name = data.rename.trim();

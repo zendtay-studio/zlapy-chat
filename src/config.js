@@ -25,7 +25,23 @@ const DEFAULTS = Object.freeze({
     SQLITE_CACHE_SIZE_KB: 64_000,
     SQLITE_BUSY_TIMEOUT_MS: 5_000,
     STORY_TTL_MS: 24 * 60 * 60 * 1000,
-    AUTH_SESSION_TTL_MS: 30 * 24 * 60 * 60 * 1000
+    AUTH_SESSION_TTL_MS: 30 * 24 * 60 * 60 * 1000,
+    /* Cota del adjunto que viaja en línea (sin hash) en un mensaje de medios:
+       el envío normal de medios va por blob+hash; el modo en línea es la vía
+       de interop y, sin cota, payloads de 24 MB la convertían en generador de
+       discos y lecturas amplificadas. Véase auditoría SECOA-I-001/I-002. */
+    MAX_INLINE_MEDIA_CHARS: 262_144,
+    /* Tope del medio de una historia que va en línea (data-URL): las historias
+       SÍ viven por diseño en línea, pero a 24 MB por historia la RAM y el
+       fan-out se iban a por la cuenta. SECOA-A-001. */
+    STORY_INLINE_CHAR_LIMIT: 4_000_000,
+    /* Tope de miembros por grupo: el coste por mensaje crece con N miembros. */
+    MAX_GROUP_MEMBERS: 200,
+    /* Cota global de bytes de la caché de páginas de chat (además del tope de
+       entradas): sin ella, páginas con adjuntos grandes llenaban la RAM. */
+    CHAT_PAGE_CACHE_MAX_BYTES: 64 * 1024 * 1024,
+    /* Tope de sesiones activas por cuenta. */
+    MAX_SESSIONS_PER_USER: 20
 });
 
 function integerSetting(env, name, min, max) {
@@ -59,6 +75,11 @@ function loadConfig(env = process.env) {
         sqliteBusyTimeoutMs: integerSetting(env, 'SQLITE_BUSY_TIMEOUT_MS', 0, 60_000),
         storyTtlMs: integerSetting(env, 'STORY_TTL_MS', 60_000, 30 * 24 * 60 * 60 * 1000),
         authSessionTtlMs: integerSetting(env, 'AUTH_SESSION_TTL_MS', 60_000, 365 * 24 * 60 * 60 * 1000),
+        maxInlineMediaChars: integerSetting(env, 'MAX_INLINE_MEDIA_CHARS', 1, 1024 * 1024 * 1024),
+        storyInlineCharLimit: integerSetting(env, 'STORY_INLINE_CHAR_LIMIT', 1, 1024 * 1024 * 1024),
+        maxGroupMembers: integerSetting(env, 'MAX_GROUP_MEMBERS', 1, 10_000),
+        chatPageCacheMaxBytes: integerSetting(env, 'CHAT_PAGE_CACHE_MAX_BYTES', 1024, 1_073_741_824),
+        maxSessionsPerUser: integerSetting(env, 'MAX_SESSIONS_PER_USER', 1, 1_000),
         dataDir: typeof env.DATA_DIR === 'string' && env.DATA_DIR.trim() ? env.DATA_DIR.trim() : '',
         chatMasterKey: typeof env.CHAT_MASTER_KEY === 'string' ? env.CHAT_MASTER_KEY.trim() : '',
         // Forzar TLS: toda petición en claro se redirige a HTTPS y la cookie

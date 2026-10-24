@@ -44,8 +44,13 @@ const NONCE_MEMORY_MS = MAX_CLOCK_SKEW_MS + 30_000;
    entradas (varios MB) y una purga que recorría el mapa entero. Tope + evict
    del más viejo (el que está más cerca de caducar). */
 const NONCE_MAX_ENTRIES = 8192;
-/* Solo se guardan los nonces vistos: la memoria se purga con la ventana, así
-   que no crece sin límite. */
+/* ¿Nonce ya visto? Registra el nonce nuevo (con caducidad a la ventana) y
+   da el resultado. SOLO se llama tras haber abierto el sobre con éxito:
+   si el registro sucediera antes de validar el MAC, un flood de copias
+   descartables llenaría el mapa con basura y expulsaría el nonce legítimo
+   recién reenviado (replay por desalojo FIFO). Registrando tras la
+   validación, solo un sobre VÁLIDO ocupa plaza — y para fabricar sobres
+   válidos hacen falta las claves de sesión legítimas. */
 function nonceUsado(nonce) {
     const ahora = Date.now();
     const caduca = usedNonces.get(nonce);
@@ -70,9 +75,11 @@ function openRequest(req, url, rawBody) {
         return { error: 'Marca de tiempo fuera de rango.' };
     const ephemeral = Buffer.from(String(req.headers[EPHEMERAL_HEADER] || ''), 'base64');
     const nonce = Buffer.from(String(req.headers[NONCE_HEADER] || ''), 'base64');
-    /* El nonce identifica al sobre: reenviarlo es la definición de replay. */
-    if (nonce.length > 0 && nonceUsado(nonce.toString('base64')))
-        return { error: 'Sobre ya utilizado.' };
+    /* El nonce identifica al sobre: reenviarlo es la definición de replay.
+       El cliente legítimo SIEMPRE manda 12 bytes, así que el vacío ya no pasa:
+       sin exigirlo, un sobre sin nonce eludía el registro por completo. */
+    if (nonce.length === 0 || nonce.length > 32)
+        return { error: 'Sobre inválido.' };
     const opened = decryptEnvelope({
         method: req.method,
         path: url.pathname,
@@ -82,6 +89,10 @@ function openRequest(req, url, rawBody) {
         ciphertext: rawBody
     });
     if (!opened) return { error: 'No se pudo descifrar el sobre.' };
+    /* El nonce se registra SOLO cuando el sobre era legítimo (MAC verificado):
+       registrar antes dejaba el mapa expulsable por flood de basura. */
+    if (nonceUsado(nonce.toString('base64')))
+        return { error: 'Sobre ya utilizado.' };
     let data;
     try { data = JSON.parse(opened.plaintext.toString('utf8')); }
     catch { return { error: 'Cuerpo JSON inválido.' }; }

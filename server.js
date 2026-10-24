@@ -30,9 +30,31 @@
  */
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
+const { DATA, DB_PATH, BLOB_DB_PATH, ROOT } = require('./src/config.js');
+
 const { Stmt } = require('./src/db/statements.js');
 const { db } = require('./src/db/database.js');
 const { loadFromDb } = require('./src/users/store.js');
+
+/* Permisos del almacenamiento: sin este endurecimiento, la carpeta de datos
+   nacía 0755 y las bases SQLite 0644 (la auditoría SECOA-D-001/E-001 las
+   midió así), es decir, LECTURAS por cualquier usuario local del equipo.
+   El código de operación documentaba 0700 («dueño y grupo»: véase
+   ops/backup.js) pero nada lo aplicaba. Best-effort: si el chmod no es
+   posible (otro usuario, sistema sin permisos POSIX), se sigue en marcha
+   avisando, porque un fallo duro aquí dejaría sin servicio. */
+try {
+    fs.chmodSync(DATA, 0o700);
+    for (const dbPath of [DB_PATH, BLOB_DB_PATH])
+        if (fs.existsSync(dbPath)) fs.chmodSync(dbPath, 0o600);
+    // El .env lleva la llave maestra: nunca más legible que para su dueño.
+    const envPath = path.join(ROOT, '.env');
+    if (fs.existsSync(envPath)) fs.chmodSync(envPath, 0o600);
+} catch (error) {
+    console.warn('[perms] no se pudieron ajustar los permisos del directorio de datos:', error.message);
+}
 
 // La base declara la version del cifrado de sus datos. Si no encaja con la de
 // este servidor no se arranca: los datos serian ilegibles.
