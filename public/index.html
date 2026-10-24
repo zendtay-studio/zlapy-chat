@@ -9247,7 +9247,19 @@
             function forgetAccount(accountId) {
                 saveLinkedAccounts(linkedAccounts().filter(account => account.id !== accountId));
             }
+            // Cambio de cuenta en curso: evita que un doble clic abra dos
+            // diálogos de re-autenticación o rote la sesión dos veces.
+            const cambiosDeCuentaEnCurso = new Set();
+            // Quita la fila de una cuenta de la lista sin esperar al repintado
+            // (si el repintado falla por red, la fila no puede quedarse ahí).
+            function quitarFilaCuenta(accountId) {
+                const boton = document.querySelector(`.linkedAccountRow [data-switch-id="${accountId}"]`);
+                const fila = boton && boton.closest ? boton.closest('.linkedAccountRow') : null;
+                if (fila && fila.remove) fila.remove();
+            }
             async function switchLinkedAccount(accountId, errorTarget) {
+                if (cambiosDeCuentaEnCurso.has(accountId)) return;
+                cambiosDeCuentaEnCurso.add(accountId);
                 try {
                     await stickerSaveQueue;
                     const response = await fetch('/auth/switch', {
@@ -9260,8 +9272,18 @@
                         // La cuenta ya no existe en este servidor: se quita de la lista
                         // para no volver a intentarlo (el servidor ya borró su cookie).
                         if (result.gone) {
+                            const perdida = linkedAccounts().find(item => item.id === accountId);
                             forgetAccount(accountId);
-                            throw new Error('Esa cuenta ya no existe en este servidor. Se quitó de la lista.');
+                            quitarFilaCuenta(accountId);
+                            try { await paintSettings(); } catch (error) { console.error('[account] No se pudo refrescar la lista de cuentas:', error); }
+                            throw new Error(`La cuenta @${perdida ? perdida.username : ''} ya no existe en este servidor. Se quitó de la lista.`);
+                        }
+                        // La sesión guardada caducó, pero la cuenta puede seguir
+                        // existiendo: NO se quita de la lista; se vuelve a pedir la
+                        // contraseña y se reintenta el cambio.
+                        if (result.relogin) {
+                            await reloginLinkedAccount(accountId);
+                            return;
                         }
                         throw new Error(result.error || 'No se pudo cambiar de cuenta.');
                     }
@@ -9273,7 +9295,54 @@
                         errorTarget.textContent = error.message;
                         errorTarget.style.display = 'block';
                     } else toast(error.message);
+                } finally {
+                    cambiosDeCuentaEnCurso.delete(accountId);
                 }
+            }
+            // La sesión guardada de una cuenta caducó (o el navegador perdió su
+            // cookie): la cuenta puede seguir existiendo en el servidor, así que
+            // se vuelve a pedir la contraseña y se reintenta el cambio. Si el
+            // alta falla, la cuenta sigue en la lista y se explica el motivo.
+            async function reloginLinkedAccount(accountId) {
+                const account = linkedAccounts().find(item => item.id === accountId);
+                const username = account ? account.username : '';
+                const values = await askAccountFields('Volver a iniciar sesión', [
+                    { name: 'username', label: 'Nombre de usuario', type: 'text', maxlength: 24, autocomplete: 'username', value: username },
+                    { name: 'password', label: 'Contraseña', type: 'password', maxlength: 128, autocomplete: 'current-password' }
+                ]);
+                if (!values || !values.username.trim() || !values.password) return;
+                const alta = await fetch('/auth/add-account', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username: values.username.trim(), password: values.password, expectedAccountId: accountId })
+                });
+                const altaResult = await alta.json();
+                if (!alta.ok) throw new Error(altaResult.error || 'No se pudo volver a iniciar sesión.');
+                // Las credenciales tienen que ser de la cuenta seleccionada: si no,
+                // no se guarda nada de la otra cuenta ni se intenta el cambio.
+                if (altaResult.user && altaResult.user.id && altaResult.user.id !== accountId) {
+                    throw new Error('Esas credenciales no son de la cuenta seleccionada.');
+                }
+                rememberAccount(altaResult.user);
+                // La cookie de la cuenta ya está: ahora el cambio sí funciona.
+                const cambio = await fetch('/auth/switch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ accountId })
+                });
+                const cambioResult = await cambio.json();
+                if (!cambio.ok) {
+                    if (cambioResult.gone) {
+                        const perdida = linkedAccounts().find(item => item.id === accountId);
+                        forgetAccount(accountId);
+                        quitarFilaCuenta(accountId);
+                        try { await paintSettings(); } catch (error) { console.error('[account] No se pudo refrescar la lista de cuentas:', error); }
+                        throw new Error(`La cuenta @${perdida ? perdida.username : ''} ya no existe en este servidor. Se quitó de la lista.`);
+                    }
+                    throw new Error(cambioResult.error || 'No se pudo cambiar de cuenta.');
+                }
+                rememberAccount(cambioResult.user);
+                location.reload();
             }
             // ancho REAL visible de la ventana (innerWidth miente con zoom, split screen, teclado o modo escritorio)
             const viewWidth = () => fitWidth();

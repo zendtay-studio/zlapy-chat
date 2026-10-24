@@ -455,7 +455,8 @@ una sola transacción (todo o nada).
 
 Consecuencia práctica: se puede borrar una cuenta y **volver a registrarla
 con el mismo nombre sin reiniciar el servidor**; el login viejo deja de
-funcionar y las cookies de esa cuenta se limpian solas (`gone: true`).
+funcionar y las cookies de esa cuenta se limpian solas (`gone: true`, la
+cuenta se quita de la lista de cuentas conectadas).
 
 ---
 
