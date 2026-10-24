@@ -264,8 +264,8 @@ puede suplantar a otro usuario.
 |---|---|---|---|---|
 | `/auth/register` | Pública | Crea una cuenta | `{ username, password }` — usuario `[a-z0-9_.-]{3,24}`, contraseña 8-128 | `201 { ok: true, user: { id, username } }` + cookie de sesión. `400` si los datos no valen, `409 { error: "Username is already taken." }` si el nombre está ocupado, `429` si se superan los registros por IP |
 | `/auth/login` | Pública | Inicia sesión | `{ username, password }` | `200 { ok: true, user: { id, username } }` + cookie. `401 { error: "Invalid username or password." }`, `429 { error: "Too many login attempts." }` |
-| `/auth/add-account` | Sesión | Vincula otra cuenta en este navegador | `{ username, password }` | `200 { ok: true, user: { id, username } }` + cookie `chatlocal_account_<uuid>`. `401` si la contraseña no es, `429` por intentos |
-| `/auth/switch` | Cookie de cuenta | Cambia a una cuenta vinculada (rota el token de sesión) | `{ accountId }` (UUID) | `200 { ok: true, user: { id, username } }`. `400 { error: "Cuenta inválida." }`, `401 { error: "Sesión no disponible.", gone: true }` |
+| `/auth/add-account` | Sesión | Vincula otra cuenta en este navegador | `{ username, password }` (+ `expectedAccountId` opcional: UUID de la cuenta que se espera) | `200 { ok: true, user: { id, username } }` + cookie `chatlocal_account_<uuid>`. `401` si la contraseña no es, `409 { error: "Esas credenciales no son de la cuenta seleccionada." }` si se pasó `expectedAccountId` y las credenciales son de otra cuenta, `429` por intentos |
+| `/auth/switch` | Cookie de cuenta | Cambia a una cuenta vinculada (rota el token de sesión) | `{ accountId }` (UUID) | `200 { ok: true, user: { id, username } }`. `400 { error: "Cuenta inválida." }`, `401 { error: "Sesión no disponible.", relogin: true }` (la cookie de la cuenta caducó o se perdió, pero la cuenta **sigue existiendo**: hay que volver a iniciar sesión) o `401 { error: "Cuenta no disponible.", gone: true }` (la cuenta ya no está en la base: se quita de la lista de cuentas conectadas). **Sin sesión vigente** la respuesta es `401 { error: "Sesión no disponible." }` sin marcas: la ruta es pública y distinguirlas la convertiría en un oráculo de existencia de cuentas |
 | `/auth/account/remove` | Sesión | Elimina una cuenta vinculada de este navegador | `{ accountId }` (UUID) | `200 { ok: true }`. `400` si es la cuenta en uso |
 | `/auth/logout` | Pública | Cierra la sesión y revoca **todas** las cuentas abiertas en el navegador | — (sin cuerpo) | `200 { ok: true }` + cookies de sesión borradas |
 | `/key` | Sesión | Guarda la clave pública de cifrado de la cuenta | `{ pubKey }` (objeto) | `200 { ok: true }`. `400 { error: "clave inválida" }` |
@@ -638,7 +638,7 @@ Dos excepciones, ambas en `src/http/router.js`:
 
 | Código | Mensaje | Origen |
 |---|---|---|
-| 400 | `cross-origin request rejected` (403 en realidad) | `src/http/router.js:104` |
+| 400 | `cross-origin request rejected` (403 en realidad) | `src/http/router.js:132` |
 | 400 | `Contenido demasiado grande.` | `src/http/router.js:178,193` |
 | 400 | `Invalid username or password.` | `src/auth/routes.js:78` |
 | 400 | `Cuenta inválida.` | `src/auth/routes.js:180` |
@@ -669,14 +669,14 @@ Dos excepciones, ambas en `src/http/router.js`:
 | 400 | `Preferencia de chat inválida.` | `src/chat/routes.js:75` |
 | 400 | `Endpoint de push no permitido.` | `src/push/routes.js:24` |
 | 400 | `Búsqueda demasiado larga.` | `src/stickers/routes.js:31` |
-| 400 | `Acción no reconocida.` | `src/http/router.js:592` |
-| 401 | `authentication required` | `src/http/router.js:82,101,234` |
-| 401 | `Invalid username or password.` | `src/auth/routes.js:140` |
-| 401 | `Usuario o contraseña incorrectos.` | `src/auth/routes.js:170` |
-| 401 | `Sesión no disponible.` | `src/auth/routes.js:186` |
-| 401 | `Cuenta no disponible.` | `src/auth/routes.js:198` |
+| 400 | `Acción no reconocida.` | `src/http/router.js:673` |
+| 401 | `authentication required` | `src/http/router.js:90,122,281` |
+| 401 | `Invalid username or password.` | `src/auth/routes.js:122,193` |
+| 401 | `Usuario o contraseña incorrectos.` | `src/auth/routes.js:234` |
+| 401 | `Sesión no disponible.` | `src/auth/routes.js:267,273` |
+| 401 | `Cuenta no disponible.` | `src/auth/routes.js:268,280` |
 | 401 | `Contraseña incorrecta.` | `src/profile/routes.js:208` |
-| 403 | `cross-origin request rejected` | `src/http/router.js:104` |
+| 403 | `cross-origin request rejected` | `src/http/router.js:132` |
 | 403 | `Solo admins.` | `src/http/router.js:359,439,502,518,547,560` |
 | 403 | `Solo contactos.` | `src/http/router.js:442`, `src/groups/routes.js:73` |
 | 403 | `no eres miembro` | `src/http/router.js:205` |
@@ -732,11 +732,15 @@ límite de mensajes, también el campo `retryAfter` en el cuerpo.
   completa.
 - **`GET /groups` devuelve un array JSON desnudo**, sin envoltorio (`src/groups/routes.js:51`),
   a diferencia del resto de rutas de listado.
-- **`POST /auth/switch` es "pública" en el enrutador** (`publicAuthPost`, `src/http/router.js:99`)
+- **`POST /auth/switch` es "pública" en el enrutador** (`publicAuthPost`, `src/http/router.js:120`)
   pero en la práctica necesita la cookie `chatlocal_account_<uuid>` de la cuenta a la que se
-  quiere cambiar; si no, `401 { error: "Sesión no disponible.", gone: true }`.
+  quiere cambiar. Si la cookie caducó o el navegador la perdió, la respuesta es
+  `401 { error: "Sesión no disponible.", relogin: true }`: la cuenta **sigue existiendo**, así que
+  el cliente la conserva en la lista y pide la contraseña otra vez. Solo cuando la cuenta ya no
+  está en la base responde `401 { error: "Cuenta no disponible.", gone: true }` y el cliente la
+  quita de la lista.
 - **`POST /auth/logout` revoca todas las cuentas del navegador**, no solo la actual
-  (`src/auth/routes.js:239-251`).
+  (`src/auth/routes.js:309-331`).
 - **Los identificadores de remitente los impone el servidor.** En `/send`, `/receipt`,
   `/chat/delete`, `/block` y `/messages` se fuerza `data.from = actor`; en `/profile`, `/notes`,
   `/push/*`, `/call/log`, `/account/delete` y `/stickers` se fuerza `data.username = actor`; en

@@ -236,6 +236,13 @@ async function postAuthAddAccount(req, res, url, data, actor) {
     loginAttempts.delete('acct:' + username + '@' + ip);
     const espera = acct && acct.count >= LOGIN_DELAY_FROM ? loginDelayMs(acct.count) : 0;
     if (espera > 0) await new Promise(resolve => setTimeout(resolve, espera));
+    /* Si el cliente espera una cuenta concreta (volver a iniciar sesión al
+       cambiar de cuenta), las credenciales deben ser de ESA cuenta. Sin esta
+       comprobación, un nombre equivocado enlazaría otra cuenta y el cambio
+       seguiría fallando. */
+    const expected = typeof data.expectedAccountId === 'string' ? data.expectedAccountId.trim().toLowerCase() : '';
+    if (expected && user.id !== expected)
+        return json(res, 409, { error: 'Esas credenciales no son de la cuenta seleccionada.' });
     return json(res, 200, { ok: true, user: createLinkedAccountSession(user, req, res) });
 }
 
@@ -246,14 +253,24 @@ function postAuthSwitch(req, res, url, data, actor) {
     const token = sessionCookie(req, accountCookieName(accountIdV));
     const hash = token ? hashSessionToken(token) : '';
     const s = token ? getSessionFromCache(hash) : null;
-    if (!s || s.userId !== accountIdV) {
-        clearCookie(res, req, accountCookieName(accountIdV));
-        return json(res, 401, { error: 'Sesión no disponible.', gone: true });
-    }
     let user = users.get(accountIdV);
     if (!user) {
         const row = Stmt.getUserById.get(accountIdV);
         if (row) user = loadUserFromRow(row);
+    }
+    if (!s || s.userId !== accountIdV) {
+        clearCookie(res, req, accountCookieName(accountIdV));
+        /* Sin sesión vigente no se distingue "la cuenta no existe" de "la
+           cookie caducó": la ruta es pública y hacerlo la convertiría en un
+           oráculo de existencia de cuentas (basta con probar un UUID). Con
+           sesión vigente sí se puede avisar al cliente. */
+        if (!req.authUser) return json(res, 401, { error: 'Sesión no disponible.' });
+        if (!user) return json(res, 401, { error: 'Cuenta no disponible.', gone: true });
+        /* La cookie de la cuenta caducó (o el navegador la perdió), pero la
+           cuenta SIGUE existiendo en el servidor. No se marca como eliminada:
+           el cliente la quitaría de la lista sin motivo. Se pide volver a
+           iniciar sesión para esa cuenta (relogin). */
+        return json(res, 401, { error: 'Sesión no disponible.', relogin: true });
     }
     if (!user) {
         // La cuenta no está en la base: se limpia la sesión y su cookie.
