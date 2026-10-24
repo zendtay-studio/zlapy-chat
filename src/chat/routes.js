@@ -23,7 +23,7 @@ const { Stmt } = require('../db/statements.js');
 const { pruneBlobHashes, tx } = require('../db/transactions.js');
 const { groupPolicies, healGroupSummary, readGroup } = require('../groups/store.js');
 const { rejectRateLimited, rejectRateLimitedMessage } = require('../http/helpers.js');
-const { chatPrefsLimiter } = require('../http/rate-limit.js');
+const { chatPrefsLimiter, receiptLimiter } = require('../http/rate-limit.js');
 const { json, securityHeaders } = require('../http/responses.js');
 const { notifyUser, pushNameOf } = require('../push/vapid.js');
 const { push, pushName } = require('../realtime/notify.js');
@@ -240,6 +240,14 @@ function postSend(req, res, url, data, actor) {
     const dmKinds = new Set([...Object.keys(groupPolicies), 'group-invite']);
     if (typeof data.kind !== 'string' || !dmKinds.has(data.kind))
         return json(res, 400, { error: 'Tipo inválido.' });
+    /* Cota del medio EN LÍNEA (sin hash): el flujo normal de medios sube el
+       blob y manda hash+data; la vía sin hash es interop y, sin esta cota,
+       admitía 24 MB por mensaje (bypass de cuota, según SECOA-I-001:
+       bytesNuevos no contaba el data sin hash). Con hash el conteo de cuota
+       siempre se paga; solo la vía en línea era el agujero. */
+    if (['image', 'video', 'audio', 'file'].includes(data.kind) && !data.hash &&
+        typeof data.data === 'string' && data.data.length > CONFIG.maxInlineMediaChars)
+        return json(res, 413, { error: 'Contenido demasiado grande.' });
     if (['image', 'video', 'audio', 'file'].includes(data.kind) && !data.hash && !Array.isArray(data.gallery))
         return json(res, 400, { error: 'Falta hash.' });
     if (data.mime !== undefined && data.mime !== '' && !validMime(data.mime))
@@ -265,8 +273,11 @@ function postSend(req, res, url, data, actor) {
         if (!messageData && !blobAvailableTo(sender, messageHash)) return json(res, 400, { error: 'Archivo no disponible.' });
     }
     /* Cuota de almacenamiento antes de tocar disco (última barrera) y, solo
-       entonces, la escritura de los adjuntos que trae el mensaje. */
-    const bytesNuevos = (messageData && messageHash ? Buffer.byteLength(messageData) : 0) +
+       entonces, la escritura de los adjuntos que trae el mensaje. El `data`
+       se cuenta SIEMPRE que venga: con hash (subida de blob) o sin él (línea
+       persistida en el mensaje). Antes, la vía sin hash no pagaba cuota:
+       SECOA-I-001. */
+    const bytesNuevos = (messageData ? Buffer.byteLength(messageData) : 0) +
         gallery.reduce((total, item) => total + (item.data ? Buffer.byteLength(item.data) : 0), 0);
     if (bytesNuevos > 0 && !blobQuotaOk(sender.id, bytesNuevos))
         return json(res, 413, { error: 'Has alcanzado el límite de almacenamiento de adjuntos.' });
@@ -359,6 +370,10 @@ function postSeen(req, res, url, data, actor) {
 }
 
 function postReceipt(req, res, url, data, actor) {
+    // Cada acuse recorre hasta 500 ids y descifra cada fila encontrada, y
+    // toca resúmenes y candados de página: sin cota era el multiplicador de
+    // escritura barato por cuenta (SECOA-I-004).
+    if (rejectRateLimited(res, receiptLimiter, req.authUser.id, 120, 'acuses por minuto')) return;
     if (!['delivered', 'read'].includes(data.status) || !Array.isArray(data.ids) || data.ids.length > 500 ||
         data.ids.some(id => typeof id !== 'string' || !id || id.length > 128))
         return json(res, 400, { error: 'Invalid receipt.' });

@@ -241,6 +241,10 @@ const Stmt = {
     deleteSessionsByUser: db.prepare('DELETE FROM sessions WHERE user_id = ?'),
     deleteExpiredSessions: db.prepare('DELETE FROM sessions WHERE expires_at <= ?'),
     listSessions: db.prepare('SELECT token_hash, user_id, expires_at FROM sessions'),
+    /* Tope de sesiones activas por cuenta: se ordena por caducidad DESC y se
+       cierran las más viejas cuando se supera el tope (sin cota, el éxito del
+       login sin límite hacía crecer la tabla sin techo). */
+    listSessionHashesByUser: db.prepare('SELECT token_hash FROM sessions WHERE user_id = ? ORDER BY expires_at DESC'),
 
     // Push
     listPushSubs: db.prepare('SELECT user_id, endpoint, data FROM push_subs'),

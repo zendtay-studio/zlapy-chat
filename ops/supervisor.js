@@ -152,6 +152,9 @@ function writePid(pid) {
         // SUPERVISOR_PID_FILE con subdirectorio no debe fallar en silencio.
         fs.mkdirSync(path.dirname(PID_FILE), { recursive: true, mode: 0o700 });
         fs.writeFileSync(PID_FILE, pid ? String(pid) : '');
+        // El PID del hijo en 0644 era legible por cualquier usuario local;
+        // no es secreto, pero el fichero no necesita más permisos.
+        try { fs.chmodSync(PID_FILE, 0o600); } catch { /* best-effort */ }
     } catch (e) { /* best-effort */ }
 }
 
