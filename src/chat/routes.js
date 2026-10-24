@@ -22,7 +22,8 @@ const { db } = require('../db/database.js');
 const { Stmt } = require('../db/statements.js');
 const { pruneBlobHashes, tx } = require('../db/transactions.js');
 const { groupPolicies, healGroupSummary, readGroup } = require('../groups/store.js');
-const { rejectRateLimitedMessage } = require('../http/helpers.js');
+const { rejectRateLimited, rejectRateLimitedMessage } = require('../http/helpers.js');
+const { chatPrefsLimiter } = require('../http/rate-limit.js');
 const { json, securityHeaders } = require('../http/responses.js');
 const { notifyUser, pushNameOf } = require('../push/vapid.js');
 const { push, pushName } = require('../realtime/notify.js');
@@ -140,6 +141,10 @@ function getChatPreferences(req, res, url, data, actor) {
  * Los cambios se aplican en una sola transacción y se notifican a los demás
  * dispositivos de la cuenta para que la lista quede igual en todos ellos. */
 function postChatPreferences(req, res, url, data, actor) {
+    // Cada petición puede resolver hasta 200 destinos contra la base (grupos
+    // por id): sin cota, una sola cuenta generaba SELECTs baratos a ritmo de
+    // red. El freno va ANTES de resolver nada.
+    if (rejectRateLimited(res, chatPrefsLimiter, req.authUser.id, 20, 'cambios de preferencias de chat por minuto')) return;
     const patch = {
         pinned: typeof data.pinned === 'boolean' ? data.pinned : undefined,
         muted: typeof data.muted === 'boolean' ? data.muted : undefined,
@@ -268,6 +273,10 @@ function postSend(req, res, url, data, actor) {
     if (messageHash && messageData && !storeBlob(messageHash, messageData))
         return json(res, 400, { error: 'Archivo inválido.' });
     if (gallery.length && !storeGallery(gallery, storeBlob)) return json(res, 400, { error: 'Galería inválida.' });
+    // El espacio acaba de crecer: fuera de la caché de cuota, o durante la
+    // ventana de 15 s peticiones concurrentes veían el mismo consumo y
+    // pasaban todas la barrera (hasta N extra de 18 MB por cuenta).
+    invalidateBlobQuota(sender.id);
     if (messageHash) messageData = '';
 
     const msg = {

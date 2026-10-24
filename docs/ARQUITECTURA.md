@@ -415,10 +415,10 @@ Definidas en `src/http/responses.js:17-39` y aplicadas a **toda** respuesta:
 | `src/db/schema.js` | `SCHEMA_SQL` (20 bloques de tablas), `SCHEMA_VERSION = 3`, `ensureSchema()`, y las reglas de borrado en cascada que SQL no expresa (`deleteAccountRows`, `deleteGroupRows`, `deleteMessageRowsWhere`). |
 | `src/db/statements.js` | Compila ~120 sentencias preparadas una sola vez en `Stmt`. |
 | `src/db/transactions.js` | `tx.sendMessage`, `tx.deleteMessage`, `tx.markSeenMessage`, `tx.deleteGroup`, `tx.deleteAccount`, `tx.saveUser` (transacciones `better-sqlite3`), `removeBlobAccess()` y `pruneBlobHashes()`. |
-| `src/crypto/master-key.js` | Lee `CHAT_MASTER_KEY` (base64, exactamente 32 bytes) o `.zlapymasterkey` (0600). Si falta la llave **y ya hay bases**, aborta. Genera una si no hay bases. |
-| `src/crypto/message-crypto.js` | `PCE1:` (AES-256-GCM en reposo, llave maestra), `PCE2:` (AES-256-GCM con AAD de contexto), firmas Ed25519 derivadas por HKDF de la `auth_key` del usuario (o de la llave maestra). |
-| `src/crypto/mtproto.js` | Réplica de la estructura MTProto 2.0: `auth_key` de 2048 bits, `auth_key_id` = 64 bits bajos del SHA-1, `msg_key` = 128 bits centrales del SHA-256, derivación `aes_key`/`aes_iv`, cabecera interna cifrada, relleno 12–27 bytes, sobre `PCE3:`. |
-| `src/crypto/user-auth-keys.js` | `auth_key` por usuario (caché LRU de 500), rotación de sal cada 30 min, `encryptForUser`/`decryptForUser`, `messageContextBytes` (contexto ligado). |
+| `src/crypto/master-key.js` | Lee `CHAT_MASTER_KEY` del `.env` (base64, exactamente 32 bytes). Si falta la llave **y ya hay datos**, aborta. La genera él mismo (y la escribe en el `.env`) si la base no tiene cuentas. |
+| `src/crypto/message-crypto.js` | Cifrado en reposo `PCE1v2:` (AES-256-GCM con subclave HKDF de la llave maestra y AAD de dominio; el legado `PCE1:` sigue legible) y firmas Ed25519 derivadas por HKDF de la `auth_key` del usuario. |
+| `src/crypto/mtproto.js` | `auth_key` de 2048 bits por usuario (`key_id` = SHA-256 truncado a 128 bits), AES-256-GCM directo (subclave HKDF + AAD de contexto del mensaje), sobre `PCE3:<iv>:<ct+tag>`. El armazón cosmético de MTProto (sal, sesión, msg_id, msg_key, relleno) quedó eliminado. |
+| `src/crypto/user-auth-keys.js` | `auth_key` por usuario (caché LRU de 500), `ensureAuthKey` (+ callback `onAuthKeyCreated` que invalida la caché de firma), `encryptForUser`/`decryptForUser`, `messageContextBytes` (contexto ligado). |
 | `src/http/router.js` | El enrutador completo (649 líneas): orden de comprobaciones, normalizaciones, rutas GET/POST y acciones de grupo. |
 | `src/http/servers.js` | Dispatcher, arranque, cierre ordenado con `wal_checkpoint(TRUNCATE)`. |
 | `src/realtime/frames.js` | Parser de frames RFC 6455 con límites y ensamblado de fragmentos O(1). |
@@ -1004,7 +1004,7 @@ Dos niveles de cifrado:
 
 | Nivel | Clave | Formato | Uso |
 | --- | --- | --- | --- |
-| **En reposo, global** | Llave maestra (`.zlapymasterkey` / `CHAT_MASTER_KEY`) | `PCE1:` | Datos de infraestructura que no pertenecen a un usuario concreto. |
+| **En reposo, global** | Llave maestra (`CHAT_MASTER_KEY` en el `.env`) | `PCE1:`/`PCE1v2:` | Datos de infraestructura que no pertenecen a un usuario concreto. `PCE1v2` usa subclave HKDF + AAD de dominio; `PCE1` (AES directo) sigue legible como heredado. |
 | **Por usuario** | `auth_key` del usuario (2048 bits, MTProto 2.0) | `PCE3:` | Todo el contenido sensible de una cuenta. |
 
 #### Contenido cifrado **con la `auth_key` del usuario**
@@ -1376,8 +1376,10 @@ rechazada no debe tumbar el servidor).
 | Script | Qué hace | Notas |
 | --- | --- | --- |
 | `supervisor.js` | Vigila y relanza el servidor (ver §9.1). | `npm start`. |
-| `backup.js` | Copia `zlapy.db` y `blob.db` con la **API de backup de SQLite** (`db.backup()`, segura con el servidor corriendo y WAL activo) y copia `.zlapymasterkey`. | `npm run backup [dir]`. El destino se crea con 0700 y los ficheros con 0600. Si la llave viene de `CHAT_MASTER_KEY` avisa de que hay que guardarla aparte. |
-| `generate-master-key.js` | Genera `CHAT_MASTER_KEY` (32 bytes en base64) en el `.env`, con modo 0600. | `npm run key [-- --force \| --null]`. No muestra la clave; no sobrescribe una clave existente sin `--force`. |
+| `backup.js` | Copia `zlapy.db` y `blob.db` con la **API de backup de SQLite** (`db.backup()`, segura con el servidor corriendo y WAL activo) y | `backup.js` (cont.) | (la llave reside como `CHAT_MASTER_KEY` en el `.env`: hay que copiar ese fichero a parte). | `npm run backup [dir]`. El destino se crea con 0700 y los ficheros con 0600. |
+| `generate-master-key.js` | Genera `CHAT_MASTER_KEY` (32 bytes en base64) en el `.env`, modo 0600. Con `--force` y la base con datos, gira la llave y RE-CIFRA todo el material dependiente (`reencrypt-master.js`). | `npm run key [-- --force \| --null]`. No muestra la clave; no gira una clave existente sin `--force`. |
+| `reencrypt-master.js` | Motor de rotación con re-cifrado: verifica TODOS los sobres dependientes de la maestra con la llave vigente, copia el `.env` a `.env.master-bak`, re-cifra `user_auth_keys`, `groups.keys_cipher`, `meta` (VAPID) y `blobs.data` en transacciones con reversión compensada. | Lo invoca `npm run key -- --force` cuando la base ya tiene datos. |
+| `env-writer.js` | Escritura atómica de secretos (temporal 0600 + fsync + rename), `setEnvValue` y lectura directa del `.env`. | Compartido por el generador y el motor de re-cifrado. |
 | `tunnel.js` | Levanta `cloudflared` con la configuración `zty.yml` y el token de `CLOUDFLARE_TUNNEL_TOKEN`. | `npm run tunnel`. El token **no viaja en `argv`** (se entrega por `--token-file` en un fichero 0600 dentro de un directorio 0700, o por `TUNNEL_TOKEN` en el entorno si el binario es antiguo), y la salida del proceso se **redacta** para que no pueda aparecer en los logs. |
 | `migrate-to-mtproto.js` | Convierte de golpe el contenido antiguo al esquema nuevo: mensajes `PCE2` → `PCE3` y el resto (resúmenes, notas, perfiles, llamadas, push, historias) a cifrado con la `auth_key` del usuario. | `npm run migrate:mtproto [-- --apply]`. Sin `--apply` es simulación. Hace un respaldo automático antes de escribir, es idempotente y **verifica cada registro ida y vuelta antes de tocarlo**. |
 

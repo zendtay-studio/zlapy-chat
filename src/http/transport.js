@@ -39,6 +39,11 @@ const isEncrypted = req => Boolean(req.headers[ENC_HEADER]);
  * memoria de nonces durante la ventana de validez del sobre. */
 const usedNonces = new Map();   // nonce -> caduca en
 const NONCE_MEMORY_MS = MAX_CLOCK_SKEW_MS + 30_000;
+/* Tope DURO de memoria: los nonces no usados no caducan hasta la ventana (90 s),
+   así que un flood de solicitudes cifradas podía guardar cientos de miles de
+   entradas (varios MB) y una purga que recorría el mapa entero. Tope + evict
+   del más viejo (el que está más cerca de caducar). */
+const NONCE_MAX_ENTRIES = 8192;
 /* Solo se guardan los nonces vistos: la memoria se purga con la ventana, así
    que no crece sin límite. */
 function nonceUsado(nonce) {
@@ -46,8 +51,12 @@ function nonceUsado(nonce) {
     const caduca = usedNonces.get(nonce);
     if (caduca && caduca > ahora) return true;
     usedNonces.set(nonce, ahora + NONCE_MEMORY_MS);
-    if (usedNonces.size > 4096) {
+    if (usedNonces.size > NONCE_MAX_ENTRIES / 2) {
         for (const [key, expira] of usedNonces) if (expira <= ahora) usedNonces.delete(key);
+    }
+    while (usedNonces.size > NONCE_MAX_ENTRIES) {
+        const oldest = usedNonces.keys().next().value;
+        usedNonces.delete(oldest);
     }
     return false;
 }

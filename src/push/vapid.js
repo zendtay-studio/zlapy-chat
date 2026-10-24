@@ -27,8 +27,11 @@ if (!VAPID) {
     const pubKey = gen.getPublicKey(), prv = gen.getPrivateKey();
     VAPID = { publicKey: b64u(pubKey), jwk: { kty: 'EC', crv: 'P-256', x: b64u(pubKey.slice(1, 33)), y: b64u(pubKey.slice(33, 65)), d: b64u(prv) } };
     Stmt.setMeta.run('vapid', encryptAtRest(JSON.stringify(VAPID)));
-} else if (vapidRecord.value && !vapidRecord.value.startsWith('PCE1:')) {
-    // Un registro sin cifrar se re-cifra al vuelo, sin migración previa.
+} else if (vapidRecord.value && !vapidRecord.value.startsWith('PCE1:') && !vapidRecord.value.startsWith('PCE1v2:')) {
+    // Un registro sin cifrar se re-cifra al vuelo, sin migración previa
+    // (PCE1v2 es el sobre actual; PCE1 el heredado: ambos cuentan como
+    // ya cifrados, y re-cifrar un sobre cifrado crearía el fallo de
+    // cifrado doble en la clave VAPID).
     Stmt.setMeta.run('vapid', encryptAtRest(JSON.stringify(VAPID)));
 }
 const hkdfExtract = (salt, ikm) => crypto.createHmac('sha256', salt).update(ikm).digest();

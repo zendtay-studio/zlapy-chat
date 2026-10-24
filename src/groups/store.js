@@ -54,10 +54,29 @@ function normalizeGroup(g) {
     return g;
 }
 
+/* Caché de GRUPOS INEXISTENTES (gid →caduca). Los ids que no existen NO se
+   cacheaban, así que resolver 200 targets con ids aleatorios eran 200 SELECT
+   por petición. TTL corto: si el grupo nace poco después, groupCache (que va
+   primero) lo tapa. */
+const groupNegCache = new Map();
+const GROUP_NEG_TTL_MS = 5000;
+const GROUP_NEG_MAX = 4096;
+function groupNegMiss(gid, ahora) {
+    if (groupNegCache.size > GROUP_NEG_MAX) {
+        for (const [key, expira] of groupNegCache) if (expira <= ahora) groupNegCache.delete(key);
+        if (groupNegCache.size > GROUP_NEG_MAX) groupNegCache.clear();
+    }
+    groupNegCache.set(gid, ahora + GROUP_NEG_TTL_MS);
+}
+function invalidateGroupNegCache(gid) { groupNegCache.delete(gid); }
+
 function readGroup(gid) {
     if (groupCache.has(gid)) return groupCache.get(gid);
+    const ahora = Date.now();
+    const neg = groupNegCache.get(gid);
+    if (neg && neg > ahora) return null;
     const row = Stmt.getGroup.get(gid);
-    if (!row) return null;
+    if (!row) { groupNegMiss(gid, ahora); return null; }
     const keys = decryptGroupKeys(row.keys_cipher);
     const g = normalizeGroup({
         id: row.id,
@@ -152,6 +171,8 @@ function writeGroupMeta(g) {
     normalized.members = [...memberIds].map(id => users.get(id).username);
     normalized.admins = [...admins].filter(name => byName(name));
     groupCache.set(normalized.id, normalized);
+    // El grupo EXISTE ahora: fuera de la caché de inexistencia.
+    invalidateGroupNegCache(normalized.id);
     invalidateGroupPubCache(normalized.id);
 }
 

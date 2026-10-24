@@ -2,9 +2,9 @@
  * Respaldo consistente de Zlapy.
  *
  * Copia las dos bases con la API de backup de SQLite (seguro incluso con el
- * servidor corriendo y WAL activo) y la llave maestra, que siempre debe
- * guardarse junto a las bases: sin ella, los mensajes, historias y adjuntos
- * del respaldo son irrecuperables.
+ * servidor corriendo y WAL activo). La llave maestra vive en el `.env`
+ * (CHAT_MASTER_KEY): siempre debe copiarse también junto a las bases, sin
+ * ella los mensajes, historias y adjuntos del respaldo son irrecuperables.
  *
  * Uso:
  *   npm run backup                → backups/zlapy-backup-<fecha-hora>/
@@ -78,20 +78,21 @@ async function main() {
         console.log('        Guarda también una copia de esa clave junto a este respaldo:');
         console.log('        sin ella, mensajes/historias/adjuntos son irrecuperables.');
     } else {
-        const keyPath = path.join(ROOT, '.zlapymasterkey');
-        if (fs.existsSync(keyPath)) {
-            fs.copyFileSync(keyPath, path.join(dest, '.zlapymasterkey'));
-            fs.chmodSync(path.join(dest, '.zlapymasterkey'), 0o600);
-            console.log('[backup] .zlapymasterkey: OK');
-        } else {
-            console.log('[backup] AVISO: no se encontró .zlapymasterkey.');
-        }
+        // Sin llave en el .env, el arranque del servidor no habrá generado
+        // datos útiles (o es una instalación en la que nunca hubo servidor):
+        // copiar el .env actual no sirve, porque la clave que usará el
+        // servidor todavía no existe.
+        console.log('[backup] AVISO: no hay CHAT_MASTER_KEY en el .env (el servidor la');
+        console.log('        genera en el primer arranque de una instalación nueva y la');
+        console.log('        escribe allí). Ejecuta este respaldo DESPUÉS de arrancar el');
+        console.log('        servidor al menos una vez.');
     }
 
     console.log('[backup] listo.');
     console.log('         Restaurar: 1) parar el servidor, 2) copiar los .db a la carpeta de');
-    console.log('         datos (DATA_DIR), 3) copiar .zlapymasterkey a la raíz del proyecto');
-    console.log('         (o definir CHAT_MASTER_KEY), 4) arrancar y comprobar /healthz.');
+    console.log('         datos (DATA_DIR), 3) asegurar la MISMA clave maestra en el .env');
+    console.log('         (CHAT_MASTER_KEY=..., si el respaldo la fue a guardar aparte),');
+    console.log('         4) arrancar y comprobar /healthz.');
 }
 
 main().catch(error => {

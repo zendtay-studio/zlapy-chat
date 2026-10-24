@@ -1,16 +1,20 @@
 /**
  * Mensajes.
  *
- * Un mensaje se guarda cifrado con la clave del autor (esquema MTProto 2.0):
- * el servidor conoce la clave, de modo que puede sincronizar el historial
- * entre dispositivos, y la clave maestra global no descifra nada por sí sola.
+ * Un mensaje se guarda cifrado con la auth_key de su autor (AES-256-GCM
+ * con el contexto del mensaje autenticado, ver src/crypto/mtproto.js):
+ * el servidor conoce la clave y con ella sincroniza el historial entre
+ * dispositivos. La auth_key va guardada cifrada con la llave maestra, asi que
+ * la maestra ES la raiz de confianza: el modelo "por usuario" solo protege
+ * ante fuga de la base de datos sin la llave maestra.
  */
 'use strict';
 
 const mtproto = require('../crypto/mtproto.js');
 
 const crypto = require('crypto');
-const { authKeyRecord, decryptAtRest, ensureAuthKey, messageContextBytes, messageCrypto, rotateSaltIfNeeded } = require('../crypto/setup.js');
+const { db } = require('../db/database.js');
+const { authKeyRecord, decryptAtRest, ensureAuthKey, messageContextBytes, messageCrypto } = require('../crypto/setup.js');
 const { Stmt } = require('../db/statements.js');
 const { decryptLegacyMessageFields } = require('../shared/message-data.js');
 const { clampStr } = require('../shared/validation.js');
@@ -33,23 +37,22 @@ function prepareStoredMessage(message, chat, cryptoGroupId = null) {
         to_id: message.toId || null, kind: message.kind,
         crypto_group_id: cryptoGroupId || null
     };
+    // La auth_key debe EXISTIR antes de firmar: en el primer mensaje de un
+    // usuario authKeyRecord devolvía null y la firma se hacía con la semilla
+    // de la LLAVE MAESTRA (y la caché de pares quedaba poblada con esa
+    // semilla, sin invalidarse jamás). Orden seguro: clave primero, firma
+    // después.
+    const rec = ensureAuthKey(message.fromId);
     const signature = messageCrypto.signMessage(message, row);
     message.signature = signature.signature;
     message.signingPublicKey = signature.signingPublicKey;
     message.cryptoGroupId = row.crypto_group_id || '';
     message.signatureValid = true;
-    // Cifrado en la nube (MTProto 2.0): clave propia del autor, clave de
-    // mensaje derivada según MTProto, cabecera interna (sal, sesión, msg_id,
-    // seq_no) y relleno aleatorio. El contexto del mensaje va ligado como
-    // dato autenticado, para que una fila movida de chat no siga valida.
-    const rec = rotateSaltIfNeeded(message.fromId, ensureAuthKey(message.fromId));
-    const msgId = mtproto.nextMsgId(rec.lastMsgId);
-    rec.lastMsgId = msgId;
-    try { Stmt.updateAuthKeyMsgId.run(msgId, Date.now(), message.fromId); } catch { }
+    // Cifrado del contenido: AES-256-GCM con la auth_key del autor y el
+    // contexto del mensaje (chat, autor, tipo, marca) como dato autenticado,
+    // para que una fila movida de chat no siga siendo valida.
     const body = JSON.stringify(messageBody(message));
-    const encrypted = mtproto.encrypt(rec.key, body, {
-        salt: rec.salt, sessionId: rec.sessionId, msgId, seqNo: 0
-    }, messageContextBytes(row));
+    const encrypted = mtproto.encrypt(rec.key, body, messageContextBytes(row));
     return {
         data: encrypted.blob,
         cryptoVersion: 3,
@@ -70,35 +73,25 @@ function updateStoredMessage(message, row) {
 
 function rowToMessage(row) {
     if (!row) return null;
-    // Tres formatos posibles: PCE3 (MTProto 2.0, con la clave del autor),
-    // PCE2 (AES-GCM con la llave maestra y contexto ligado) y PCE1 (AES-GCM
-    // con la llave maestra, sin contexto).
-    const isV3 = typeof row.data === 'string' && row.data.startsWith('PCE3:');
-    const hasV2Ciphertext = typeof row.data === 'string' && row.data.startsWith('PCE2:');
-    if (isV3 ? row.crypto_version < 3 : (row.crypto_version >= 2) !== hasV2Ciphertext) {
-        console.error(`[crypto] Versión de cifrado inconsistente para el mensaje ${row.id}.`);
+    // Un solo formato: PCE3 (AES-256-GCM con la auth_key del autor, AAD que
+    // ata el contexto). Las bases que no hablan PCE3 no son compatibles: el
+    // arranque exige un esquema nuevo (tests + guards en database.js).
+    if (!(typeof row.data === 'string' && row.data.startsWith('PCE3:')) || row.crypto_version !== 3) {
+        console.error(`[crypto] Versión de cifrado no soportada para el mensaje ${row.id} (se espera PCE3/crypto_version=3).`);
         return null;
     }
     let plain;
-    if (isV3) {
-        const rec = authKeyRecord(row.from_id);
-        if (!rec) {
-            console.error(`[crypto] No se encontró la auth_key del autor del mensaje ${row.id}.`);
-            return null;
-        }
-        const out = mtproto.decrypt(rec.key, row.data, messageContextBytes(row));
-        if (!out) {
-            console.error(`[crypto] No se pudo descifrar el mensaje ${row.id}.`);
-            return null;
-        }
-        plain = out.body.toString('utf8');
-    } else {
-        try { plain = messageCrypto.decryptMessage(row.data, row); }
-        catch (error) {
-            console.error(`[crypto] No se pudo autenticar el mensaje ${row.id}:`, error.message);
-            return null;
-        }
+    const rec = authKeyRecord(row.from_id);
+    if (!rec) {
+        console.error(`[crypto] No se encontró la auth_key del autor del mensaje ${row.id}.`);
+        return null;
     }
+    const out = mtproto.decrypt(rec.key, row.data, messageContextBytes(row));
+    if (!out) {
+        console.error(`[crypto] No se pudo descifrar el mensaje ${row.id}.`);
+        return null;
+    }
+    plain = out.body.toString('utf8');
     if (plain === null) return null;
     let body;
     try { body = decryptLegacyMessageFields(JSON.parse(plain), decryptAtRest); } catch { return null; }
@@ -213,6 +206,18 @@ function readMessagePage(chat, { beforeId, limit } = {}) {
     return { messages: enrichReplies(messages), more };
 }
 
+/* ¿Cuáles de los mensajes de esta página tiene ocultos el usuario? Consulta
+   SOLO los ids de la página (≤200): materializar los borrados completos del
+   usuario en cada lectura era O(n) acumulable con el uso del chat. La cláusula
+   IN lleva placeholders y los ids viajan como parámetros (nunca interpolados). */
+function userDeletionIdsFor(viewerId, ids) {
+    if (!ids.length) return [];
+    const placeholders = ids.map(() => '?').join(',');
+    return db.prepare(
+        `SELECT message_id FROM message_deletions WHERE user_id = ? AND message_id IN (${placeholders})`
+    ).all(viewerId, ...ids).map(r => r.message_id);
+}
+
 /* Borrados con alcance por usuario: el filtro se aplica al SERVIR la página,
    no al leerla, porque la caché de páginas de chat es compartida por los dos
    interlocutores de un DM (filtrar antes de cachear haría que uno viera los
@@ -220,9 +225,11 @@ function readMessagePage(chat, { beforeId, limit } = {}) {
 function filterForViewer(messages, viewerId, chatKey) {
     if (!viewerId) return messages;
     if (Stmt.chatDeletedFor.get(chatKey, viewerId)) return [];
-    const rows = Stmt.listUserMessageDeletions.all(viewerId);
-    if (!rows.length) return messages;
-    const hidden = new Set(rows.map(r => r.message_id));
+    const hidden = new Set(userDeletionIdsFor(
+        viewerId,
+        messages.filter(m => m && typeof m.id === 'string').map(m => m.id)
+    ));
+    if (!hidden.size) return messages;
     return messages.filter(m => !hidden.has(m.id));
 }
 

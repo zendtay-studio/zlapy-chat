@@ -24,12 +24,26 @@ const storyViewLimiter = createMessageRateLimiter(60, 60 * 1000);
 const contactLimiter = createMessageRateLimiter(20, 60 * 1000);
 // Creación de grupos: escribe fila de grupo, miembros y ajustes de política.
 const groupCreateLimiter = createMessageRateLimiter(10, 60 * 1000);
+/* Ofertas de llamada por WS: cada una escribe dos filas en la base y, si el
+   destinatario está offline, lanza una petición push externa. Sin cota, una
+   sola cuenta podía multiplicar las ofertas reabriendo conexiones (hasta ~8
+   conexiones × 200 fps) y saturar SQLite y el servicio de push. */
+const callOfferLimiter = createMessageRateLimiter(5, 60 * 1000);
+/* Preferencias de chat: un solo POST acepta hasta 200 destinos y resuelve
+   cada grupo contra la base (o la caché); sin cota era un generador de
+   SELECTs barato para cualquier cuenta. */
+const chatPrefsLimiter = createMessageRateLimiter(20, 60 * 1000);
+/* Verificaciones de contraseña (cambiar identidad/contraseña y borrar la
+   cuenta): cada intento ejecuta un scrypt completo (~64 ms de CPU). La rollback
+   de sesión no basta —una pestaña abierta o una cookie robada pasaban— y sin
+   cota el endpoint era un DoS de proceso barato. */
+const passwordCheckLimiter = createMessageRateLimiter(5, 60 * 1000);
 setInterval(() => messageRateLimiter.prune(), MESSAGE_LIMITS.messageWindowMs).unref();
-setInterval(() => { giphyLimiter.prune(); profileLimiter.prune(); storyLimiter.prune(); storyViewLimiter.prune(); contactLimiter.prune(); groupCreateLimiter.prune(); }, 60 * 1000).unref();
+setInterval(() => { giphyLimiter.prune(); profileLimiter.prune(); storyLimiter.prune(); storyViewLimiter.prune(); contactLimiter.prune(); groupCreateLimiter.prune(); callOfferLimiter.prune(); chatPrefsLimiter.prune(); passwordCheckLimiter.prune(); }, 60 * 1000).unref();
 /* Limpieza perezosa de los contadores de acceso y registro: las entradas cuya
-   ventana ya venció no significan nada y ocupan memoria. El barrido no toca el
-   contador global mientras su ventana siga viva (es el que frena la rotación
-   de direcciones, así que no debe poder borrarse desde fuera). */
+   ventana ya venció no significan nada y ocupan memoria. Incluye el freno por
+   IP (`brk:...`) con su enfriamiento corto y el contador por cuenta e IP
+   (los legítimos se limpian al acertar el login). */
 setInterval(() => {
     const now = Date.now();
     for (const [key, entry] of loginAttempts) {
@@ -57,4 +71,7 @@ module.exports = {
     storyViewLimiter,
     contactLimiter,
     groupCreateLimiter,
+    callOfferLimiter,
+    chatPrefsLimiter,
+    passwordCheckLimiter,
 };

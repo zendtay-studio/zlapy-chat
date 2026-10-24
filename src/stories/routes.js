@@ -59,6 +59,8 @@ function postStory(req, res, url, data, actor) {
     if (bytesHistoria > 0 && !blobQuotaOk(req.authUser.id, bytesHistoria))
         return json(res, 413, { error: 'Has alcanzado el límite de almacenamiento de adjuntos.' });
     if (s.hash && data.data && !storeBlob(s.hash, data.data)) return json(res, 400, { error: 'Archivo inválido.' });
+    // El espacio acaba de crecer: fuera de la caché de cuota.
+    invalidateBlobQuota(req.authUser.id);
     const fromUser = byName(s.from);
     if (fromUser) {
         const storyId = `story:${fromUser.id}:${s.ts}`;
@@ -81,14 +83,16 @@ function postStory(req, res, url, data, actor) {
 function postStoryLike(req, res, url, data, actor) {
     /* Ver o marcar "me gusta" consulta la fila completa de la historia y, si
        cambia algo, la reescribe entera. Con historias grandes eso es caro, así
-       que lleva su propio freno por cuenta. */
+       que lleva su propio freno por cuenta. softFail va PRIMERO: declararlo
+       después del freno lanzaba un ReferenceError (TDZ) justo cuando el limiter
+       cortaba la ráfaga, y el 429/200 correcto se convertía en un 500. */
+    const softFail = url.pathname === '/story/like' || url.pathname === '/story/view';
     if (!storyViewLimiter.consume(req.authUser.id).allowed)
         return softFail ? json(res, 200, { ok: false }) : json(res, 429, { error: 'Demasiadas consultas de historias. Espera un momento.' });
     const row = Stmt.getStory.get(accountId(data.from), data.ts);
     // Respuesta uniforme en like/view: el 404 distinguiría "no
     // existe" de "no me la dejan ver" y serviría de oráculo de
     // existencia de historias ajenas.
-    const softFail = url.pathname === '/story/like' || url.pathname === '/story/view';
     if (!row && url.pathname !== '/story/delete')
         return softFail ? json(res, 200, { ok: false }) : json(res, 404, { ok: false });
     const inMemory = stories.find(s => s.from === data.from && s.ts === data.ts);

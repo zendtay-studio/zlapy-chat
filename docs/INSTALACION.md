@@ -236,8 +236,9 @@ npm start
 > macOS y Windows); en Android no existe ninguno y hay que compilar.
 
 El `.env` y la llave maestra **se crean solos** en la primera ejecución
-(el `.env` a partir de `.env.example` y la llave en `.zlapymasterkey`), así
-que no hace falta ningún paso de configuración manual.
+(el `.env` a partir de `.env.example`, y la llave maestra escrita en su
+línea `CHAT_MASTER_KEY`), así que no hace falta ningún paso de configuración
+manual.
 
 Compilar `better-sqlite3` en un móvil ARM tarda varios minutos: no cierres la
 terminal y deja el teléfono enchufado (evita que Android mate el proceso).
@@ -371,7 +372,7 @@ reiniciar el servidor.**
 | --- | ---: | --- | --- |
 | `PORT` | `3000` | Puerto TCP donde escucha el servidor (http **y** https en el mismo puerto) | 1–65535 |
 | `DATA_DIR` | `data` | Carpeta de `zlapy.db` y `blob.db`. Vacío = `data/` dentro del proyecto | Ruta (relativa al CWD) |
-| `CHAT_MASTER_KEY` | *(vacío)* | Clave maestra Base64 de exactamente 32 bytes. Vacío = usar el fichero `.zlapymasterkey` | Base64 de 32 bytes |
+| `CHAT_MASTER_KEY` | *(vacío)* | Clave maestra Base64 de exactamente 32 bytes. Vacía = el servidor la genera en el primer arranque (base sin datos) y la guarda en esta línea | Base64 de 32 bytes |
 | `MESSAGE_DIRECT_CHAR_LIMIT` | `10000` | Máx. caracteres por mensaje directo | 1–1 000 000 |
 | `MESSAGE_GROUP_CHAR_LIMIT` | `15000` | Máx. caracteres por mensaje de grupo | 1–1 000 000 |
 | `STORY_TEXT_CHAR_LIMIT` | `140` | Máx. caracteres del texto de una historia | 1–100 000 |
@@ -420,14 +421,13 @@ tenerla:
 
 | Forma | Dónde vive | Cuándo usarla |
 | --- | --- | --- |
-| Fichero `.zlapymasterkey` | Raíz del proyecto, modo `0600` | Por defecto. **Se genera solo** en el primer arranque si no hay base de datos |
-| `CHAT_MASTER_KEY` en `.env` | Variable de entorno, base64 de 32 bytes | Cuando la llave debe vivir fuera del proyecto (contenedores, gestores de secretos) |
+| `CHAT_MASTER_KEY` en `.env` | Línea del `.env`, base64 de 32 bytes, modo `600` | Única ubicación. **Se genera sola** en el primer arranque si la base no tiene cuentas. Para gestores de agentes externos: exporta la variable o inyecta el `.env` |
 
 Generar la llave en el `.env` (no se muestra por pantalla):
 
 ```bash
 npm run key                 # genera una clave nueva (falla si ya hay una)
-npm run key -- --force      # reemplaza la existente (o -f)
+npm run key -- --force      # gírala: re-cifra el almacenamiento si la base ya tiene datos (o -f)
 npm run key -- --null       # vacía CHAT_MASTER_KEY en el .env (o -n)
 ```
 
@@ -438,17 +438,21 @@ Notas verificadas:
   o dos, falla con `Expected exactly one CHAT_MASTER_KEY assignment in ...`.
 - En la **primera instalación** no hace falta ejecutar `npm run key`: el
   servidor crea el `.env` (a partir de `.env.example`, modo `600`) y genera la
-  llave maestra en `.zlapymasterkey` (modo `600`) si la base de datos está
-  vacía.
-- Con `--force` se **reemplaza** la clave: los datos cifrados con la anterior
-  quedan **irrecuperables**. El propio script avisa de ello.
-- Si `.zlapymasterkey` **falta y ya hay una base con datos**, el arranque
+  llave maestra en la línea `CHAT_MASTER_KEY` del `.env` (modo `600`) si la
+  base de datos está vacía.
+- Con `--force` se **gira** la clave. Si la base ya tiene material que
+  depende de la maestra (`ops/reencrypt-master.js`), el comando **verifica**
+  que la clave vigente descifra todo (auth_key de usuarios, material E2E de
+  grupos, VAPID y adjuntos), copia el `.env` en `.env.master-bak` y
+  **re-cifra cada dependencia con la nueva** en transacciones SQLite:
+  no se pierde nada. Si algo falla, la reversión compensada devuelve todo
+  al estado previo. El único hueco: un corte de luz/SIGKILL justo a mitad
+  depende del respaldo `.env.master-bak` (dura milisegundos; no interrumpas
+  el proceso a mano).
+- Si `CHAT_MASTER_KEY` **falta y ya hay una base con datos**, el arranque
   **aborta** con un error claro en vez de regenerarla en silencio
   (`src/crypto/master-key.js`). Es a propósito: una llave nueva haría
   ilegibles todos los mensajes, historias y adjuntos.
-- Si `.zlapymasterkey` existe y el `.env` trae **otra** clave, `npm run key`
-  se niega a generar una nueva (el `.env` tiene prioridad y los datos quedarían
-  inaccesibles): hay que usar `--force` asumiendo el riesgo.
 - Si defines `CHAT_MASTER_KEY`, el valor debe codificar **exactamente 32 bytes**
   en base64; si no, el arranque falla con
   `CHAT_MASTER_KEY must encode exactly 32 bytes`.
@@ -458,7 +462,6 @@ Notas verificadas:
 ```bash
 chmod 600 .env            # contiene la llave maestra
 chmod 700 data            # bases + adjuntos
-chmod 600 .zlapymasterkey # la genera el servidor con 0600
 ```
 
 ---
@@ -623,7 +626,8 @@ Notas:
   de Zlapy no lee `NODE_ENV`**: no cambia ningún comportamiento. No lo uses
   como si activara un "modo producción".
 - El usuario de servicio necesita **escritura** en el directorio del proyecto
-  (`data/`, `.zlapy.pid`) y lectura de `.env` y `.zlapymasterkey`.
+  (`data/`, `.zlapy.pid`) y lectura del `.env` (que contiene la llave
+  maestra).
 - El supervisor escribe el PID del hijo en `/opt/zlapy-chat/.zlapy.pid`.
 
 ### 5.2 pm2
@@ -828,12 +832,12 @@ Qué hace (`ops/backup.js`):
 | --- | --- |
 | Copia `zlapy.db` | Con la API `backup()` de SQLite: **consistente aunque el servidor esté corriendo y con WAL activo** |
 | Copia `blob.db` | Igual (adjuntos deduplicados por hash) |
-| Copia `.zlapymasterkey` | Solo si la llave viene del fichero. Si viene de `CHAT_MASTER_KEY`, avisa de que **guardes tú una copia de esa clave** |
+| Llave maestra | Vive en el `.env` (`CHAT_MASTER_KEY`): el respaldo avisa de que **copies tú ese fichero** (o al menos esa línea) |
 | Permisos | Directorio `0700`, ficheros `0600` (contienen usuarios, sesiones, hashes y mensajes cifrados) |
 | Destino ocupado | Si la carpeta existe y **no está vacía**, aborta: no sobrescribe nada |
 
-La llave maestra y las bases **siempre van juntas**: sin `.zlapymasterkey` (o
-sin `CHAT_MASTER_KEY`), los mensajes, historias y adjuntos del respaldo son
+La llave maestra y las bases **siempre van juntas**: sin `CHAT_MASTER_KEY`
+(la línea del `.env`), los mensajes, historias y adjuntos del respaldo son
 **irrecuperables**. Guarda el respaldo **fuera** del disco de la aplicación
 (por ejemplo, en `/sdcard`, en un disco externo o en otro equipo).
 
@@ -859,20 +863,18 @@ sin `CHAT_MASTER_KEY`), los mensajes, historias y adjuntos del respaldo son
    ```bash
    rm -f data/zlapy.db-wal data/zlapy.db-shm data/blob.db-wal data/blob.db-shm
    ```
-3. **Copia la llave maestra** a la raíz del proyecto:
+3. **Restaura la llave maestra** en el `.env` (única ubicación):
    ```bash
-   cp backups/zlapy-backup-<fecha>/.zlapymasterkey ./.zlapymasterkey
-   chmod 600 .zlapymasterkey
+   # edita .env y pon en CHAT_MASTER_KEY= la clave que guardaste con el respaldo
+   chmod 600 .env
    ```
-   O bien define `CHAT_MASTER_KEY` en el `.env` con la clave del respaldo (en
-   ese caso no hace falta el fichero).
 4. **Arranca y comprueba**:
    ```bash
    npm start
    curl http://localhost:3000/healthz     # → {"ok":true,"schema":3,...}
    ```
-   Si el arranque falla con `Falta .../.zlapymasterkey (o CHAT_MASTER_KEY) y ya
-   existe una base de datos con datos`, es que el paso 3 no se hizo bien.
+   Si el arranque falla con `No hay CHAT_MASTER_KEY en el .env y la base de
+   datos ya contiene datos`, es que el paso 3 no se hizo bien.
 
 ---
 
@@ -934,7 +936,7 @@ registro antes de tocarlo.
 | `CAÍDA EN CALIENTE (code=…, uptime=…) … El servicio no se queda apagado.` | El servidor ya servía y se ha caído. El supervisor reinicia **siempre** con el backoff topado y avisa a partir de 5 caídas | Mira el error del hijo (el supervisor reenvía su stdout/stderr tal cual). Suele ser un `uncaughtException` o una base inaccesible |
 | `salud fallida x3 (el health check no responde); reiniciando pid …` | El proceso está **vivo pero colgado**: no devuelve un 2xx en `/healthz` | Comprueba a mano `curl http://localhost:3000/healthz`; si el puerto del `.env` no es el real, ajusta `SUPERVISOR_HEALTH_PORT` (el supervisor lo corrige solo con el banner, pero solo si el hijo llega a imprimirlo) |
 | `Cannot open database because the directory does not exist` | La carpeta de datos no existe: SQLite **no crea directorios** | `mkdir -p data` (o `mkdir -p "$DATA_DIR"`); el directorio debe existir **antes** de arrancar |
-| `Falta /ruta/zlapy-chat/.zlapymasterkey (o CHAT_MASTER_KEY) y ya existe una base de datos con datos.` | La llave maestra no está donde el servidor la busca, pero la base sí tiene datos (`src/crypto/master-key.js`) | **Restaura `.zlapymasterkey` desde tu respaldo** (no generes una nueva: dejaría ilegibles todos los datos cifrados) o define `CHAT_MASTER_KEY` |
+| `No hay CHAT_MASTER_KEY en el .env y la base de datos ya contiene datos.` | La llave maestra no está en el `.env`, pero la base sí tiene datos (`src/crypto/master-key.js`) | **Pega la clave del respaldo en el `.env` (CHAT_MASTER_KEY=...)** (no generes una nueva: dejaría ilegibles todos los datos cifrados) |
 | `Formato de cifrado de la base no compatible (crypto_version=N)` / `Database crypto version is incompatible with this server.` | La base es de una versión anterior del formato de cifrado. **No hay migraciones** | Restaura la base desde `backups/` o arranca con una base nueva (mueve `data/` a otra parte) |
 | `Database schema is incompatible: messages.<columna> is missing.` | La base no tiene el esquema v3 | Igual que arriba: restaurar o empezar de cero |
 | `No se encuentra el binario nativo de better-sqlite3 para android-arm64` (o `linux-x64`, …) | El `postinstall` del proyecto comprueba que exista el binario nativo y no lo encuentra | En Linux/macOS/Windows con arquitectura soportada: `npm install` descarga el prebuild; si falla, instala el toolchain (python3, make, g++) y compila (ver §2.1). **En Termux hay que compilar** (ver §2.2) |
@@ -1032,7 +1034,7 @@ Riesgos y precauciones:
 | La instancia queda accesible desde internet | Restringe el acceso en el panel de Cloudflare (`Access` / WAF / reglas de IP) |
 | Sin E2E, quien entre ve los mensajes | No lo publiques en una red no confiable; activa HTTPS con un certificado válido (no autofirmado) |
 | Fuerza bruta de contraseñas | El servidor ya bloquea por cuenta e IP, pero no publiques a ciegas: pon HTTPS y reglas de acceso |
-| El túnel **no** protege los datos en reposo | Sigue haciendo falta `npm run backup` y guardar el `.zlapymasterkey` fuera del servidor |
+| El túnel **no** protege los datos en reposo | Sigue haciendo falta `npm run backup` y guardar una copia del `.env` (o de su línea `CHAT_MASTER_KEY`) fuera del servidor |
 
 ---
 
@@ -1045,7 +1047,7 @@ Riesgos y precauciones:
 | `npm start` | Arranca el servidor **con supervisor** (`ops/supervisor.js`) |
 | `node server.js` | Arranca el servidor **sin supervisor** (depuración) |
 | `npm test` | Suite completa (`node --test test/*.test.js`) |
-| `npm run backup [-- dir]` | Respaldo consistente de `zlapy.db`, `blob.db` y `.zlapymasterkey` |
+| `npm run backup [-- dir]` | Respaldo consistente de `zlapy.db` y `blob.db` (la llave va en el `.env`: cópialo aparte) |
 | `npm run key [-- --force\|--null]` | Genera o vacía `CHAT_MASTER_KEY` en el `.env` |
 | `npm run tunnel` | Túnel de Cloudflare (`cloudflared` + `zty.yml` + token en el `.env`) |
 | `npm run termux` | Actualiza paquetes, instala el toolchain y arranca (en Termux) |
@@ -1054,7 +1056,6 @@ Riesgos y precauciones:
 | Ruta | Contenido |
 | --- | --- |
 | `.env` | Configuración (plantilla: `.env.example`). **No se sube al repo** |
-| `.zlapymasterkey` | Llave maestra de 32 bytes, modo `0600`. **No se sube al repo** |
 | `cert.pem`, `key.pem` | Certificado HTTPS autofirmado. **No se sube al repo** |
 | `data/` | `zlapy.db` (datos) y `blob.db` (adjuntos). **No se sube al repo** |
 | `backups/` | Respaldos manuales. **No se sube al repo** |

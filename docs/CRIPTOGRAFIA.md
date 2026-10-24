@@ -85,39 +85,47 @@ src/crypto/setup.js          → instancia única y re-exportaciones
 
 ```
   ┌─ CONFIG.chatMasterKey no vacío?  ── sí ──►  base64 → debe decodificar EXACTAMENTE 32 bytes
-  │                                                     (master-key.js:20-24)
   │                                                     si no → throw
   ↓ no
-  ├─ ¿existe .zlapymasterkey?  ── sí ──►  readFileSync → debe medir EXACTAMENTE 32 bytes
-  │                                          (master-key.js:33-38)
-  │                                          si no → throw
-  │                                          + chmod 0600 (master-key.js:36)
-  ↓ no
-  ├─ ¿existe data/zlapy.db o data/blob.db?  ── sí ──►  THROW  ← fail-fast
-  │                                                        (master-key.js:29-32)
-  ↓ no
-  └─ genera 32 bytes aleatorios y escribe el fichero con mode 0600, flag 'wx'
-     (master-key.js:39-42) + chmod 0600 (master-key.js:41)
+  ├─ ¿la base de datos tiene cuentas?  ── sí ──►  THROW  ← fail-fast
+  │
+  ↓ no (instalación nueva)
+  └─ genera 32 bytes aleatorios (crypto.randomBytes, CSPRNG) y los escribe en
+     el propio `.env` (línea CHAT_MASTER_KEY=) con escritura atómica
+     (temporal 0600 + rename, con verificación post-escritura: si otro
+     arrancador compitió y escribió el suyo antes, se ADOPTA la del ganador).
+     [`src/crypto/master-key.js`, `ops/generate-master-key.js`]
 ```
 
-- **Ruta del fichero**: `path.join(ROOT, '.zlapymasterkey')` (`master-key.js:18`).
-- **Formato del fichero**: **32 bytes binarios crudos**. No es hex ni base64.
-  `fs.readFileSync` devuelve un `Buffer` y se exige `key.length === 32`
-  (`master-key.js:35`).
-- **Formato de la variable de entorno**: `CHAT_MASTER_KEY` es **base64** de 32
-  bytes (`master-key.js:21-22`, `src/config.js:63`). La variable tiene
-  prioridad sobre el fichero.
-- El fichero se escribe con `flag: 'wx'` (falla si ya existe) y modo `0600`,
-  con un `chmod` explícito posterior porque `writeFileSync` sólo aplica `mode`
-  al crear el fichero (`ops/generate-master-key.js:20-30`).
+- **Única ubicación de la llave**: `CHAT_MASTER_KEY` en el `.env` (permisos
+  `600`, escritura atómica). **No hay fichero aparte** (el viejo
+  `.zlapymasterkey` quedó eliminado): un solo lugar del que el respaldo copia la clave.
+- **Formato de la variable de entorno**: `CHAT_MASTER_KEY` es **base64** de
+  32 bytes (`src/config.js`). El parseo directo del `.env` usa `[ \t]*`
+  (nunca `\s*`: en JS ese `\s` cruza saltos de línea).
+- `npm run key` mantiene/reescribe la misma línea con las mismas garantías.
+- **Rotación con datos** (`npm run key -- --force` sobre una base con
+  cuentas): ya no es destructiva. El motor
+  [`ops/reencrypt-master.js`](../ops/reencrypt-master.js) verifica que la
+  llave del `.env` descifra TODOS los sobres dependientes de la maestra
+  (`user_auth_keys.auth_key`, `groups.keys_cipher`, `meta` VAPID y los
+  adjuntos de `blob.db`), guarda una copia del `.env` en
+  `.env.master-bak` [†], entra la llave nueva y re-cifra cada base en una
+  transacción SQLite. Falla el paso cualquiera → reversión compensada con
+  los valores originales, estado intacto. Las claves de usuario y el
+  contenido de los mensajes NO dependen de la maestra: no se re-cifran y no
+  hace falta.
+  [†] ventana residual: un SIGKILL/corte de luz A MITAD de los pocos
+  milisegundos de trabajo deja un estado mixto; la copia `.env.master-bak`
+  permite restaurar el arranque previo (y las bases, del backup).
 
 ### 2.2 La regla de arranque abortado
 
-`src/crypto/master-key.js:26-32`:
+`src/crypto/master-key.js`:
 
 ```js
-if (!keyFileExists && (fs.existsSync(DB_PATH) || fs.existsSync(BLOB_DB_PATH)))
-    throw new Error(`Falta ${MASTER_KEY_PATH} (o CHAT_MASTER_KEY) y ya existe una base de datos con datos. ` +
+if (baseDeDatosConDatos())
+    throw new Error(`No hay CHAT_MASTER_KEY en el .env y la base de datos ya contiene datos. ` +
         'Restaura la llave maestra desde tu respaldo antes de arrancar: una llave nueva haría ' +
         'ilegibles todos los mensajes, historias y adjuntos cifrados con la anterior.');
 ```
@@ -1137,7 +1145,7 @@ Dado el proceso del servidor, un atacante con:
 
 - la `auth_key` en memoria o en la base (esta última, cifrada con la llave
   maestra) **y**
-- la llave maestra (fichero `.zlapymasterkey` o `CHAT_MASTER_KEY`)
+- la llave maestra (`CHAT_MASTER_KEY` del `.env`)
 
 …descifra **todos** los mensajes, resúmenes, notas, perfiles, llamadas,
 historias y suscripciones push. Y con la llave maestra sola también puede
@@ -1187,7 +1195,7 @@ Script: `ops/migrate-to-mtproto.js`.
        · chmod 0600 de los ficheros copiados
 
   2. Cargar la llave maestra (misma lógica que el servidor)  [:47-58]
-       · CHAT_MASTER_KEY (base64) o .zlapymasterkey (32 bytes crudos)
+       · CHAT_MASTER_KEY (base64) del .env
        · si falta → throw: "sin la llave maestra no se puede leer el contenido antiguo"
 
   3. Crear messageCrypto y userAuthKeys con la MISMA implementación
@@ -1307,7 +1315,7 @@ Motivos operativos de que sea manual:
 | **Derivación de la firma desde la `auth_key` del usuario** | Que la llave maestra permita suplantar a cualquier usuario | `src/crypto/setup.js:18-27` |
 | **PCE1 (AES-256-GCM) para adjuntos, grupos y VAPID** | Lectura del contenido sensible por quien tenga sólo la base | `src/chat/media.js:28`, `src/groups/store.js:112`, `src/push/vapid.js:31` |
 | **Fail-fast de la llave maestra** | Arrancar con una llave nueva que dejaría ilegible todo el histórico | `src/crypto/master-key.js:29-32` |
-| **`.zlapymasterkey` en modo 0600** | Lectura de la llave por otros usuarios del sistema | `src/crypto/master-key.js:36,40-41` |
+| **`.env` con la llave en modo 0600** | Lectura de la llave por otros usuarios del sistema | `ops/generate-master-key.js` (escritura atómica + chmod) |
 | **Compatibilidad de lectura (`decryptAtRest` devuelve el texto tal cual)** | Perder contenido legacy al migrar | `src/crypto/message-crypto.js:35` |
 | **Regeneración de clave con re-cifrado** | Perder el historial al rotar la clave del usuario | `src/users/store.js:194-297` |
 | **Verificación de ida y vuelta en la migración** | Escribir un mensaje que luego no se puede releer | `ops/migrate-to-mtproto.js:134-136` |

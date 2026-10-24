@@ -16,6 +16,25 @@ const { validPushEndpoint } = require('../shared/validation.js');
 const { pushSubs } = require('../state.js');
 const { parseJsonSafe } = require('../users/helpers.js');
 
+/* Una suscripción se normaliza a sus campos reales: endpoint + las dos claves
+   que exige el cifrado de push web (p256dh de 65 bytes y auth de 16 bytes).
+   Sin este filtro, el campo `data` aceptaba ~32 MB arbitrarios por petición
+   (se cifraban, se escribían, se leían y se descifraban: DoS barato con una
+   sola cuenta) y `pushTo` fallaría siempre con claves malformadas. */
+function normalizePushSub(sub) {
+    if (!sub || typeof sub !== 'object' || Array.isArray(sub)) return null;
+    const keys = sub.keys && typeof sub.keys === 'object' && !Array.isArray(sub.keys) ? sub.keys : null;
+    if (!keys) return null;
+    if (typeof keys.p256dh !== 'string' || typeof keys.auth !== 'string') return null;
+    const p256dh = Buffer.from(keys.p256dh, 'base64');
+    const auth = Buffer.from(keys.auth, 'base64');
+    // Clave pública del cliente: punto P-256 sin comprimir; auth: 16 bytes.
+    if (p256dh.length !== 65 || auth.length !== 16) return null;
+    const endpoint = typeof sub.endpoint === 'string' ? sub.endpoint : '';
+    if (!endpoint) return null;
+    return { endpoint, keys: { p256dh: keys.p256dh, auth: keys.auth } };
+}
+
 function postPushSubscribe(req, res, url, data, actor) {
     const id = req.authUser.id;
     // Anti-SSRF: el servidor solo hace POST a servicios de push
@@ -23,8 +42,10 @@ function postPushSubscribe(req, res, url, data, actor) {
     if (data.sub && data.sub.endpoint && !validPushEndpoint(data.sub.endpoint))
         return json(res, 400, { error: 'Endpoint de push no permitido.' });
     if (data.sub && data.sub.endpoint) {
+        const sub = normalizePushSub(data.sub);
+        if (!sub) return json(res, 400, { error: 'Suscripción de push inválida.' });
         // Las claves de push (p256dh/auth) se guardan cifradas en reposo.
-    Stmt.insertPushSub.run(id, data.sub.endpoint, encryptForUser(id, JSON.stringify(data.sub)));
+        Stmt.insertPushSub.run(id, sub.endpoint, encryptForUser(id, JSON.stringify(sub)));
         Stmt.trimPushSubs.run(id, id);
         const rows = db.prepare('SELECT data FROM push_subs WHERE user_id = ?').all(id);
         pushSubs.set(id, rows.map(r => parseJsonSafe(decryptForUser(id, r.data) || '')).filter(Boolean));
