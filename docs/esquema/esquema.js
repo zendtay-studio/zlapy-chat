@@ -1,13 +1,18 @@
 /* Esquema 2D de la base de datos de Zlapy (v3).
  *
- * Los datos están transcritos de src/db/schema.js (única fuente de verdad) y
- * los recuentos de filas son una instantánea de data/zlapy.db + data/blob.db
- * (tomada el 23 oct 2026, tras la tanda de seguridad).
- * Tras la ronda de remediación (23 oct 2026) el ESQUEMA SIGUE SIENDO v3: los
- * arreglos de la auditoría fueron de aplicación (límites, permisos, políticas
- * de grupo, anti-replay del canal), ninguno añadió tablas, columnas ni
- * índices. Las notas de algunas tablas mencionan topes que aplica el código
- * en tiempo de ejecución para que no se confundan con el DDL.
+ * Los datos estructurales (tablas, columnas, chips, índices y relaciones)
+ * están transcritos de src/db/schema.js (única fuente de verdad) y verificados
+ * contra la base real (PRAGMA table_info).
+ * Los recuentos de filas son una medición de data/zlapy.db + data/blob.db
+ * tomada el 24 oct 2026 sobre la instalación en curso, que arrancó con una
+ * base nueva: todo está a 0 salvo `meta` (3 filas). Como referencia
+ * histórica, durante la auditoría del 23 oct 2026 la misma base llegó a tener
+ * 17 cuentas, 306 sesiones, 430 mensajes, 9 grupos y 41 blobs.
+ * Tras la ronda de remediación (SECOA) el ESQUEMA SIGUE SIENDO v3: los
+ * arreglos fueron de aplicación (límites, permisos, políticas de grupo,
+ * anti-replay del canal), ninguno añadió tablas, columnas ni índices. Las
+ * notas de algunas tablas mencionan topes que aplica el código en tiempo de
+ * ejecución para que no se confundan con el DDL.
  * Las relaciones no declaradas como FK (chat codificado, nombres, hashes) se
  * dibujan aparte y se pueden ocultar con el interruptor "lógicas".
  */
@@ -49,7 +54,7 @@ const TABLES = [
     /* ============ A · perfil y preferencias ============ */
 
     {
-        name: 'user_profiles', db: 'zlapy', group: 'perfil', rows: 17, col: 0,
+        name: 'user_profiles', db: 'zlapy', group: 'perfil', rows: 0, col: 0,
         cols: [
             c('user_id', 'TEXT', 'pf'),
             c('display_name', 'TEXT', 'n', "DEFAULT ''"),
@@ -63,7 +68,7 @@ const TABLES = [
         idx: []
     },
     {
-        name: 'user_chat_settings', db: 'zlapy', group: 'perfil', rows: 10, col: 0,
+        name: 'user_chat_settings', db: 'zlapy', group: 'perfil', rows: 0, col: 0,
         cols: [
             c('user_id', 'TEXT', 'pf'),
             c('wall', 'TEXT'),
@@ -82,7 +87,7 @@ const TABLES = [
         idx: []
     },
     {
-        name: 'user_privacy', db: 'zlapy', group: 'perfil', rows: 119, col: 0,
+        name: 'user_privacy', db: 'zlapy', group: 'perfil', rows: 0, col: 0,
         cols: [
             c('user_id', 'TEXT', 'pnf'),
             c('feature', 'TEXT', 'pn', "CHECK foto|nota|descripcion|historias|llamadas|mensajes|compartir"),
@@ -117,7 +122,7 @@ const TABLES = [
         idx: []
     },
     {
-        name: 'user_stickers', db: 'zlapy', group: 'perfil', rows: 38, col: 0,
+        name: 'user_stickers', db: 'zlapy', group: 'perfil', rows: 0, col: 0,
         cols: [
             c('user_id', 'TEXT', 'pnf'),
             c('position', 'INTEGER', 'pn'),
@@ -127,7 +132,7 @@ const TABLES = [
         idx: []
     },
     {
-        name: 'user_muted_peers', db: 'zlapy', group: 'perfil', rows: 1, col: 0,
+        name: 'user_muted_peers', db: 'zlapy', group: 'perfil', rows: 0, col: 0,
         cols: [
             c('user_id', 'TEXT', 'pnf'),
             c('peer_id', 'TEXT', 'f', 'nullable · FK users'),
@@ -140,7 +145,7 @@ const TABLES = [
         idx: ['idx_ump_peer']
     },
     {
-        name: 'user_chat_prefs', db: 'zlapy', group: 'perfil', rows: 1, col: 0,
+        name: 'user_chat_prefs', db: 'zlapy', group: 'perfil', rows: 0, col: 0,
         cols: [
             c('user_id', 'TEXT', 'pnf'),
             c('peer_key', 'TEXT', 'pn', "'dm:<usuario>' | 'group:<id>' | 'saved'"),
@@ -156,7 +161,7 @@ const TABLES = [
     /* ============ B · identidad y grafo social ============ */
 
     {
-        name: 'users', db: 'zlapy', group: 'identidad', rows: 17, col: 1,
+        name: 'users', db: 'zlapy', group: 'identidad', rows: 0, col: 1,
         cols: [
             c('id', 'TEXT', 'p', 'UUID v4 en minúsculas'),
             c('username', 'TEXT', 'nu', 'UNIQUE · COLLATE NOCASE'),
@@ -170,7 +175,7 @@ const TABLES = [
         idx: []
     },
     {
-        name: 'sessions', db: 'zlapy', group: 'identidad', rows: 306, col: 1,
+        name: 'sessions', db: 'zlapy', group: 'identidad', rows: 0, col: 1,
         cols: [
             c('token_hash', 'TEXT', 'p'),
             c('user_id', 'TEXT', 'nf'),
@@ -181,7 +186,7 @@ const TABLES = [
         note: 'Tope de aplicación: 20 sesiones activas por cuenta (MAX_SESSIONS_PER_USER); al iniciar sesión las más antiguas se borran.'
     },
     {
-        name: 'user_auth_keys', db: 'zlapy', group: 'identidad', rows: 12, col: 1,
+        name: 'user_auth_keys', db: 'zlapy', group: 'identidad', rows: 0, col: 1,
         cols: [
             c('user_id', 'TEXT', 'pf'),
             c('auth_key', 'TEXT', 'n', '2048 bits · MTProto 2.0'),
@@ -206,7 +211,7 @@ const TABLES = [
         idx: []
     },
     {
-        name: 'summaries', db: 'zlapy', group: 'social', rows: 18, col: 1,
+        name: 'summaries', db: 'zlapy', group: 'social', rows: 0, col: 1,
         cols: [
             c('owner', 'TEXT', 'pnf'),
             c('peer', 'TEXT', 'pnf'),
@@ -221,7 +226,7 @@ const TABLES = [
         note: 'Resumen de cada chat 1:1, uno por sentido.'
     },
     {
-        name: 'contacts', db: 'zlapy', group: 'social', rows: 16, col: 1,
+        name: 'contacts', db: 'zlapy', group: 'social', rows: 0, col: 1,
         cols: [
             c('owner', 'TEXT', 'pnf'),
             c('contact', 'TEXT', 'pnf')
@@ -262,7 +267,7 @@ const TABLES = [
     /* ============ C · grupos ============ */
 
     {
-        name: 'groups', db: 'zlapy', group: 'grupos', rows: 9, col: 2,
+        name: 'groups', db: 'zlapy', group: 'grupos', rows: 0, col: 2,
         cols: [
             c('id', 'TEXT', 'p'),
             c('crypto_id', 'TEXT', 'n', 'identificador E2E del grupo'),
@@ -286,7 +291,7 @@ const TABLES = [
         note: 'El propietario es ON DELETE SET NULL: el grupo sobrevive a la cuenta.'
     },
     {
-        name: 'group_members', db: 'zlapy', group: 'grupos', rows: 15, col: 2,
+        name: 'group_members', db: 'zlapy', group: 'grupos', rows: 0, col: 2,
         cols: [
             c('gid', 'TEXT', 'pnf'),
             c('user_id', 'TEXT', 'pnf'),
@@ -300,7 +305,7 @@ const TABLES = [
         idx: ['idx_gm_user']
     },
     {
-        name: 'group_join_requests', db: 'zlapy', group: 'grupos', rows: 3, col: 2,
+        name: 'group_join_requests', db: 'zlapy', group: 'grupos', rows: 0, col: 2,
         cols: [
             c('gid', 'TEXT', 'pnf'),
             c('user_id', 'TEXT', 'pnf'),
@@ -314,7 +319,7 @@ const TABLES = [
         idx: ['idx_gjr_user']
     },
     {
-        name: 'group_summaries', db: 'zlapy', group: 'grupos', rows: 15, col: 2,
+        name: 'group_summaries', db: 'zlapy', group: 'grupos', rows: 0, col: 2,
         cols: [
             c('owner', 'TEXT', 'pnf'),
             c('gid', 'TEXT', 'pnf'),
@@ -328,7 +333,7 @@ const TABLES = [
         idx: ['idx_gs_gid']
     },
     {
-        name: 'user_group_seen', db: 'zlapy', group: 'grupos', rows: 6, col: 2,
+        name: 'user_group_seen', db: 'zlapy', group: 'grupos', rows: 0, col: 2,
         cols: [
             c('user_id', 'TEXT', 'pnf'),
             c('gid', 'TEXT', 'pnf'),
@@ -344,7 +349,7 @@ const TABLES = [
     /* ============ D · mensajería y adjuntos ============ */
 
     {
-        name: 'messages', db: 'zlapy', group: 'mensajeria', rows: 430, col: 3,
+        name: 'messages', db: 'zlapy', group: 'mensajeria', rows: 0, col: 3,
         cols: [
             c('id', 'TEXT', 'p'),
             c('chat', 'TEXT', 'n', "'chat:<a>__<b>' | 'group:<gid>' · sin FK"),
@@ -369,7 +374,7 @@ const TABLES = [
         note: 'El destino va codificado en `chat`; por eso no puede ser una FK. Los medios enviados EN LÍNEA (sin hash) están limitados a 256 KiB por la aplicación; el flujo normal sube blob y guarda el hash, que no cuenta para esa cota.'
     },
     {
-        name: 'message_deletions', db: 'zlapy', group: 'mensajeria', rows: 2, col: 3,
+        name: 'message_deletions', db: 'zlapy', group: 'mensajeria', rows: 0, col: 3,
         cols: [
             c('message_id', 'TEXT', 'pnf'),
             c('user_id', 'TEXT', 'pnf'),
@@ -383,7 +388,7 @@ const TABLES = [
         note: 'Borrado "para mí": el otro interlocutor conserva su copia.'
     },
     {
-        name: 'chat_deletions', db: 'zlapy', group: 'mensajeria', rows: 1, col: 3,
+        name: 'chat_deletions', db: 'zlapy', group: 'mensajeria', rows: 0, col: 3,
         cols: [
             c('chat', 'TEXT', 'pn'),
             c('user_id', 'TEXT', 'pnf'),
@@ -393,7 +398,7 @@ const TABLES = [
         idx: ['idx_cdel_user']
     },
     {
-        name: 'blob_access', db: 'zlapy', group: 'mensajeria', rows: 47, col: 3,
+        name: 'blob_access', db: 'zlapy', group: 'mensajeria', rows: 0, col: 3,
         cols: [
             c('hash', 'TEXT', 'pn', 'apunta a blobs.hash'),
             c('message_id', 'TEXT', 'pn', "id de mensaje o 'story:<user>:<ts>'"),
@@ -416,8 +421,8 @@ const TABLES = [
         name: 'blob_access_members', db: 'zlapy', group: 'mensajeria', rows: 0, col: 3,
         cols: [
             c('hash', 'TEXT', 'pn', 'apunta a blobs.hash'),
-            c('user_id', 'TEXT', 'pnf', 'miembro con acceso al publicarse'),
-            c('message_id', 'TEXT', 'nf', 'mensaje de grupo')
+            c('message_id', 'TEXT', 'nf', 'mensaje de grupo'),
+            c('user_id', 'TEXT', 'pnf', 'miembro con acceso al publicarse')
         ],
         refs: [
             r(['user_id'], 'users', ['id']),
@@ -427,7 +432,7 @@ const TABLES = [
         note: "Foto de los miembros del MOMENTO de publicar: entrar en un grupo público después no da acceso a los adjuntos anteriores (V-04). En bases v3 nació sin FK; el barrido periódico limpia las filas que pierden su mensaje."
     },
     {
-        name: 'stories', db: 'zlapy', group: 'mensajeria', rows: 3, col: 3,
+        name: 'stories', db: 'zlapy', group: 'mensajeria', rows: 0, col: 3,
         cols: [
             c('from_id', 'TEXT', 'pnf'),
             c('ts', 'INTEGER', 'pn'),
@@ -439,7 +444,7 @@ const TABLES = [
         note: 'Caducan por ts; deleteExpiredStories las purga. El medio publicado en línea (sin hash) tiene tope de 4 MB en la aplicación.'
     },
     {
-        name: 'calls', db: 'zlapy', group: 'mensajeria', rows: 27, col: 3,
+        name: 'calls', db: 'zlapy', group: 'mensajeria', rows: 0, col: 3,
         cols: [
             c('id', 'TEXT', 'p'),
             c('owner', 'TEXT', 'nf'),
@@ -451,7 +456,7 @@ const TABLES = [
         idx: ['idx_calls_owner_ts', 'idx_calls_peer']
     },
     {
-        name: 'push_subs', db: 'zlapy', group: 'mensajeria', rows: 2, col: 3,
+        name: 'push_subs', db: 'zlapy', group: 'mensajeria', rows: 0, col: 3,
         cols: [
             c('user_id', 'TEXT', 'pnf'),
             c('endpoint', 'TEXT', 'pn'),
@@ -465,9 +470,9 @@ const TABLES = [
     /* ============ E · infraestructura ============ */
 
     {
-        name: 'meta', db: 'zlapy', group: 'infra', rows: 4, col: 4,
+        name: 'meta', db: 'zlapy', group: 'infra', rows: 3, col: 4,
         cols: [
-            c('key', 'TEXT', 'p', 'crypto_version · migrated_at · schema_version · vapid'),
+            c('key', 'TEXT', 'p', 'crypto_version · schema_version · vapid'),
             c('value', 'TEXT')
         ],
         refs: [],
@@ -475,7 +480,7 @@ const TABLES = [
         note: 'Metadatos del servidor y guarda de compatibilidad del cifrado.'
     },
     {
-        name: 'blobs', db: 'blob', group: 'infra', rows: 41, col: 4,
+        name: 'blobs', db: 'blob', group: 'infra', rows: 0, col: 4,
         cols: [
             c('hash', 'TEXT', 'p', 'SHA-256 del contenido'),
             c('data', 'TEXT', 'n', 'AES-256-GCM')
