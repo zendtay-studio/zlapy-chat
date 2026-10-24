@@ -49,3 +49,28 @@ test('only resolves existing regular public files under the canonical public roo
         fs.rmSync(parent, { recursive: true, force: true });
     }
 });
+
+test('sirve las imágenes webp de la carpeta pública sin sesión', async () => {
+    /* Los iconos del manifiesto y el isotipo del acceso son .webp: sin esta
+       extensión en la lista pública, el navegador no lograba cargarlos antes
+       de iniciar sesión. */
+    const { startServer, stop } = require('./helpers.js');
+    const srv = await startServer();
+    try {
+        const icono = await fetch(`${srv.base}/image/icon-192-border.webp`);
+        assert.equal(icono.status, 200, 'el icono 192 debe servirse sin sesión');
+        assert.equal(icono.headers.get('content-type'), 'image/webp', 'el MIME del webp debe ser correcto');
+        assert.ok((await icono.arrayBuffer()).byteLength > 0);
+
+        const isotipo = await fetch(`${srv.base}/image/isotype-512-full.webp`);
+        assert.equal(isotipo.status, 200, 'el isotipo debe servirse sin sesión');
+
+        // El PNG viejo ya no existe.
+        assert.equal((await fetch(`${srv.base}/icon-192.png`)).status, 404);
+
+        // El manifiesto apunta a las rutas nuevas.
+        const manifest = await (await fetch(`${srv.base}/manifest.webmanifest`)).json();
+        assert.ok(manifest.icons.every(icono => icono.src.startsWith('/image/')),
+            'todos los iconos del manifiesto deben salir de /image/');
+    } finally { await stop(srv); }
+});

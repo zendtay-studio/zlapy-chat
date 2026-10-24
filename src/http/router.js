@@ -116,7 +116,7 @@ const handleRequest = (req, res) => {
     if (req.method === 'GET' && url.pathname === '/auth/session') return getAuthSession(req, res, url, data, actor);
     if (req.method === 'GET' && url.pathname === '/push/vapid') return json(res, 200, { publicKey: VAPID.publicKey });
 
-    const publicPage = req.method === 'GET' && (url.pathname === '/config' || url.pathname === '/' || ['.html', '.js', '.css', '.svg', '.png', '.webmanifest', '.json'].includes(path.extname(url.pathname).toLowerCase()));
+    const publicPage = req.method === 'GET' && (url.pathname === '/config' || url.pathname === '/' || ['.html', '.js', '.css', '.svg', '.png', '.webp', '.webmanifest', '.json'].includes(path.extname(url.pathname).toLowerCase()));
     const publicAuthPost = req.method === 'POST' && ['/auth/register', '/auth/login', '/auth/logout', '/auth/switch'].includes(url.pathname);
     const authUser = sessionUser(req);
     if (!authUser && !publicPage && !publicAuthPost) return json(res, 401, { error: 'authentication required' });

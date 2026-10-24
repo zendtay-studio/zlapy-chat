@@ -14,7 +14,7 @@ const { MESSAGE_LIMITS } = require('../shared/limits.js');
 // Tipos MIME de los ficheros estáticos
 const mimeMap = {
     '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
-    '.png': 'image/png', '.svg': 'image/svg+xml', '.json': 'application/json',
+    '.png': 'image/png', '.svg': 'image/svg+xml', '.webp': 'image/webp', '.json': 'application/json',
     '.webmanifest': 'application/manifest+json'
 };
 
