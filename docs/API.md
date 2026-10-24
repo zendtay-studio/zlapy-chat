@@ -44,7 +44,7 @@ if (!authUser && !publicPage && !publicAuthPost) return json(res, 401, { error: 
 ```
 
 - **Públicas**: `GET /config`, `GET /healthz`, `GET /auth/session`, `GET /push/vapid`, la SPA
-  estática (`/` y ficheros con extensión `.html .js .css .svg .png .webmanifest .json`) y
+  estática (`/` y ficheros con extensión `.html .js .css .svg .png .webp .webmanifest .json`) y
   `POST /auth/register`, `POST /auth/login`, `POST /auth/logout`, `POST /auth/switch`.
 - **Todo lo demás** requiere cookie de sesión válida (`401 authentication required`).
   `GET /avatar/<user>.svg` también la exige, para que no se puedan enumerar cuentas

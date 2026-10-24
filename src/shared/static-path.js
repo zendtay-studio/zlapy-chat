@@ -9,7 +9,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const PUBLIC_EXTENSIONS = new Set(['.html', '.js', '.css', '.png', '.svg', '.json', '.webmanifest']);
+const PUBLIC_EXTENSIONS = new Set(['.html', '.js', '.css', '.png', '.svg', '.webp', '.json', '.webmanifest']);
 const WINDOWS_DEVICE_NAME = /^(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])$/i;
 
 function decodeRequestPath(rawUrl) {

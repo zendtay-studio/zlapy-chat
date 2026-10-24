@@ -245,8 +245,11 @@ y `public/css/`; en la raíz de `public/` solo quedan las páginas y **dos
 | `public/sw.js` | 1 | **Shim** de compatibilidad: `importScripts('/js/sw.js')`. Los navegadores que ya registraron `/sw.js` siguen recibiendo actualizaciones a través de él. | Sin lógica propia. |
 | `public/transport-crypto.js` | 4 | **Shim** de compatibilidad: comenta que la ruta histórica sigue existiendo y hace `require('./js/transport-crypto.js')` para la suite de Node. | Se borrará cuando ningún test cargue la ruta antigua. |
 | `public/manifest.webmanifest` | 14 | Manifiesto PWA: nombre, `display: standalone`, colores e iconos. | — |
-| `public/icon-192.png` | binario | Icono 192×192. | — |
-| `public/icon-512.png` | binario | Icono 512×512 (también `maskable`). | — |
+| `public/image/icon-192-border.webp` | binario | Icono 192×192. | — |
+| `public/image/icon-512-border.webp` | binario | Icono 512×512 (también `maskable`). | — |
+| `public/image/icon-512-full.webp` | binario | Icono 512×512 sin borde. | — |
+| `public/image/isotype-308.webp` | binario | Isotipo 308×308. | — |
+| `public/image/isotype-512-full.webp` | binario | Isotipo 512×512 (el de la pantalla de acceso). | — |
 
 ---
 
