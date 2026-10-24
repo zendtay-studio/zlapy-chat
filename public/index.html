@@ -9279,11 +9279,11 @@
                             throw new Error(`La cuenta @${perdida ? perdida.username : ''} ya no existe en este servidor. Se quitó de la lista.`);
                         }
                         // La sesión guardada caducó, pero la cuenta puede seguir
-                        // existiendo: NO se quita de la lista; se vuelve a pedir la
-                        // contraseña y se reintenta el cambio.
+                        // existiendo: NO se quita de la lista ni se pide la
+                        // contraseña aquí. Se explica cómo volver a conectarla.
                         if (result.relogin) {
-                            await reloginLinkedAccount(accountId);
-                            return;
+                            const perdida = linkedAccounts().find(item => item.id === accountId);
+                            throw new Error(`La sesión guardada de @${perdida ? perdida.username : 'esa cuenta'} caducó en este dispositivo. Vuelve a agregarla con «Agregar cuenta» para cambiar a ella.`);
                         }
                         throw new Error(result.error || 'No se pudo cambiar de cuenta.');
                     }
@@ -9298,51 +9298,6 @@
                 } finally {
                     cambiosDeCuentaEnCurso.delete(accountId);
                 }
-            }
-            // La sesión guardada de una cuenta caducó (o el navegador perdió su
-            // cookie): la cuenta puede seguir existiendo en el servidor, así que
-            // se vuelve a pedir la contraseña y se reintenta el cambio. Si el
-            // alta falla, la cuenta sigue en la lista y se explica el motivo.
-            async function reloginLinkedAccount(accountId) {
-                const account = linkedAccounts().find(item => item.id === accountId);
-                const username = account ? account.username : '';
-                const values = await askAccountFields('Volver a iniciar sesión', [
-                    { name: 'username', label: 'Nombre de usuario', type: 'text', maxlength: 24, autocomplete: 'username', value: username },
-                    { name: 'password', label: 'Contraseña', type: 'password', maxlength: 128, autocomplete: 'current-password' }
-                ]);
-                if (!values || !values.username.trim() || !values.password) return;
-                const alta = await fetch('/auth/add-account', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ username: values.username.trim(), password: values.password, expectedAccountId: accountId })
-                });
-                const altaResult = await alta.json();
-                if (!alta.ok) throw new Error(altaResult.error || 'No se pudo volver a iniciar sesión.');
-                // Las credenciales tienen que ser de la cuenta seleccionada: si no,
-                // no se guarda nada de la otra cuenta ni se intenta el cambio.
-                if (altaResult.user && altaResult.user.id && altaResult.user.id !== accountId) {
-                    throw new Error('Esas credenciales no son de la cuenta seleccionada.');
-                }
-                rememberAccount(altaResult.user);
-                // La cookie de la cuenta ya está: ahora el cambio sí funciona.
-                const cambio = await fetch('/auth/switch', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ accountId })
-                });
-                const cambioResult = await cambio.json();
-                if (!cambio.ok) {
-                    if (cambioResult.gone) {
-                        const perdida = linkedAccounts().find(item => item.id === accountId);
-                        forgetAccount(accountId);
-                        quitarFilaCuenta(accountId);
-                        try { await paintSettings(); } catch (error) { console.error('[account] No se pudo refrescar la lista de cuentas:', error); }
-                        throw new Error(`La cuenta @${perdida ? perdida.username : ''} ya no existe en este servidor. Se quitó de la lista.`);
-                    }
-                    throw new Error(cambioResult.error || 'No se pudo cambiar de cuenta.');
-                }
-                rememberAccount(cambioResult.user);
-                location.reload();
             }
             // ancho REAL visible de la ventana (innerWidth miente con zoom, split screen, teclado o modo escritorio)
             const viewWidth = () => fitWidth();
@@ -14106,6 +14061,10 @@
                     if (!sent) {
                         previewSending = false;
                         document.getElementById('sendPreviewBtn').disabled = false;
+                        /* El compositor vuelve a su estado normal: si no, el
+                           campo de texto se queda oculto y no hay forma de
+                           escribir. */
+                        discardPreview();
                         return;
                     }
                     discardPreview();
@@ -14115,6 +14074,9 @@
                     document.getElementById('sendPreviewBtn').disabled = false;
                     debugToast('No se pudo enviar la nota de voz. Puedes volver a intentarlo.');
                     console.error('[audio] No se pudo enviar la nota de voz:', e);
+                    /* Se restaura el compositor: el usuario siempre tiene que
+                       poder seguir escribiendo. */
+                    discardPreview();
                 }
             }
 
@@ -16115,7 +16077,6 @@
       <button class="mBtn" id="addAccount">Agregar cuenta</button>
       <div class="setHead accountSectionHead"><b>Seguridad de la cuenta</b><span>Los cambios sensibles (contraseña, usuario o borrado) exigen tu contraseña actual.</span></div>
       <button class="mBtn" id="changePassword">Cambiar contraseña</button>
-      <button class="mBtn" id="editNote">Nota personal</button>
       <button class="mBtn" id="regenerateKey">Regenerar clave de cifrado</button>
       <button class="mBtn peligro" id="logoutAccount">Cerrar sesión de esta cuenta</button>
       <button class="mBtn peligro" id="deleteAccountButton">Eliminar cuenta</button>`;
@@ -16125,7 +16086,6 @@
                     main.querySelectorAll('[data-remove-id]').forEach(button =>
                         button.onclick = () => removeLinkedAccount(button.dataset.removeId));
                     document.getElementById('changePassword').onclick = changeAccountPassword;
-                    document.getElementById('editNote').onclick = editPersonalNote;
                     document.getElementById('regenerateKey').onclick = regenerateAccountKey;
                     document.getElementById('logoutAccount').onclick = logout;
                     document.getElementById('deleteAccountButton').onclick = deleteAccount;
@@ -16759,32 +16719,6 @@
                 if (values.password.length < 8) { toast('La nueva contraseña debe tener al menos 8 caracteres.'); return; }
                 delete values.confirmPassword;
                 await updateAccountCredentials(values);
-            }
-            /* Nota personal de estado: antes el servidor la aceptaba (POST
-               /notes) pero el cliente nunca la usaba, así que solo se veía la
-               de otros y no se podía poner la tuya. */
-            async function editPersonalNote() {
-                const current = (profilesCache[me.username] && profilesCache[me.username].note) || '';
-                const values = await askAccountFields('Nota personal', [
-                    { name: 'text', label: 'Tu nota (visible para tus contactos)', type: 'text', value: current, maxlength: 500 }
-                ]);
-                if (!values || values.text === current) return;
-                try {
-                    const response = await fetch('/notes', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ data: values.text ? { text: values.text } : '' })
-                    });
-                    if (!response.ok) throw new Error('No se pudo guardar la nota.');
-                    const p = profilesCache[me.username] || (profilesCache[me.username] = {});
-                    p.note = values.text;
-                    p.noteTs = values.text ? Date.now() : 0;
-                    toast(values.text ? 'Nota actualizada.' : 'Nota borrada.');
-                    renderContacts();
-                } catch (error) {
-                    console.error('[account] No se pudo guardar la nota:', error);
-                    toast(error.message);
-                }
             }
             async function regenerateAccountKey() {
                 const confirmed = await Modal.confirmar({

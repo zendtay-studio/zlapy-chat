@@ -8,6 +8,7 @@
   <title>Acceso — Zlapy</title>
   <link rel="stylesheet" href="/css/theme.css">
   <link rel="stylesheet" href="/css/login.css?v=1">
+  <link rel="stylesheet" href="/css/avatar-editor.css?v=1">
   <!-- Mismo envoltorio de transporte que la app: las credenciales de acceso
        viajan cifradas además de bajo HTTPS. -->
   <script src="/js/transport-crypto.js"></script>
@@ -31,28 +32,58 @@
 <body class="page-login">
 <div id="login">
     <section class="box" aria-labelledby="loginTitle">
-        <div class="loginHero">
+        <div class="loginHero" id="loginHero">
             <svg class="loginMascot" viewBox="0 0 144 144" role="img" aria-label=" Zlapy">
                 <path
                     d="M35 18h74c18 0 31 13 31 31v43c0 17-13 30-31 30H83l-28 20v-20H35C18 122 5 109 5 92V49c0-18 12-31 30-31Z"
                     fill="currentColor"></path>
                 <circle cx="52" cy="65" r="7" fill="#090c0f"></circle>
                 <circle cx="92" cy="65" r="7" fill="#090c0f"></circle>
-                <!-- <path d="M48 83c7 12 17 18 27 18s20-6 27-18" fill="none" stroke="#090c0f" stroke-width="7"
-                    stroke-linecap="round"></path> -->
             </svg>
             <h1 id="loginTitle" style="font-size: 40px; font-weight: 600"> Zlapy</h1>
             <p id="loginSubtitle"></p>
         </div>
         <form id="newAccount">
-            <label class="authField" for="uname">
-                <span>Usuario</span>
+            <div class="authAvatarBlock" id="authAvatarBlock" hidden>
+                <div class="authAvatarWrap">
+                    <div class="authAvatar" id="authAvatar" role="button" tabindex="0" aria-label="Elegir foto de perfil">
+                        <span class="authAvatarInitial" id="authAvatarInitial" hidden></span>
+                        <img id="authAvatarImg" alt="" hidden>
+                    </div>
+                    <button type="button" class="authAvatarBadge" id="authAvatarPick" title="Elegir foto"
+                        aria-label="Elegir foto de perfil">
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M14.5 4h-5L8 6H4.5A1.5 1.5 0 0 0 3 7.5v10A1.5 1.5 0 0 0 4.5 19h15a1.5 1.5 0 0 0 1.5-1.5v-10A1.5 1.5 0 0 0 19.5 6H16l-1.5-2Z"></path>
+                            <circle cx="12" cy="12.5" r="3.5"></circle>
+                        </svg>
+                    </button>
+                    <button type="button" class="avatarRemoveBadge" id="authAvatarRemove" hidden title="Quitar foto"
+                        aria-label="Quitar foto de perfil">
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M4 7h16M9.5 7V4h5v3M6.5 7l.8 13h9.4l.8-13M10 11v5M14 11v5"></path>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            <label class="authField" id="authNameField" for="authDisplayName" style="display:none">
+                <span>Nombre</span>
                 <div class="authInputWrap">
                     <span class="authInputIcon" aria-hidden="true"><svg viewBox="0 0 24 24">
                             <circle cx="12" cy="8" r="3.5"></circle>
                             <path d="M4.5 20c.6-3.7 3.2-5.5 7.5-5.5s6.9 1.8 7.5 5.5"></path>
                         </svg></span>
-                    <input id="uname" name="username" placeholder="zendtay" maxlength="24" autocomplete="username"
+                    <input id="authDisplayName" name="name" placeholder="ZendTay" maxlength="64"
+                        autocomplete="name">
+                </div>
+            </label>
+            <label class="authField" for="uname">
+                <span>Usuario</span>
+                <div class="authInputWrap">
+                    <span class="authInputIcon" aria-hidden="true"><svg viewBox="0 0 24 24">
+                            <circle cx="12" cy="12" r="4"></circle>
+                            <path d="M16 8v6a3 3 0 0 0 6 0v-1a10 10 0 1 0-3.92 7.94"></path>
+                        </svg></span>
+                    <input id="uname" name="username" placeholder="zendtay298" maxlength="24" autocomplete="username"
                         autocapitalize="none" spellcheck="false" required="">
                 </div>
             </label>
@@ -94,6 +125,7 @@
             <div id="authError" role="alert" aria-live="polite" style="display:none"></div>
             <button id="authSubmit" type="submit">Iniciar sesión</button>
         </form>
+        <input type="file" id="authAvatarInput" accept="image/*" hidden>
         <div class="authDivider" aria-hidden="true"><span>o</span></div>
         <button class="authSwitch" id="btnNewAccount" type="button">¿No tienes
             cuenta?<strong>Crear cuenta</strong></button>
@@ -107,10 +139,109 @@
     (function () {
       'use strict';
       let authMode = 'login';
+      let pendingAvatar = '';
+
+      /* Nombres sugeridos: en cada visita se enseña uno distinto para que la
+         gente no acabe con el mismo usuario que los demás. */
+      const NOMBRES = ['Pedro', 'Lucía', 'Carlos', 'Ana', 'Marta', 'Javier', 'Elena', 'Diego',
+        'Carmen', 'Pablo', 'Laura', 'Andrés', 'Rosa', 'Miguel', 'Isabel', 'Sergio', 'Patricia',
+        'Rubén', 'Alicia', 'Fernando', 'Sofía', 'Álvaro', 'Nuria', 'Iván', 'Beatriz', 'ZendTay'];
+
+      const sinAcentos = texto => texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+      /* Sugerencia de usuario válida: minúsculas, números y "_" (los únicos
+         caracteres que admite el usuario). */
+      function sugerirUsuario(nombre) {
+        const base = sinAcentos(nombre).toLowerCase().replace(/[^a-z0-9._-]/g, '').slice(0, 12) || 'usuario';
+        const numero = String(Math.floor(100 + Math.random() * 900));
+        const separador = Math.random() < 0.35 ? '_' : '';
+        return (base + separador + numero).slice(0, 24);
+      }
+
+      /* Sortea un nombre y su usuario, y lo muestra como sugerencia. */
+      function sortearSugerencia() {
+        const nombre = NOMBRES[Math.floor(Math.random() * NOMBRES.length)];
+        document.getElementById('authDisplayName').placeholder = nombre;
+        document.getElementById('uname').placeholder = sugerirUsuario(nombre);
+        refreshInitial();
+      }
+
+      /* Inicial del avatar: la primera letra del nombre y, si no hay nombre,
+         la del usuario. Se actualiza mientras se escribe. */
+      function refreshInitial() {
+        const inicial = document.getElementById('authAvatarInitial');
+        const nombre = document.getElementById('authDisplayName').value.trim();
+        const usuario = document.getElementById('uname').value.trim();
+        const letra = nombre ? nombre[0] : (usuario ? usuario[0] : '');
+        inicial.textContent = letra ? letra.toUpperCase() : '';
+        inicial.hidden = !letra;
+      }
+
+      /* Vista previa de la foto elegida: el círculo muestra la foto entera y
+         el distintivo de la esquina pasa de "cámara" a "papelera". */
+      function paintAvatar() {
+        const image = document.getElementById('authAvatarImg');
+        const inicial = document.getElementById('authAvatarInitial');
+        const pick = document.getElementById('authAvatarPick');
+        const remove = document.getElementById('authAvatarRemove');
+        if (pendingAvatar) {
+          image.src = pendingAvatar;
+          image.hidden = false;
+          inicial.hidden = true;
+          pick.hidden = true;
+          remove.hidden = false;
+          return;
+        }
+        image.removeAttribute('src');
+        image.hidden = true;
+        inicial.hidden = false;
+        pick.hidden = false;
+        remove.hidden = true;
+        refreshInitial();
+      }
+
+      /* Recorta la foto a 512 x 512 con el editor compartido (el mismo que en
+         "Mi perfil" y en los grupos). */
+      async function loadAvatar(file) {
+        if (!file) return;
+        const editor = window.ZlapyAvatarEditor;
+        if (!editor || typeof editor.open !== 'function') { await loadAvatarFallback(file); return; }
+        let result = null;
+        try {
+          result = await editor.open({ file });
+        } catch (exception) {
+          console.error('[acceso] No se pudo editar la foto:', exception);
+        }
+        if (!result || !result.dataUrl) return;
+        pendingAvatar = result.dataUrl;
+        paintAvatar();
+      }
+
+      /* Respaldo si el editor no está disponible: recorte central a 512 x 512. */
+      function loadAvatarFallback(file) {
+        return new Promise(resolve => {
+          const url = URL.createObjectURL(file);
+          const img = new Image();
+          img.onload = () => {
+            const side = Math.min(img.width, img.height);
+            const canvas = document.createElement('canvas');
+            canvas.width = canvas.height = 512;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, 512, 512);
+            pendingAvatar = canvas.toDataURL('image/jpeg', 0.88);
+            paintAvatar();
+            URL.revokeObjectURL(url);
+            resolve();
+          };
+          img.onerror = () => { URL.revokeObjectURL(url); resolve(); };
+          img.src = url;
+        });
+      }
 
       async function start() {
         const name = document.getElementById('uname').value.trim();
         const password = document.getElementById('authPassword').value;
+        const displayName = document.getElementById('authDisplayName').value.trim();
         const error = document.getElementById('authError');
         if (authMode === 'register' && password !== document.getElementById('authPasswordConfirm').value) {
           error.textContent = 'Las contraseñas no coinciden.';
@@ -124,10 +255,26 @@
           const response = await fetch('/auth/' + authMode, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username: name, password })
+            body: JSON.stringify(authMode === 'register'
+              ? { username: name, password, name: displayName }
+              : { username: name, password })
           });
           const result = await response.json();
           if (!response.ok) throw new Error(result.error || 'No se pudo autenticar.');
+          /* La foto no cabe en /auth/register (su cuerpo está limitado a
+             8 KiB): se guarda después, ya con la sesión de la cuenta creada. */
+          if (authMode === 'register' && pendingAvatar) {
+            try {
+              const profile = await fetch('/profile', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: name, avatar: pendingAvatar })
+              });
+              if (!profile.ok) console.warn('[acceso] No se pudo guardar la foto de perfil:', profile.status);
+            } catch (exception) {
+              console.error('[acceso] No se pudo guardar la foto de perfil:', exception);
+            }
+          }
           location.replace('/');
         } catch (exception) {
           error.textContent = exception.message || 'No se pudo completar la solicitud.';
@@ -153,10 +300,8 @@
         document.getElementById('authSubmit').textContent = authMode === 'register' ? 'Crear cuenta' : 'Iniciar sesión';
         document.getElementById('loginTitle').textContent = ' Zlapy';
         const loginSubtitle = document.getElementById('loginSubtitle');
-        loginSubtitle.textContent = authMode === 'register'
-          ? 'Crea tu cuenta con un usuario y una contraseña.'
-          : '';
-        loginSubtitle.style.display = authMode === 'register' ? 'block' : 'none';
+        loginSubtitle.textContent = '';
+        loginSubtitle.style.display = 'none';
         document.getElementById('btnNewAccount').innerHTML = authMode === 'register'
           ? '¿Ya tienes cuenta?<strong>Iniciar sesión</strong>'
           : '¿No tienes cuenta?<strong>Crear cuenta</strong>';
@@ -165,6 +310,34 @@
         confirmField.style.display = authMode === 'register' ? 'flex' : 'none';
         document.getElementById('authPasswordHint').style.display = authMode === 'register' ? 'block' : 'none';
         document.getElementById('authPasswordConfirm').required = authMode === 'register';
+        /* Foto y nombre visible: solo al crear la cuenta (después se editan
+           en "Mi perfil"). En "Crear cuenta" no se repite el logo ni el
+           nombre de la app: solo el icono para elegir la foto. */
+        document.getElementById('loginHero').style.display = authMode === 'register' ? 'none' : 'block';
+        document.getElementById('authAvatarBlock').hidden = authMode !== 'register';
+        document.getElementById('authNameField').style.display = authMode === 'register' ? 'flex' : 'none';
+        if (authMode === 'register') sortearSugerencia();
+        document.getElementById('authAvatarRemove').onclick = event => {
+          event.stopPropagation();
+          pendingAvatar = '';
+          paintAvatar();
+        };
+        document.getElementById('authAvatarPick').onclick = event => {
+          event.stopPropagation();
+          document.getElementById('authAvatarInput').click();
+        };
+        document.getElementById('authAvatar').onclick = () => document.getElementById('authAvatarInput').click();
+        document.getElementById('authAvatar').onkeydown = event => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            document.getElementById('authAvatarInput').click();
+          }
+        };
+        document.getElementById('authAvatarInput').onchange = event => {
+          const file = event.target.files && event.target.files[0];
+          event.target.value = '';
+          loadAvatar(file);
+        };
         document.getElementById('authError').style.display = 'none';
         document.getElementById('authError').textContent = '';
         if (authMode === 'register' && matchMedia('(max-width: 480px)').matches) {
@@ -185,10 +358,19 @@
         const start = input.selectionStart;
         input.value = input.value.toLowerCase();
         input.setSelectionRange(start, start);
+        refreshInitial();
+      });
+      /* Al escribir el nombre, el usuario sugerido le sigue: en minúsculas y
+         con números (el avatar enseña su inicial al momento). */
+      document.getElementById('authDisplayName').addEventListener('input', () => {
+        const nombre = document.getElementById('authDisplayName').value.trim();
+        if (nombre) document.getElementById('uname').placeholder = sugerirUsuario(nombre);
+        refreshInitial();
       });
 
       document.getElementById('btnNewAccount').addEventListener('click', showNewAccount);
       document.getElementById('newAccount').addEventListener('submit', event => { event.preventDefault(); start(); });
+      paintAvatar();
 
       // Si ya hay sesion, no hay nada que hacer aqui.
       fetch('/auth/session', { cache: 'no-store' })
@@ -197,6 +379,7 @@
         .catch(() => { });
     })();
   </script>
+  <script src="/js/avatar-editor.js?v=1"></script>
 </body>
 
 </html>

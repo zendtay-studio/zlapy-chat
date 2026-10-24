@@ -3,8 +3,10 @@
 
 const assert = require('node:assert/strict');
 const crypto = require('crypto');
+const fs = require('fs');
 const path = require('path');
 const test = require('node:test');
+const vm = require('vm');
 
 // El cliente es un script de navegador: se carga con `window` para obtener
 // ZlapyTransport y se compara contra el crypto nativo de Node.
@@ -274,4 +276,80 @@ test('the websocket accepts a handshake and encrypts from then on', async () => 
     } finally {
         await stop(server);
     }
+});
+
+test('the client opens the sealed response of an XMLHttpRequest', async () => {
+    /* El transporte del navegador envuelve fetch Y XMLHttpRequest: los POST con
+       barra de progreso (adjuntos, notas de voz, historias) salen cifrados y su
+       respuesta vuelve cifrada. Si el cliente no la abre, la subida "falla"
+       aunque el servidor la aceptara. */
+    const publicKey = S.transportPublicKey();
+    const source = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'transport.js'), 'utf8');
+
+    const respostaServidor = { body: '{"ok":true}', status: 200 };
+    class FakeXHR {
+        constructor() {
+            this.requestHeaders = {};
+            this.responseHeaders = {};
+            this.listeners = {};
+            this.responseType = '';
+            this.status = 0;
+            this.response = null;
+            this.responseText = '';
+        }
+        open(method, url) { this.method = method; this.url = url; }
+        setRequestHeader(name, value) { this.requestHeaders[name] = value; }
+        addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); }
+        getResponseHeader(name) { return this.responseHeaders[String(name).toLowerCase()] || null; }
+        send(body) {
+            // El servidor abre el sobre y responde cifrado.
+            const time = Number(this.requestHeaders['X-Zlapy-Time']);
+            const opened = S.decryptEnvelope({
+                method: this.method,
+                path: new URL(this.url, 'https://ejemplo.local').pathname,
+                time,
+                ephemeral: T.fromBase64(this.requestHeaders['X-Zlapy-Ephemeral']),
+                nonce: T.fromBase64(this.requestHeaders['X-Zlapy-Nonce']),
+                ciphertext: Buffer.from(body)
+            });
+            if (!opened) throw new Error('el servidor no pudo abrir el sobre');
+            const path = new URL(this.url, 'https://ejemplo.local').pathname;
+            const sealed = S.encryptEnvelope(opened.key, { method: this.method, path, time, status: respostaServidor.status }, respostaServidor.body);
+            this.status = respostaServidor.status;
+            this.responseHeaders = {
+                'x-zlapy-enc': S.TRANSPORT_ALGO,
+                'x-zlapy-resp-nonce': Buffer.from(sealed.nonce).toString('base64'),
+                'content-type': 'application/octet-stream'
+            };
+            this.response = new Uint8Array(sealed.ciphertext).buffer;
+            for (const fn of this.listeners.load || []) fn.call(this);
+        }
+    }
+
+    const sandbox = {
+        window: null,
+        ZlapyTransport: T,
+        XMLHttpRequest: FakeXHR,
+        fetch: async url => ({ ok: true, json: async () => ({ transportPublicKey: publicKey }) }),
+        location: { href: 'https://ejemplo.local/', origin: 'https://ejemplo.local' },
+        URL,
+        TextDecoder,
+        Promise,
+        console: { warn() { }, log() { } },
+        dispatchEvent() { },
+        CustomEvent: class { constructor() { } }
+    };
+    sandbox.window = sandbox;
+    sandbox.globalThis = sandbox;
+    vm.createContext(sandbox);
+    vm.runInContext(source, sandbox);
+
+    const xhr = new sandbox.XMLHttpRequest();
+    xhr.open('POST', '/send');
+    xhr.send(JSON.stringify({ to: 'leo', kind: 'audio' }));
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    assert.equal(xhr.status, 200);
+    assert.equal(xhr.responseText, '{"ok":true}',
+        'la respuesta cifrada del XHR debe abrirse y quedar como texto');
 });
