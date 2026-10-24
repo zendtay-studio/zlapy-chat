@@ -170,6 +170,9 @@
          la del usuario. Se actualiza mientras se escribe. */
       function refreshInitial() {
         const inicial = document.getElementById('authAvatarInitial');
+        /* Con foto ya elegida manda la foto: la inicial no puede volver a
+           aparecer encima (pasaba al escribir el nombre después de elegirla). */
+        if (pendingAvatar) { inicial.hidden = true; return; }
         const nombre = document.getElementById('authDisplayName').value.trim();
         const usuario = document.getElementById('uname').value.trim();
         const letra = nombre ? nombre[0] : (usuario ? usuario[0] : '');

@@ -2452,6 +2452,13 @@
             margin-bottom: 32px
         }
 
+        /* Sin hora que mostrar (mensajes seguidos a la misma hora) el audio
+           no reserva el hueco de debajo: la separación es la de cualquier
+           burbuja, no queda un vacío donde iba la hora. */
+        .bubble.audioBubble.noMeta {
+            margin-bottom: 6px
+        }
+
         .bubble.audioBubble>.audioMessageMeta {
             position: absolute;
             right: 4px;
@@ -12208,8 +12215,11 @@
                 const metaTicks = displayMeta.ticksOnly
                     ? (m.inGroup ? '' : TICK(m))
                     : m.kind === 'contact' || !m.inGroup ? TICK(m) : '';
+                /* El audio sigue la misma regla que el resto: si viene seguido
+                   de otro mensaje de la misma persona a la misma hora, la hora
+                   se oculta (antes siempre se mostraba en los propios). */
                 const meta = audioMessage
-                    ? displayMeta.hide && !m.mine ? '' : `<span class="audioMessageMeta">${messageTime}${m.inGroup ? '' : TICK(m)}</span>`
+                    ? displayMeta.hide ? '' : `<span class="audioMessageMeta">${messageTime}${m.inGroup ? '' : TICK(m)}</span>`
                     : displayMeta.hide ? ''
                         : `<span class="bubbleMeta">${messageTime}${metaTicks}</span>`;
                 const content = m.kind === 'poll'
