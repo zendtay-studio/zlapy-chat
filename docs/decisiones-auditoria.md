@@ -185,7 +185,7 @@ mostró que **ya estaban resueltos**. Queda aquí para no volver a "arreglarlos"
 ## 7. Rutas privadas en el histórico
 
 Tras esta ronda se reescribió el historial del repositorio para **eliminar
-rutas personales del host que se habían colado en dos documentos
-de auditoría; el contenido (commits y mensajes) es el mismo, con hashes nuevos.
-Los informes originales viven **fuera del repositorio** y se citan solo con
-rutas relativas (`zlapy-chat/run-1/REPORT.md`).
+rutas personales del host** que se habían colado en dos documentos de auditoría;
+el contenido (commits y mensajes) es el mismo, con hashes nuevos. Los informes
+originales viven **fuera del repositorio** y se citan solo con rutas relativas
+(`zlapy-chat/run-1/REPORT.md`).
