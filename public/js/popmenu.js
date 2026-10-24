@@ -2,7 +2,7 @@
    detalles de grupo.
  *
  *   ZlapyPopMenu.open({ anchor, items, onClose })
- *     · items: [{ id, label, icon, danger }]  (icon = nombre del SVG o HTML)
+ *     · items: [{ id, label, icon, danger }]  (icon = nombre del SVG de la lista)
  *     · devuelve el elemento del menu (para enlazar los clicks)
  *   ZlapyPopMenu.close()
  *
@@ -45,12 +45,12 @@
     let current = null;
     let currentAnchor = null;
 
+    /* Solo nombres de la lista de arriba: nada de HTML crudo, aunque mañana
+       alguien le pase un dato suelto al menu. */
     function iconMarkup(name) {
-        if (!name) return '';
-        if (String(name).startsWith('<')) return name;
-        const body = ICONS[name];
-        if (!body) return '';
-        return `<svg class="zlapyMenuIcon" viewBox="0 0 24 24" aria-hidden="true">${body}</svg>`;
+        const key = String(name || '');
+        if (!key || !Object.prototype.hasOwnProperty.call(ICONS, key)) return '';
+        return `<svg class="zlapyMenuIcon" viewBox="0 0 24 24" aria-hidden="true">${ICONS[key]}</svg>`;
     }
 
     function close() {
@@ -63,7 +63,9 @@
         document.removeEventListener('pointerdown', onOutside, true);
         document.removeEventListener('keydown', onKey, true);
         window.removeEventListener('resize', close);
-        window.removeEventListener('scroll', close, true);
+        // La fase aquí debe ser la misma que en el add de `open`, o el
+        // listener del scroll nunca se va.
+        window.removeEventListener('scroll', close);
     }
 
     function onOutside(event) {

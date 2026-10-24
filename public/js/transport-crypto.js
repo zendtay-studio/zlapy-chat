@@ -156,7 +156,6 @@
             const cb = mod(c * b);
             const t1 = mod(da + cb);
             x3 = mod(t1 * t1);
-            z3 = mod(x1 * mod(t1 * t1 - 0n));   // placeholder, se corrige abajo
             // z3 = x1 * (da - cb)^2
             const dcb = mod(da - cb);
             z3 = mod(x1 * mod(dcb * dcb));

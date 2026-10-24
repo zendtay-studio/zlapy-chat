@@ -26,18 +26,29 @@
 
     let serverKey = null;
     let keyRequest = null;
+    let noKeyOnServer = false;
 
-    /* Clave pública del servidor, cacheada. */
+    /* Clave pública del servidor, cacheada. Si /config responde sin clave, la
+       situación es estable y no se vuelve a preguntar. Pero si la petición
+       falla (corta de red, no ok), solo se pierde ESTA petición: el caché se
+       limpia para que el siguiente intento reitere en vez de degradar el canal
+       durante toda la sesión. */
     function loadServerKey() {
         if (serverKey) return Promise.resolve(serverKey);
+        if (noKeyOnServer) return Promise.resolve(null);
         if (!keyRequest) {
             keyRequest = nativeFetch(CONFIG_PATH, { credentials: 'same-origin', cache: 'no-store' })
-                .then(response => (response.ok ? response.json() : null))
+                .then(response => {
+                    if (!response.ok) throw new Error('config ' + response.status);
+                    return response.json();
+                })
                 .then(config => {
-                    serverKey = config && config.transportPublicKey ? config.transportPublicKey : null;
+                    if (config && config.transportPublicKey) serverKey = config.transportPublicKey;
+                    else noKeyOnServer = true;
                     return serverKey;
                 })
-                .catch(() => null);
+                .catch(() => null)
+                .finally(() => { keyRequest = null; });
         }
         return keyRequest;
     }
@@ -68,9 +79,9 @@
             if (!zt || zt.method !== 'POST' || typeof body !== 'string') return nativeSend.call(this, body);
             const absolute = new URL(zt.url, global.location.href);
             if (absolute.origin !== global.location.origin) return nativeSend.call(this, body);
-            const key = loadServerKey();
-            if (!key) { transportWarning(); return nativeSend.call(this, body); }
-            return key.then(k => {
+            return loadServerKey().then(k => {
+                // loadServerKey devuelve una promesa: el valor real llega aquí.
+                if (!k) { transportWarning(); return nativeSend.call(this, body); }
                 let envelope;
                 try { envelope = T.encrypt(zt.method, absolute.pathname, body, k); }
                 catch { transportWarning(); return nativeSend.call(this, body); }
@@ -83,16 +94,23 @@
 
     /* Descifra la respuesta si el servidor la devolvió envuelta. */
     async function openResponse(response, envelope) {
-        if (response.headers.get('X-Zlapy-Enc') !== T.ALGO) return response;
+        // Los estados sin cuerpo no llevan sobre: entregarlos tal cual.
+        const sinCuerpo = response.status === 204 || response.status === 205 || response.status === 304;
+        if (sinCuerpo || response.headers.get('X-Zlapy-Enc') !== T.ALGO) return response;
         const nonce = response.headers.get('X-Zlapy-Resp-Nonce');
         if (!nonce) return response;
         const sealed = new Uint8Array(await response.arrayBuffer());
         const plain = T.decryptResponse(sealed, nonce, envelope.method, envelope.path, envelope.time, response.status, envelope.key);
         if (plain === null) throw new Error('La respuesta del servidor no se pudo descifrar.');
+        // Se conservan las cabeceras originales además del Content-Type, y no
+        // se descartan sin más.
+        const headers = new Headers();
+        response.headers.forEach((value, name) => headers.set(name, value));
+        headers.set('Content-Type', JSON_TYPE + '; charset=utf-8');
         return new Response(plain, {
             status: response.status,
             statusText: response.statusText,
-            headers: { 'Content-Type': JSON_TYPE + '; charset=utf-8' }
+            headers
         });
     }
 
@@ -138,7 +156,7 @@
         class SecureWebSocket extends NativeWebSocket {
             constructor(url, protocols) {
                 super(url, protocols);
-                this._zt = { key: null, out: 0, in: 0, queue: [] };
+                this._zt = { key: null, out: 0, in: 0, queue: [], insecure: false };
                 this.addEventListener('open', () => { this._ztStart(); }, { once: true });
             }
 
@@ -146,7 +164,11 @@
                 const key = await loadServerKey();
                 if (!key) {
                     // Sin clave se vacía la cola en claro: la app sigue igual,
-                    // pero se avisa de que el canal va sin cifrar.
+                    // pero se avisa de que el canal va sin cifrar. Se marca la
+                    // conexión como insegura para que los mensajes que lleguen
+                    // después no se queden en la cola esperando una clave que
+                    // no va a venir (y acaban silenciosamente tirados).
+                    this._zt.insecure = true;
                     transportWarning();
                     for (const text of this._zt.queue.splice(0)) super.send(text);
                     return;
@@ -160,6 +182,7 @@
 
             send(data) {
                 if (typeof data !== 'string') return super.send(data);
+                if (this._zt.insecure) return super.send(data);
                 if (!this._zt.key) {
                     if (this._zt.queue.length < 200) this._zt.queue.push(data);
                     return;

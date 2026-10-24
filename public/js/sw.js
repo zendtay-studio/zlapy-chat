@@ -56,8 +56,18 @@ self.addEventListener('notificationclick', e => {
     const parsed = new URL(url, self.location.origin);
     destino = parsed.origin === self.location.origin ? parsed.pathname + parsed.search : '/';
   } catch (err) { destino = '/'; }
-  e.waitUntil(clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
-    for (const c of list) { if ('focus' in c) { c.navigate(destino); return c.focus(); } }
-    if (clients.openWindow) return clients.openWindow(destino);
+  e.waitUntil(clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async list => {
+    /* `navigate` no está en todos los motores y puede rechazar en clientes
+       especiales (about:blank, etc.): en ese caso se intenta con el siguiente
+       y, si nada funciona, se abre una ventana nueva. */
+    for (const c of list) {
+      if (!('focus' in c)) continue;
+      try {
+        if ('navigate' in c) await c.navigate(destino);
+        await c.focus();
+        return;
+      } catch (err) { /* este cliente no sirve: el siguiente */ }
+    }
+    try { if (clients.openWindow) await clients.openWindow(destino); } catch (err) { }
   }));
 });
