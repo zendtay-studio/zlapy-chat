@@ -464,6 +464,15 @@ chmod 600 .env            # contiene la llave maestra
 chmod 700 data            # bases + adjuntos
 ```
 
+El **servidor los aplica solo en cada arranque** (`server.js`, paso 0): fija
+`0700` en `data/` (y en `data2/`/`backups/` si existen) y `0600` en
+`zlapy.db`, `blob.db` y `.env`. Los comandos de arriba solo hacen falta si
+copias bases a mano fuera del servidor. El `chmod` es *best-effort*: si el
+sistema no lo permite (otro dueño, sistema sin permisos POSIX), el servidor
+sigue arrancando y lo dice por el log (`[perms] no se pudieron ajustar …`);
+romper el arranque por un permiso sería peor que avisar. El fichero de PID
+del supervisor (`.zlapy.pid`) se escribe con `0600` desde el código.
+
 ---
 
 ## 4. Arranque

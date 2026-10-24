@@ -3,6 +3,11 @@
  * Los datos están transcritos de src/db/schema.js (única fuente de verdad) y
  * los recuentos de filas son una instantánea de data/zlapy.db + data/blob.db
  * (tomada el 23 oct 2026, tras la tanda de seguridad).
+ * Tras la ronda de remediación (23 oct 2026) el ESQUEMA SIGUE SIENDO v3: los
+ * arreglos de la auditoría fueron de aplicación (límites, permisos, políticas
+ * de grupo, anti-replay del canal), ninguno añadió tablas, columnas ni
+ * índices. Las notas de algunas tablas mencionan topes que aplica el código
+ * en tiempo de ejecución para que no se confundan con el DDL.
  * Las relaciones no declaradas como FK (chat codificado, nombres, hashes) se
  * dibujan aparte y se pueden ocultar con el interruptor "lógicas".
  */
@@ -172,7 +177,8 @@ const TABLES = [
             c('expires_at', 'INTEGER', 'n', 'epoch ms')
         ],
         refs: [r(['user_id'], 'users', ['id'])],
-        idx: ['idx_sessions_user', 'idx_sessions_exp']
+        idx: ['idx_sessions_user', 'idx_sessions_exp'],
+        note: 'Tope de aplicación: 20 sesiones activas por cuenta (MAX_SESSIONS_PER_USER); al iniciar sesión las más antiguas se borran.'
     },
     {
         name: 'user_auth_keys', db: 'zlapy', group: 'identidad', rows: 12, col: 1,
@@ -360,7 +366,7 @@ const TABLES = [
             r(['to_id'], 'users', ['id'])
         ],
         idx: ['idx_messages_chat_ts', 'idx_messages_to', 'idx_messages_from'],
-        note: 'El destino va codificado en `chat`; por eso no puede ser una FK.'
+        note: 'El destino va codificado en `chat`; por eso no puede ser una FK. Los medios enviados EN LÍNEA (sin hash) están limitados a 256 KiB por la aplicación; el flujo normal sube blob y guarda el hash, que no cuenta para esa cota.'
     },
     {
         name: 'message_deletions', db: 'zlapy', group: 'mensajeria', rows: 2, col: 3,
@@ -430,7 +436,7 @@ const TABLES = [
         ],
         refs: [r(['from_id'], 'users', ['id'])],
         idx: ['idx_stories_ts'],
-        note: 'Caducan por ts; deleteExpiredStories las purga.'
+        note: 'Caducan por ts; deleteExpiredStories las purga. El medio publicado en línea (sin hash) tiene tope de 4 MB en la aplicación.'
     },
     {
         name: 'calls', db: 'zlapy', group: 'mensajeria', rows: 27, col: 3,
