@@ -5556,6 +5556,11 @@
             color: #87919d
         }
 
+        .linkedAccountRow .accountDeadHint {
+            color: #e8b942;
+            font-size: 11px
+        }
+
         .linkedAccountRow .accountIconAction {
             width: 38px;
             height: 38px;
@@ -9256,6 +9261,12 @@
             }
             // Cambio de cuenta en curso: evita que un doble clic abra dos
             // diálogos de re-autenticación o rote la sesión dos veces.
+            // Sesiones vinculadas vivas según el último GET /auth/session:
+            // el panel marca las filas cuya sesión guardada ya caducó (un
+            // logout o cambio de contraseña las revoca) para no prometer
+            // cambiar de cuenta sin contraseña. `null` = servidor sin este
+            // informe o aún sin sesión: no pinta avisos y no rompe nada.
+            let linkedAlive = null;
             const cambiosDeCuentaEnCurso = new Set();
             // Quita la fila de una cuenta de la lista sin esperar al repintado
             // (si el repintado falla por red, la fila no puede quedarse ahí).
@@ -9272,10 +9283,25 @@
                     const response = await fetch('/auth/switch', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ accountId })
+                        body: JSON.stringify({
+                            accountId,
+                            // El nombre local deja reconocer en el servidor
+                            // la cuenta con id nueva tras una restauración.
+                            username: (linkedAccounts().find(item => item.id === accountId) || {}).username
+                        })
                     });
                     const result = await response.json();
                     if (!response.ok) {
+                        // El id guardado ya no existe en el servidor, pero el
+                        // NOMBRE sigue vivo en otra cuenta (base restaurada,
+                        // reinstalación, o la cuenta se borró y se volvió a
+                        // crear). La fila vieja es definitivamente inservible:
+                        // se va y se explica cómo reconectar.
+                        if (result.rebuilt) {
+                            forgetAccount(accountId);
+                            quitarFilaCuenta(accountId);
+                            throw new Error((result.error || 'La cuenta cambió de identificación en el servidor.') + ' Toca «Agregar cuenta» para conectarla de nuevo.');
+                        }
                         // La cuenta ya no existe en este servidor: se quita de la lista
                         // para no volver a intentarlo (el servidor ya borró su cookie).
                         if (result.gone) {
@@ -13780,6 +13806,11 @@
             async function startRec() {
                 if (!active || (mediaRec && mediaRec.state !== 'inactive')) return;
                 stopTyping();
+                /* Al grabar se pausa cualquier reproducción en curso: la nota
+                   sale limpia y el micrófono no capta el altavoz. */
+                stopVoice();
+                for (const video of document.querySelectorAll('#msgs video'))
+                    if (!video.paused) video.pause();
                 onceMode = false;
                 document.getElementById('onceBtn').classList.remove('on');
                 document.getElementById('previewOnceBtn').classList.remove('on');
@@ -14695,8 +14726,21 @@
                         audio.onloadedmetadata = () => {
                             if (!storyList[storyIdx] || storyList[storyIdx].ts !== s.ts) return;
                             updateStoryAudioUI(audio);
-                            dur = Math.min(86400, Math.max(8, Math.ceil(audio.duration) || 10));
+                            const total = Number.isFinite(audio.duration) ? audio.duration : 0;
+                            dur = total ? Math.min(86400, Math.max(8, Math.ceil(total))) : 10;
                             paintStorySegs(dur);
+                            /* La reproducción arranca a veces antes de que se
+                               conozca la duración real y el temporizador queda
+                               con el interinato (10 s): cortaba la historia a
+                               la mitad del audio. Se reajusta a lo que falta
+                               de audio; si la duración no se conoce (webm sin
+                               cabecera), un tope holgado: el fin del audio
+                               manda (onended) y el temporizador es solo
+                               respaldo. */
+                            if (storyTimer && !storyTimerPaused && !audio.paused)
+                                startStoryTimer(total
+                                    ? Math.max(1, dur - (Number.isFinite(audio.currentTime) ? audio.currentTime : 0))
+                                    : 300);
                         };
                         audio.ontimeupdate = () => updateStoryAudioUI(audio);
                         audio.onplay = () => {
@@ -14719,6 +14763,9 @@
                         audio.onerror = () => {
                             document.getElementById('storyAudioStatus').textContent = 'No se pudo reproducir este audio';
                             console.error('[stories] El reproductor no pudo decodificar el audio:', audio.error);
+                            /* Sin audio que suene, la historia no se puede quedar
+                               atascada: se avanza como cualquier otra. */
+                            if (!storyTimer) startStoryTimer(6);
                         };
                         audio.onended = () => storyNav(1);
                         const autoplay = audio.play();
@@ -16080,7 +16127,7 @@
       <div class="setHead accountSectionHead"><b>Cuentas conectadas</b><span>Cambia de cuenta sin volver a iniciar sesión.</span></div>
       <div class="linkedAccountList">${accounts.map(account =>
                             `<div class="linkedAccountRow"><div class="savedAvatar" data-account-avatar="${account.id}">${account.avatar ? `<img src="${escapeHtml(account.avatar)}" alt="">` : escapeHtml(account.username[0].toUpperCase())}</div>
-          <div class="meta"><b>${escapeHtml(account.username)}${account.id === me.id ? ' · Activa' : ''}</b><span>${escapeHtml(account.id)}</span></div>
+          <div class="meta"><b>${escapeHtml(account.username)}${account.id === me.id ? ' · Activa' : ''}</b><span>${escapeHtml(account.id)}</span>${linkedAlive && !linkedAlive.has(account.id) && account.id !== me.id ? '<span class="accountDeadHint">Sesión guardada caducó: hay que volver a conectarla con «Agregar cuenta»</span>' : ''}</div>
           ${account.id === me.id ? '' : `<button class="accountIconAction" type="button" data-switch-id="${account.id}" title="Cambiar a @${escapeHtml(account.username)}" aria-label="Cambiar a @${escapeHtml(account.username)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7h-9a4 4 0 0 0-4 4v1"/><path d="m4 9 3 3 3-3M4 17h9a4 4 0 0 0 4-4v-1"/><path d="m20 15-3-3-3 3"/></svg></button><button class="accountIconAction danger" type="button" data-remove-id="${account.id}" title="Quitar cuenta" aria-label="Quitar ${escapeHtml(account.username)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg></button>`}
         </div>`).join('')}
       </div>
@@ -16686,6 +16733,10 @@
                     const result = await response.json();
                     if (!response.ok) throw new Error(result.error || 'No se pudo agregar la cuenta.');
                     rememberAccount(result.user);
+                    // La cuenta recién enlazada acaba de recibir sesión: la
+                    // marco viva para que el repintado del panel no la muestre
+                    // como caducada hasta el siguiente arranque.
+                    if (linkedAlive) linkedAlive.add(result.user.id);
                     await paintSettings();
                     toast(result.user.id === me.id ? 'Esta cuenta ya está activa.' : 'Cuenta agregada. Ya puedes cambiar a ella sin volver a iniciar sesión.');
                 } catch (error) {
@@ -17642,6 +17693,13 @@
                     // Sin sesión no hay app: la pantalla de acceso es otra pagina.
                     if (!session.authenticated) { location.replace('/login.html'); return; }
                     me = session.user;
+                    // Estado vivo de las demás cuentas vinculadas de este
+                    // navegador (solo si el servidor lo informa con la
+                    // sesión); si no lo manda (servidor viejo), queda null
+                    // y el panel no pinta avisos nuevos.
+                    linkedAlive = Array.isArray(session.linked)
+                        ? new Set(session.linked.filter(item => item && item.alive && typeof item.id === 'string').map(item => item.id))
+                        : null;
                     if (deep.get('privacy')) { location.href = '/privacy.html'; return; }
                     enter();
                     // (BACK) Entrada con recarga fresca tras el botón ATRÁS: se

@@ -10,7 +10,7 @@
 const { CONFIG } = require('../config.js');
 const { Stmt } = require('../db/statements.js');
 const { profiles, stories, users } = require('../state.js');
-const { byName, uniq } = require('../users/helpers.js');
+const { byName } = require('../users/helpers.js');
 const { isBlockedBy, permite } = require('../users/privacy.js');
 const { sealFrame } = require('./encrypted.js');
 
@@ -93,8 +93,8 @@ function connectContacts(a, b) {
     Stmt.insertContact.run(b.id, a.id);
     Stmt.deleteContactRequest.run(a.id, b.id);
     Stmt.deleteContactRequest.run(b.id, a.id);
-    a.contacts = uniq([...a.contacts, b.id]);
-    b.contacts = uniq([...b.contacts, a.id]);
+    a.contacts.add(b.id);
+    b.contacts.add(a.id);
     saveUserToDb(a); saveUserToDb(b);
     updateContactRequests(a); updateContactRequests(b);
     broadcastUsersAround(a.id); broadcastUsersAround(b.id);
@@ -106,8 +106,8 @@ function removeContacts(a, b) {
     Stmt.deleteContact.run(b.id, a.id);
     Stmt.deleteContactRequest.run(a.id, b.id);
     Stmt.deleteContactRequest.run(b.id, a.id);
-    a.contacts = a.contacts.filter(id => id !== b.id);
-    b.contacts = b.contacts.filter(id => id !== a.id);
+    a.contacts.delete(b.id);
+    b.contacts.delete(a.id);
     saveUserToDb(a); saveUserToDb(b);
     updateContactRequests(a); updateContactRequests(b);
     broadcastUsersAround(a.id); broadcastUsersAround(b.id);
@@ -117,18 +117,21 @@ const liveStories = () => {
     const now = Date.now();
     return stories.filter(s => now - s.ts < CONFIG.storyTtlMs);
 };
-const storyForViewer = (s, username) => {
+const storyForViewer = (s, username, likedSet) => {
     if (s.from === username) return s;
     const { viewers, likes, keys, ...story } = s;
     story.keybox = (keys || []).find(k => k.to === username) || null;
-    return { ...story, liked: (likes || []).includes(username) };
+    return { ...story, liked: likedSet ? likedSet.has(username) : (likes || []).includes(username) };
 };
 function pushStories() {
     const live = liveStories();
+    // Set de likes por historia, calculado UNA vez por envío (PERF-P04): sin
+    // él, 'liked' recorrió la lista de likes una vez por ESPECTADOR en línea.
+    const likeSets = new Map(live.map(s => [s, new Set(s.likes || [])]));
     for (const u of users.values()) {
         if (!u.online) continue;
         const list = live.filter(s => permite(profiles[s.from], 'historias', u.username))
-            .map(s => storyForViewer(s, u.username));
+            .map(s => storyForViewer(s, u.username, likeSets.get(s)));
         push(u, { type: 'stories', stories: list });
     }
 }

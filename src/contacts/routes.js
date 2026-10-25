@@ -11,6 +11,7 @@ const { Stmt } = require('../db/statements.js');
 const { json } = require('../http/responses.js');
 const { contactLimiter } = require('../http/rate-limit.js');
 const { rejectRateLimited } = require('../http/helpers.js');
+const { readGroup, writeGroupMeta } = require('../groups/store.js');
 const { notifyUser } = require('../push/vapid.js');
 const { broadcastUsersAround, connectContacts, push, pushName, pushStories, removeContacts, updateContactRequests } = require('../realtime/notify.js');
 const { validAvatar } = require('../shared/validation.js');
@@ -62,10 +63,10 @@ function postContacts(req, res, url, data, actor) {
     const target = byName(typeof data.username === 'string' ? data.username.trim() : '');
     if (!target) return json(res, 404, { error: 'No account found.' });
     if (target.id === req.authUser.id) return json(res, 400, { error: 'No puedes agregarte.' });
-    if (req.authUser.contacts.includes(target.id)) return json(res, 200, { ok: true, status: 'contact' });
+    if (req.authUser.contacts.has(target.id)) return json(res, 200, { ok: true, status: 'contact' });
     if (isBlockedBy(profiles[target.username], actor) || isBlockedBy(profiles[actor], target.username))
         return json(res, 403, { error: 'Bloqueo activo.' });
-    if (target.contacts.includes(req.authUser.id)) {
+    if (target.contacts.has(req.authUser.id)) {
         connectContacts(req.authUser, target);
         return json(res, 200, { ok: true, status: 'contact' });
     }
@@ -86,7 +87,7 @@ function postContacts(req, res, url, data, actor) {
 
 function postContactsRemove(req, res, url, data, actor) {
     const target = byName(typeof data.username === 'string' ? data.username.trim() : '');
-    if (!target || target.id === req.authUser.id || !req.authUser.contacts.includes(target.id))
+    if (!target || target.id === req.authUser.id || !req.authUser.contacts.has(target.id))
         return json(res, 404, { error: 'No disponible.' });
     removeContacts(req.authUser, target);
     pushStories();
@@ -142,6 +143,16 @@ function postBlock(req, res, url, data, actor) {
         Stmt.deleteContactRequest.run(target.id, req.authUser.id);
         for (const [key, o] of pendingOffers) {
             if ((o.from === actor && o.to === target.username) || (o.from === target.username && o.to === actor)) pendingOffers.delete(key);
+        }
+        /* Y las solicitudes de entrada pendientes del bloqueado desaparecen
+           de los grupos que el bloqueador administra (BUG-006): si quedaran,
+           otro admin las aprobaba sin saber que la puerta ya estaba cerrada. */
+        for (const r of Stmt.listUserJoinRequests.all(target.id)) {
+            const g = readGroup(r.gid);
+            if (!g || !g.admins.some(name => byName(name)?.id === req.authUser.id)) continue;
+            if (!g.joinRequests.some(jr => jr.userId === target.id)) continue;
+            g.joinRequests = g.joinRequests.filter(jr => jr.userId !== target.id);
+            writeGroupMeta(g);
         }
     }
     blockedSet.set(actor, set);

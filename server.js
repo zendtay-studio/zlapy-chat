@@ -67,6 +67,19 @@ if (cryptoVersion !== '2') {
     Stmt.setMeta.run('crypto_version', '2');
 }
 
+/* La versión del FORMATO POR FILA es otra: los mensajes v3 llevan
+   crypto_version = 3 (y rowToMessage exige PCE3/crypto_version=3). En una
+   base de la versión anterior la columna nació con DEFAULT 2:
+   `CREATE TABLE IF NOT EXISTS` no toca la tabla existente, las filas
+   antiguas se quedan en 2 y —sin esta guarda— el servidor arrancaba igual
+   mientras TODAS las páginas de historial descartaban esos mensajes en
+   silencio ([crypto] Versión no soportada). Mejor no arrancar con un
+   mensaje claro que servir historiales invisibles. */
+const incompatibleRow = db.prepare('SELECT id, crypto_version FROM messages WHERE crypto_version <> 3 LIMIT 1').get();
+if (incompatibleRow)
+    throw new Error(`Mensajes con una versión de cifrado incompatible (id=${incompatibleRow.id}, crypto_version=${incompatibleRow.crypto_version}). ` +
+        'Este servidor solo lee PCE3/crypto_version=3. Restaura la base desde un respaldo de backups/ o arranca con una base nueva.');
+
 // Carga las cuentas, los grupos y las historias en memoria.
 loadFromDb();
 

@@ -17,14 +17,20 @@ const PRIV_KEYS = ['foto', 'nota', 'descripcion', 'historias', 'llamadas', 'mens
    (nota, historias, llamadas, mensajes, compartir) es solo para contactos. */
 const PRIV_DEF = { foto: 'server', nota: 'contacts', descripcion: 'server', historias: 'contacts', llamadas: 'contacts', mensajes: 'contacts', compartir: 'contacts' };
 /* Normaliza las reglas de privacidad: cada función acaba con un modo válido
-   y una lista de usuarios, aunque el cliente envíe campos raros o ausentes. */
+   y una lista de usuarios, aunque el cliente envíe campos raros o ausentes.
+   La lista de excepciones se canoniza AQUÍ (minúsculas, sin espacios): así
+   las comparaciones de 'only'/'except' son una búsqueda directa sin volver a
+   normalizar cada elemento en cada petición (PERF-P06). */
 const normPriv = raw => {
     const out = {};
     for (const k of PRIV_KEYS) {
         const v = (raw && raw[k]) || {};
         const mode = v.mode === 'all' ? 'server'
             : ['server', 'contacts', 'nobody', 'except', 'only'].includes(v.mode) ? v.mode : PRIV_DEF[k];
-        out[k] = { mode, users: Array.isArray(v.users) ? v.users.filter(u => typeof u === 'string') : [] };
+        const users = Array.isArray(v.users)
+            ? v.users.filter(u => typeof u === 'string' && u.trim()).map(u => u.trim().toLowerCase())
+            : [];
+        out[k] = { mode, users };
     }
     return out;
 };
@@ -32,7 +38,7 @@ const normPriv = raw => {
 const isContact = (owner, viewer) => {
     if (!owner || !viewer || viewer === owner.username) return false;
     const oA = byName(owner.username), vA = byName(viewer);
-    return !!(oA && vA && oA.contacts.includes(vA.id));
+    return !!(oA && vA && oA.contacts.has(vA.id));
 };
 /* ¿El propietario tiene bloqueado a este visor? Se compara por nombre
    normalizado: el conjunto se indexa por el nombre canónico (minúsculas). */
@@ -50,16 +56,31 @@ const accountsBlocked = (first, second) => {
     return (s1 && s1.has(b)) || (s2 && s2.has(a)) || false;
 };
 
+/* Memoización por objeto de perfil (PERF-P06): privacyFor recalculaba
+   normPriv y revisaba los legacy en cada llamada (permite se llama una vez
+   por historia y espectador en cada envío o push). La clave es el PROPIO
+   objeto: cambiar de identidad (renombrar, reconstruir en el arranque) crea
+   un objeto nuevo y la caché se invalida sola. Para cambios DENTRO del mismo
+   objeto (guardados de /profile, fusión por WebSocket) hay que avisar con
+   privacyCacheBust. */
+const privacyMemo = new WeakMap();
 const privacyFor = owner => {
-    const privacy = normPriv(owner && owner.privacy);
+    if (!owner) return normPriv(null);
+    let privacy = privacyMemo.get(owner);
+    if (privacy !== undefined) return privacy;
+    privacy = normPriv(owner.privacy);
     // El ajuste de foto o descripción en modo privado se respeta mientras no
     // exista una regla por función que lo sustituya.
-    if (owner && (!owner.privacy || !Object.prototype.hasOwnProperty.call(owner.privacy, 'foto')) && owner.privacyPhoto === 'private')
+    if ((!owner.privacy || !Object.prototype.hasOwnProperty.call(owner.privacy, 'foto')) && owner.privacyPhoto === 'private')
         privacy.foto = { mode: 'nobody', users: [] };
-    if (owner && (!owner.privacy || !Object.prototype.hasOwnProperty.call(owner.privacy, 'descripcion')) && owner.privacyDesc === 'private')
+    if ((!owner.privacy || !Object.prototype.hasOwnProperty.call(owner.privacy, 'descripcion')) && owner.privacyDesc === 'private')
         privacy.descripcion = { mode: 'nobody', users: [] };
+    privacyMemo.set(owner, privacy);
     return privacy;
 };
+/* Descarta la copia en caché de un perfil: se llama en los sitios que
+   MUTAN el objeto por dentro (p.privacy = ...) en vez de reemplazarlo. */
+const privacyCacheBust = owner => { if (owner && typeof owner === 'object') privacyMemo.delete(owner); };
 
 const permite = (owner, key, viewer) => {
     if (!owner) return false;
@@ -73,9 +94,11 @@ const permite = (owner, key, viewer) => {
     if (p.mode === 'server') return true;
     if (p.mode === 'contacts') return isContact(owner, v);
     if (p.mode === 'nobody') return false;
-    if (p.mode === 'only') return isContact(owner, v) && p.users.some(u => normName(u) === v);
+    // Listas ya canonizadas (minúsculas) en normPriv: comparación directa
+    // sin allocar un normName por elemento en cada llamada.
+    if (p.mode === 'only') return isContact(owner, v) && p.users.includes(v);
     // 'except': todos los contactos menos los de la lista.
-    return isContact(owner, v) && !p.users.some(u => normName(u) === v);
+    return isContact(owner, v) && !p.users.includes(v);
 };
 const permiteDescripcion = (owner, viewer) => permite(owner, 'descripcion', viewer);
 
@@ -93,6 +116,7 @@ module.exports = {
     normName,
     accountsBlocked,
     privacyFor,
+    privacyCacheBust,
     permite,
     permiteDescripcion,
     isBlockedBy,

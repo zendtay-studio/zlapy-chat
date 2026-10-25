@@ -57,7 +57,7 @@ function hydrateUserFromDb(acc) {
     // Contactos: se cargan de la base porque la lista no debe depender solo
     // de la RAM (la privacidad por defecto "solo contactos" denegaría los DMs
     // en silencio si la lista llegara vacía).
-    acc.contacts = Stmt.listContacts.all(acc.id).map(r => r.contact);
+    acc.contacts = new Set(Stmt.listContacts.all(acc.id).map(r => r.contact));
 
     // Stickers favoritos
     acc.stickers = Stmt.listStickers.all(acc.id).map(r => r.sticker).slice(-30);
@@ -327,7 +327,7 @@ function userFromRow(row) {
         publicKey: null,
         groupSeen: {},
         stickers: [],
-        contacts: [],
+        contacts: new Set(),
         addPolicy: ['all', 'request', 'nobody'].includes(row.add_policy) ? row.add_policy : 'request',
         createdAt: row.created_at || 0,
         sockets: new Set(), online: false, lastSeen: row.last_seen || null
@@ -385,7 +385,7 @@ function purgeUserFromMemory(id, username) {
     for (const [key, o] of pendingOffers) if (o.to === username || o.from === username || o.toId === id || o.fromId === id) pendingOffers.delete(key);
     // Quitar al usuario de los contactos/bloqueos de los demás (en RAM).
     for (const other of users.values()) {
-        other.contacts = other.contacts.filter(cid => cid !== id);
+        other.contacts.delete(id);
         const set = blockedSet.get(other.username);
         if (set && set.delete(username)) profiles[other.username] && (profiles[other.username].blocked = [...set]);
     }

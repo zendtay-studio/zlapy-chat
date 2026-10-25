@@ -11,6 +11,26 @@ const { findMessage, rowToMessage } = require('./messages.js');
 const { decryptForUser, encryptForUser } = require('../crypto/setup.js');
 const { Stmt } = require('../db/statements.js');
 const { users } = require('../state.js');
+const { makeCache } = require('../shared/cache.js');
+
+/* Caché de descifrado del preview (PERF-P03). La lista de conversaciones
+   descifraba con AES-GCM el `last_data` de CADA fila en cada GET. La clave de
+   esta caché es la PROPIA copia cifrada: si el resumen cambia, el cifrado
+   cambia y la entrada vieja deja de acertar — no hay que invalidar nada a
+   mano. Los fallos de descifrado NO se cachean (el sanador debe poder
+   reconstruir después de una rotación). Memoria acotada por desalojo de uso
+   (shared/cache). */
+const SUMMARY_PLAIN_CACHE_MAX = 20000;
+const summaryPlainCache = makeCache({ max: SUMMARY_PLAIN_CACHE_MAX });
+const decryptSummaryCached = (owner, cipher) => {
+    if (!cipher) return null;
+    let plain = summaryPlainCache.get(cipher);
+    if (plain !== undefined) return plain;
+    plain = decryptForUser(owner, cipher) ?? null;
+    if (!plain) return plain;
+    summaryPlainCache.set(cipher, plain);
+    return plain;
+};
 
 // Resúmenes de chat (1:1)
 function resolveName(id) {
@@ -38,7 +58,7 @@ function readSummaryEntry(owner, peer) {
     // La copia de resumen se guarda cifrada con la clave del usuario: si no,
     // expondría en claro los primeros 200 caracteres del mensaje. Se tolera
     // el formato antiguo sin migrar.
-    try { const raw = row.last_data ? decryptForUser(owner, row.last_data) : null; last = raw ? JSON.parse(raw) : null; } catch { }
+    try { const raw = decryptSummaryCached(owner, row.last_data); last = raw ? JSON.parse(raw) : null; } catch { }
     return { peerId: peer, peer: resolveName(peer), unread: row.unread, last };
 }
 
@@ -138,6 +158,7 @@ function renamePeerInSummaries(owner, peer, newName) {
 }
 
 module.exports = {
+    decryptSummaryCached,
     resolveName,
     decorateForClient,
     readSummaryEntry,

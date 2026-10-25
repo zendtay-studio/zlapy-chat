@@ -14,14 +14,13 @@ const RANK = { sent: 1, delivered: 2, read: 3 };
 const crypto = require('crypto');
 const { blobAvailableTo, blobHashOk, blobQuotaOk, invalidateBlobQuota, readBlob, storeBlob } = require('./media.js');
 const { deleteMessageById, filterForViewer, getChatPage, invalidateChatPage, readMessagePage, resolveReply, rowToMessage, updateStoredMessage } = require('./messages.js');
-const { decorateForClient, healSummary, onChatDeletedSummary, onMessageDeletedSummary, onMessageSentSummary, onReadSummary, readSummaryEntry, resolveName, writeSummaryEntry } = require('./summaries.js');
+const { decorateForClient, decryptSummaryCached, healSummary, lastEntryFromMsg, onChatDeletedSummary, onMessageDeletedSummary, onMessageSentSummary, onReadSummary, readSummaryEntry, resolveName, writeSummaryEntry } = require('./summaries.js');
 const { applyChatPrefs, readChatPrefs, resolveTarget } = require('./prefs.js');
 const { CONFIG } = require('../config.js');
-const { decryptForUser } = require('../crypto/setup.js');
 const { db } = require('../db/database.js');
 const { Stmt } = require('../db/statements.js');
 const { pruneBlobHashes, tx } = require('../db/transactions.js');
-const { groupPolicies, healGroupSummary, readGroup } = require('../groups/store.js');
+const { groupLastEntry, groupPolicies, healGroupSummary, readGroup, readGroupSummary, writeGroupSummary } = require('../groups/store.js');
 const { rejectRateLimited, rejectRateLimitedMessage } = require('../http/helpers.js');
 const { chatPrefsLimiter, receiptLimiter } = require('../http/rate-limit.js');
 const { json, securityHeaders } = require('../http/responses.js');
@@ -78,7 +77,7 @@ function getChatsSummary(req, res, url, data, actor) {
     // se tolera tal cual).
     let last = null;
     try {
-    const raw = row.last_data ? decryptForUser(uuid, row.last_data) : null;
+    const raw = decryptSummaryCached(uuid, row.last_data);
     last = raw ? JSON.parse(raw) : null;
     /* Copia cifrada que YA no se puede leer (quedó con la clave anterior a la
        corrección de la rotación): el resumen es una caché, se reconstruye
@@ -97,11 +96,14 @@ function getChatsSummary(req, res, url, data, actor) {
     // Los grupos van con el mismo trato: así la lista ENTERA la ordena el
     // servidor, no cada cliente por su cuenta.
     for (const row of Stmt.listGroupSummaries.all(uuid)) {
+        // Grupo ocultado manualmente por esta cuenta (BUG-013): fuera de la
+        // lista hasta que un mensaje nuevo lo reabra.
+        if (Stmt.chatDeletedFor.get('group:' + row.gid, uuid)) continue;
         let last = null;
         const cifrado = String(row.last_data || '').startsWith('PCE3:');
         if (cifrado) {
             try {
-                const raw = row.last_data ? decryptForUser(uuid, row.last_data) : null;
+                const raw = decryptSummaryCached(uuid, row.last_data);
                 last = raw ? JSON.parse(raw) : null;
                 // Misma regla que los DMs: solo se reconstruye lo ilegible.
                 if (!last && raw === null) {
@@ -323,9 +325,10 @@ function postSend(req, res, url, data, actor) {
     }
     const pk = pairKeyFromIds(sender.id, recipient.id);
     tx.sendMessage(msg, 'chat:' + pk);
-    // Un mensaje nuevo reabre la conversación que el destinatario
-    // había borrado de su lista.
+    // Un mensaje nuevo reabre la conversación que el destinatario — o el
+    // propio emisor al volver a escribir — había borrado de su lista.
     Stmt.deleteChatDeletion.run('chat:' + pk, recipient.id);
+    Stmt.deleteChatDeletion.run('chat:' + pk, sender.id);
     invalidateChatPage(pk);
     onMessageSentSummary(msg);
     const decorated = decorateForClient(msg);
@@ -472,6 +475,29 @@ function postMsgEdit(req, res, url, data, actor) {
     m.enc = typeof data.enc === 'string' && (data.enc === 'e2' || data.enc === 'g2') ? data.enc : (m.enc || '');
     m.edited = true;
     updateStoredMessage(m, row);
+    /* El resumen de la lista de chats cachea el último mensaje: si el
+       mensaje editado ES esa vista previa, se reescribe con el texto nuevo
+       (antes quedaba congelada con el texto viejo hasta el siguiente
+       mensaje, y podía usarse para "espiar" el texto editado en la lista).
+       Patrón idéntico al reescrito al borrar (router.js, data.deleteMessage). */
+    if (isGroup) {
+        const ultimo = groupLastEntry(m);
+        for (const uuid of group.memberIds) {
+            const groupEntry = readGroupSummary(uuid, group.id);
+            if (groupEntry && groupEntry.last && groupEntry.last.id === m.id) {
+                groupEntry.last = ultimo;
+                writeGroupSummary(uuid, group.id, groupEntry);
+            }
+        }
+    } else {
+        for (const [ownerId, peerId] of [[m.fromId, m.toId], [m.toId, m.fromId]]) {
+            if (!ownerId || !peerId) continue;
+            const entry = readSummaryEntry(ownerId, peerId);
+            if (!entry || !entry.last || entry.last.id !== m.id) continue;
+            entry.last = { ...lastEntryFromMsg(m), prevId: entry.last.prevId || null };
+            writeSummaryEntry(ownerId, peerId, entry);
+        }
+    }
     if (!isGroup) invalidateChatPage(pairKeyFromIds(m.fromId, m.toId));
     const editEvent = {
         type: 'msgEdit', id: data.id, data: data.data, enc: m.enc,
@@ -515,7 +541,17 @@ function postChatDelete(req, res, url, data, actor) {
     const keepSummary = data.keepSummary === true;
     const clearBoth = data.clearBoth === true;
     const targets = [];
+    // Los chats de grupo se aceptan como "group:<gid>" (BUG-013): ocultar el
+    // grupo de la lista sin dejar de ser miembro. Vaciar "para los dos" no
+    // aplica: el historial de un grupo es de todos los miembros.
+    const groupTargets = [];
     for (const peer of peers) {
+        if (peer.startsWith('group:')) {
+            const g = readGroup(peer.slice(6));
+            if (!g || !g.memberIds.includes(req.authUser.id)) return json(res, 404, { error: 'chat not found' });
+            groupTargets.push(g);
+            continue;
+        }
         if (peer !== actor && !byName(peer)) return json(res, 404, { error: 'chat not found' });
         const peerAcc = byName(peer);
         const peerId = peer === actor ? req.authUser.id : (peerAcc ? peerAcc.id : null);
@@ -523,6 +559,7 @@ function postChatDelete(req, res, url, data, actor) {
         targets.push({ peer, peerId, pk: pairKeyFromIds(req.authUser.id, peerId) });
     }
     if (clearBoth) {
+        if (groupTargets.length) return json(res, 400, { error: 'Vaciar un grupo no está disponible.' });
         // Vaciar para los dos: se borran los mensajes del chat y se avisa a
         // ambas partes para que limpien su copia local.
         // UNA transacción para todos los chats: si algo falla a medias, antes
@@ -539,11 +576,12 @@ function postChatDelete(req, res, url, data, actor) {
                 Stmt.deleteChatDeletion.run(chatKey, req.authUser.id);
                 Stmt.deleteChatDeletion.run(chatKey, target.peerId);
                 // Los dos resúmenes (el de cada parte) dejan de mostrar el
-                // último mensaje.
-                Stmt.deleteSummary.run(req.authUser.id, target.peerId);
-                Stmt.deleteSummary.run(target.peerId, req.authUser.id);
-                onChatDeletedSummary(req.authUser.id, target.peerId);
-                onChatDeletedSummary(target.peerId, req.authUser.id);
+                // último mensaje. keepSummary conserva el chat en la lista,
+                // vacío para los dos (BUG-008: aquí se ignoraba).
+                if (!keepSummary) {
+                    Stmt.deleteSummary.run(req.authUser.id, target.peerId);
+                    Stmt.deleteSummary.run(target.peerId, req.authUser.id);
+                }
                 invalidateChatPage(target.pk);
                 hechos.push(target.peer);
             }
@@ -564,13 +602,31 @@ function postChatDelete(req, res, url, data, actor) {
         peerId: target.peerId,
         pk: target.pk
     })), now, keepSummary);
+    // Ocultar grupos de la lista sin salir (BUG-013): marca de conversación
+    // oculta + fuera el resumen. Un mensaje nuevo reabre el chat: el envío
+    // de grupo limpia la marca de TODOS los miembros (store.js).
+    if (groupTargets.length) {
+        const ocultar = db.transaction(gids => {
+            for (const gid of gids) {
+                Stmt.insertChatDeletion.run('group:' + gid, req.authUser.id, now);
+                Stmt.deleteGroupSummary.run(req.authUser.id, gid);
+            }
+        });
+        ocultar(groupTargets.map(g => g.id));
+    }
+    const me = users.get(req.authUser.id);
     for (const target of targets) {
         if (!keepSummary) onChatDeletedSummary(req.authUser.id, target.peerId);
         invalidateChatPage(target.pk);
-        const fromU = users.get(req.authUser.id);
-        if (fromU) push(fromU, { type: 'chatDelete', peer: target.peer });
+        if (me) push(me, { type: 'chatDelete', peer: target.peer });
     }
-    return json(res, 200, { ok: true, scope: 'me', deleted: targets.map(target => target.peer) });
+    for (const g of groupTargets) {
+        if (me) push(me, { type: 'chatDelete', peer: 'group:' + g.id });
+    }
+    return json(res, 200, { ok: true, scope: 'me', deleted: [
+        ...targets.map(target => target.peer),
+        ...groupTargets.map(g => 'group:' + g.id)
+    ] });
 }
 
 function postMessages(req, res, url, data, actor) {

@@ -46,7 +46,7 @@ const { groupCache, profiles, stories, users } = require('../state.js');
 const { getGiphySearch, getStickers, postStickers } = require('../stickers/routes.js');
 const { getStories, postStory, postStoryLike } = require('../stories/routes.js');
 const { byName } = require('../users/helpers.js');
-const { isContact } = require('../users/privacy.js');
+const { isBlockedBy, isContact } = require('../users/privacy.js');
 
 const handleRequest = (req, res) => {
     let url;
@@ -357,6 +357,15 @@ const handleRequest = (req, res) => {
                     const invited = typeof data.inviteCode === 'string' && data.inviteCode === g.inviteCode;
                     if (g.visibility !== 'public' && !invited) return json(res, 404, { error: 'No disponible.' });
                     if (g.joinPolicy === 'closed') return json(res, 403, { error: 'Cerrado.' });
+                    /* Un bloqueo en cualquiera de los dos sentidos con
+                       cualquier admin cierra la puerta (BUG-006): antes se
+                       podía entrar por open o dejar pendiente una solicitud
+                       que otro admin aprobaría sin conocer el bloqueo. */
+                    for (const name of g.admins) {
+                        const admin = profiles[name];
+                        if (admin && (isBlockedBy(admin, actor) || isBlockedBy(profiles[actor], name)))
+                            return json(res, 403, { error: 'Bloqueo activo.' });
+                    }
                     /* El coste por mensaje crece con el número de miembros:
                        sin tope, un grupo popular era un fan-out sin techo. */
                     if (g.members.length >= CONFIG.maxGroupMembers)
@@ -511,9 +520,16 @@ const handleRequest = (req, res) => {
                     if (g.members.length >= CONFIG.maxGroupMembers) return json(res, 403, { error: 'El grupo está lleno.' });
                     if (!g.members.includes(newMember.username)) {
                         g.members.push(newMember.username); g.memberIds.push(newMember.id);
+                        // La solicitud pendiente del añadido (si la había) muere
+                        // aquí: dejarla viva permitía duplicar la admisión con
+                        // approveJoin (BUG-005, BUG-004).
+                        g.joinRequests = g.joinRequests.filter(r => r.userId !== newMember.id);
                         writeGroupMeta(g);
                         initializeGroupSummary(newMember.id, id);
                         notifyGroup('group');
+                    } else if (g.joinRequests.some(r => r.userId === newMember.id)) {
+                        g.joinRequests = g.joinRequests.filter(r => r.userId !== newMember.id);
+                        writeGroupMeta(g);
                     }
                     return json(res, 200, pub(g));
                 }
@@ -544,6 +560,19 @@ const handleRequest = (req, res) => {
                     g.members = g.members.filter(u => u !== actor);
                     g.admins = g.admins.filter(u => u !== actor);
                     g.memberIds = g.memberIds.filter(id2 => id2 !== req.authUser.id);
+                    /* El owner que sale transfiere la propiedad DE VERDAD
+                       (BUG-002): si owner_id quedara apuntando a un ex
+                       miembro, readGroup lo devolvía como admin fantasma en
+                       cada lectura. Hereda el primer admin restante, o el
+                       primer miembro si no queda ningún admin. */
+                    if (g.ownerId === req.authUser.id && g.members.length) {
+                        const heir = g.admins.length ? g.admins[0] : g.members[0];
+                        const heirAcc = byName(heir);
+                        if (heirAcc) {
+                            g.ownerId = heirAcc.id;
+                            if (!g.admins.includes(heir)) g.admins.push(heir);
+                        }
+                    }
                     if (!g.admins.length && g.members.length) g.admins = [g.members[0]];
                     if (g.members.length) writeGroupMeta(g);
                     else {
@@ -573,6 +602,12 @@ const handleRequest = (req, res) => {
                 }
                 if (data.deleteGroup === true) {
                     if (!isAdmin) return json(res, 403, { error: 'Solo admins.' });
+                    /* Borrar el grupo entero (con el historial de todos) es
+                       decisión del propietario, no de cualquier admin
+                       (BUG-001). Si el owner ya no existe (owner_id vacío),
+                       un admin puede cerrar el grupo huérfano. */
+                    if (g.ownerId && g.ownerId !== req.authUser.id)
+                        return json(res, 403, { error: 'Solo el propietario puede borrar el grupo.' });
                     for (const uuid of g.memberIds) deleteGroupSummary(uuid, id);
                     pruneBlobHashes(tx.deleteGroup(id));
                     groupCache.delete(id);
@@ -591,11 +626,34 @@ const handleRequest = (req, res) => {
                     if (!isAdmin) return json(res, 403, { error: 'Solo admins.' });
                     const requested = byName(data.approveJoin || data.rejectJoin);
                     if (!requested || !g.joinRequests.some(r => r.userId === requested.id)) return json(res, 404, { error: 'No disponible.' });
+                    // El tope de miembros vale también aquí (BUG-003): aprobar
+                    // era una vía de bypass de maxGroupMembers frente a join y
+                    // addMember.
+                    if (data.approveJoin && g.members.length >= CONFIG.maxGroupMembers)
+                        return json(res, 403, { error: 'El grupo está lleno.' });
+                    /* Bloqueo en cualquiera de los dos sentidos entre el
+                       solicitante y cualquier admin (BUG-006): la solicitud se
+                       consume y se rechaza en vez de quedar clavada. */
+                    if (data.approveJoin) {
+                        const conBloqueo = g.admins.some(name => {
+                            const admin = profiles[name];
+                            return !!admin && (isBlockedBy(admin, requested.username) || isBlockedBy(profiles[requested.username], name));
+                        });
+                        if (conBloqueo) {
+                            g.joinRequests = g.joinRequests.filter(r => r.userId !== requested.id);
+                            writeGroupMeta(g);
+                            pushName(requested.username, { type: 'group-request-rejected', groupId: id });
+                            return json(res, 403, { error: 'Bloqueo activo.' });
+                        }
+                    }
+                    // Ya miembro (ventana de addMember con solicitud viva):
+                    // no duplicar ni resetear su contador de no leídos (BUG-004).
+                    const yaMiembro = g.memberIds.includes(requested.id);
                     g.joinRequests = g.joinRequests.filter(r => r.userId !== requested.id);
-                    if (data.approveJoin) { g.members.push(requested.username); g.memberIds.push(requested.id); }
-                    else pushName(requested.username, { type: 'group-request-rejected', groupId: id });
+                    if (data.approveJoin && !yaMiembro) { g.members.push(requested.username); g.memberIds.push(requested.id); }
+                    else if (!data.approveJoin) pushName(requested.username, { type: 'group-request-rejected', groupId: id });
                     writeGroupMeta(g);
-                    if (data.approveJoin) initializeGroupSummary(requested.id, id);
+                    if (data.approveJoin && !yaMiembro) initializeGroupSummary(requested.id, id);
                     notifyGroup('group');
                     if (data.approveJoin) pushName(requested.username, { type: 'group', group: pub(g) });
                     return json(res, 200, pub(g));
@@ -623,22 +681,29 @@ const handleRequest = (req, res) => {
                     if (data.approveAdmin && !g.admins.includes(target.username)) g.admins.push(target.username);
                     if (data.removeAdmin) {
                         if (target.id === req.authUser.id) return json(res, 400, { error: 'No puedes quitarte tu propio rol.' });
+                        /* Despromocionar al propietario es una no-op silenciosa:
+                           el rol se restauraba en writeGroupMeta/readGroup y el
+                           200 engañaba a la UI (BUG-007). Mejor decirlo. */
+                        if (target.id === g.ownerId) return json(res, 400, { error: 'El propietario no puede perder el rol de admin.' });
                         g.admins = g.admins.filter(u => u !== target.username);
                     }
                     writeGroupMeta(g); notifyGroup('group');
                     return json(res, 200, pub(g));
                 }
                 const settingsKeys = ['rename', 'description', 'avatar', 'visibility', 'joinPolicy', 'writePolicy', 'addPolicy', 'editPolicy', 'mentionAllPolicy', 'contentPolicy'];
-                /* Ajustes que deciden QUIÉN entra, QUIÉN edita o QUIÉN ve el
-                   grupo: reservados a admins aunque editPolicy sea 'all'.
-                   Con el guard antiguo, cualquier miembro con editPolicy=all
-                   ponía el grupo en público + joinPolicy=open a espaldas del
-                   dueño (SECOA-A-002, comprobado en la auditoría). */
-                const adminOnlySettings = ['visibility', 'joinPolicy', 'addPolicy', 'editPolicy', 'mentionAllPolicy'];
+                /* Ajustes que deciden QUIÉN entra, QUIÉN edita, QUIÉN escribe
+                   o QUIÉN ve el grupo: reservados a admins aunque editPolicy
+                   sea 'all'. Con el guard antiguo, cualquier miembro con
+                   editPolicy=all ponía el grupo en público + joinPolicy=open
+                   (SECOA-A-002); sin writePolicy/contentPolicy aquí, el mismo
+                   miembro podía SILENCIAR a los no-admins (writePolicy='admins')
+                   o desactivar los medios sin ser admin (SECOA-N-02). */
+                const adminOnlySettings = ['visibility', 'joinPolicy', 'addPolicy', 'editPolicy', 'mentionAllPolicy', 'writePolicy', 'contentPolicy'];
                 if (settingsKeys.some(k => Object.prototype.hasOwnProperty.call(data, k))) {
                     if (!isAdmin && g.editPolicy !== 'all') return json(res, 403, { error: 'Solo admins.' });
                     if (!isAdmin && adminOnlySettings.some(k => Object.prototype.hasOwnProperty.call(data, k)))
                         return json(res, 403, { error: 'Ese ajuste es solo para admins.' });
+                    const previousVisibility = g.visibility;
                     if (Object.prototype.hasOwnProperty.call(data, 'rename')) {
                         if (typeof data.rename !== 'string' || !data.rename.trim() || data.rename.length > 40) return json(res, 400, { error: 'Nombre inválido.' });
                         g.name = data.rename.trim();
@@ -667,6 +732,13 @@ const handleRequest = (req, res) => {
                             return json(res, 400, { error: 'contentPolicy inválido.' });
                         g.contentPolicy = { ...g.contentPolicy, ...data.contentPolicy };
                     }
+                    /* El inviteCode es una credencial y los mensajes
+                       group-invite la CONGELAN en su texto (chat/routes.js):
+                       si el grupo pasa de público a privado sin rotarla, una
+                       invitación antigua seguía entrando por el código tras
+                       la privatización (SECOA-N-03). */
+                    if (previousVisibility === 'public' && g.visibility === 'private')
+                        g.inviteCode = crypto.randomBytes(18).toString('base64url');
                     writeGroupMeta(g); notifyGroup('group');
                     return json(res, 200, pub(g));
                 }

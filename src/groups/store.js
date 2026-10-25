@@ -11,11 +11,13 @@
 const crypto = require('crypto');
 const { rowToMessage } = require('../chat/messages.js');
 const { decorateForClient, resolveName } = require('../chat/summaries.js');
-const { decryptAtRest, decryptForUser, encryptAtRest, encryptForUser } = require('../crypto/setup.js');
+const { decryptAtRest, encryptAtRest, encryptForUser } = require('../crypto/setup.js');
 const { Stmt, deleteGroupSummary } = require('../db/statements.js');
+const { db } = require('../db/database.js');
 const { push } = require('../realtime/notify.js');
 const { groupCache, groupPubCache, users } = require('../state.js');
 const { byName, parseJsonSafe } = require('../users/helpers.js');
+const { makeCache } = require('../shared/cache.js');
 
 // Grupos — carga con caché
 const groupPolicies = {
@@ -54,27 +56,25 @@ function normalizeGroup(g) {
     return g;
 }
 
-/* Caché de GRUPOS INEXISTENTES (gid →caduca). Los ids que no existen NO se
-   cacheaban, así que resolver 200 targets con ids aleatorios eran 200 SELECT
-   por petición. TTL corto: si el grupo nace poco después, groupCache (que va
-   primero) lo tapa. */
-const groupNegCache = new Map();
+/* Caché de GRUPOS INEXISTENTES (gid → marca de tiempo). Los gids que no
+   existen NO se cacheaban, así que barrer 200 objetivos con ids aleatorios
+   era una compila SQL por petición cada vez (una vía barata de congelar el
+   servicio con consultas inútiles). Con shared/cache ("Redis sin Redis") la
+   vida (ttl) caduca y desaloja sola; el tope (max) desaloja por uso, sin
+   barrido manual. TTL corto: si el grupo nace poco después, groupCache (que
+   va primero) lo tapa. */
 const GROUP_NEG_TTL_MS = 5000;
 const GROUP_NEG_MAX = 4096;
-function groupNegMiss(gid, ahora) {
-    if (groupNegCache.size > GROUP_NEG_MAX) {
-        for (const [key, expira] of groupNegCache) if (expira <= ahora) groupNegCache.delete(key);
-        if (groupNegCache.size > GROUP_NEG_MAX) groupNegCache.clear();
-    }
-    groupNegCache.set(gid, ahora + GROUP_NEG_TTL_MS);
-}
-function invalidateGroupNegCache(gid) { groupNegCache.delete(gid); }
+const groupNegCache = makeCache({ max: GROUP_NEG_MAX, ttl: GROUP_NEG_TTL_MS });
+const groupNegMiss = (gid, ahora) => groupNegCache.set(gid, ahora);
+const invalidateGroupNegCache = gid => groupNegCache.delete(gid);
 
 function readGroup(gid) {
     if (groupCache.has(gid)) return groupCache.get(gid);
+    // Marcar inexistencia: la caché caduca por TTL; cualquier valor vivo
+    // impide repetir el SELECT. groupNegMiss guarda la hora para depurar.
     const ahora = Date.now();
-    const neg = groupNegCache.get(gid);
-    if (neg && neg > ahora) return null;
+    if (groupNegCache.get(gid) !== undefined) return null;
     const row = Stmt.getGroup.get(gid);
     if (!row) { groupNegMiss(gid, ahora); return null; }
     const keys = decryptGroupKeys(row.keys_cipher);
@@ -165,7 +165,10 @@ function writeGroupMeta(g) {
     Stmt.deleteJoinRequestsByGid.run(normalized.id);
     for (const r of normalized.joinRequests || []) {
         if (!r || !users.has(r.userId)) continue;
-        Stmt.insertJoinRequest.run(normalized.id, r.userId, r.username || users.get(r.userId).username, r.ts || Date.now());
+        // El nombre se resuelve SIEMPRE al actual (BUG-010): r.username era
+        // el snapshot de la fila original y el renombrado de la cuenta no
+        // se propagaba a la lista de solicitudes.
+        Stmt.insertJoinRequest.run(normalized.id, r.userId, users.get(r.userId).username, r.ts || Date.now());
     }
     normalized.ownerId = ownerId || '';
     normalized.members = [...memberIds].map(id => users.get(id).username);
@@ -232,7 +235,7 @@ function readGroupSummary(owner, gid) {
     const row = Stmt.getGroupSummary.get(owner, gid);
     if (!row) return null;
     let last = null;
-    try { const raw = row.last_data ? decryptForUser(owner, row.last_data) : null; last = raw ? JSON.parse(raw) : null; } catch { }
+    try { const raw = require('../chat/summaries.js').decryptSummaryCached(owner, row.last_data); last = raw ? JSON.parse(raw) : null; } catch { }
     return { gid, unread: row.unread, last };
 }
 function writeGroupSummary(owner, gid, entry) {
@@ -263,21 +266,32 @@ function groupSummaryFor(owner, gid) {
 function updateGroupMessageSummaries(group, msg, senderId) {
     const last = groupLastEntry(lastGroupMessage(group.id));
     const lastData = JSON.stringify(last);
-    // Un solo upsert por miembro: el resumen de cada uno se actualiza con
-    // una única sentencia, en vez de un SELECT seguido de INSERT o UPDATE.
-    for (const uuid of group.memberIds)
-        // Cifrado con la clave de cada miembro, como writeGroupSummary: el
-        // resumen llevaba el preview del último mensaje en claro.
-        Stmt.bumpGroupSummary.run(uuid, group.id, uuid === senderId ? 0 : 1, encryptForUser(uuid, lastData));
-    // Un mensaje nuevo deja de estar marcado a mano como "no leído".
-    for (const uuid of group.memberIds) {
-        if (uuid === senderId) continue;
-        try {
-            // Require perezoso: evita un ciclo entre módulos.
-            const { setUnreadFlag } = require('../chat/prefs.js');
-            setUnreadFlag(uuid, 'group:' + group.id, false);
-        } catch { }
-    }
+    // Require perezoso una vez (evita ciclo con prefs): sin él, cada mensaje
+    // de grupo repetía el require dentro del bucle de miembros (PERF-P05).
+    const { setUnreadFlag } = require('../chat/prefs.js');
+    // Todo el barrido de miembros en UNA transacción (PERF-P05): antes eran
+    // tres bucles auto-commit por mensaje (~5 escrituras atómicas cada
+    // una); ahora un solo fsync y un solo savepoint por pendiente de lectura.
+    const apply = db.transaction(() => {
+        // Un solo upsert por miembro: el resumen de cada uno se actualiza con
+        // una única sentencia, en vez de un SELECT seguido de INSERT o UPDATE.
+        for (const uuid of group.memberIds)
+            // Cifrado con la clave de cada miembro, como writeGroupSummary: el
+            // resumen llevaba el preview del último mensaje en claro.
+            Stmt.bumpGroupSummary.run(uuid, group.id, uuid === senderId ? 0 : 1, encryptForUser(uuid, lastData));
+        // Un mensaje nuevo vuelve a abrir el grupo ocultado manualmente para la
+        // lista (BUG-013), igual que en los DMs con chat_deletions.
+        for (const uuid of group.memberIds)
+            Stmt.deleteChatDeletion.run('group:' + group.id, uuid);
+        // Un mensaje nuevo deja de estar marcado a mano como "no leído".
+        for (const uuid of group.memberIds) {
+            if (uuid === senderId) continue;
+            try {
+                setUnreadFlag(uuid, 'group:' + group.id, false);
+            } catch { }
+        }
+    });
+    apply();
 }
 
 function initializeGroupSummary(uuid, gid) {

@@ -10,6 +10,10 @@
 const { blobDb, db } = require('./database.js');
 const { deleteAccountRows, deleteGroupRows } = require('./schema.js');
 const { Stmt } = require('./statements.js');
+// PERF-P02: contador global de bytes de blobs en RAM. media.js no importa
+// este módulo, así que el require no forma ciclo.
+const { blobBytesGlobalTrack } = require('../chat/media.js');
+const { makeCache } = require('../shared/cache.js');
 
 const stmtBlobHasReference = db.prepare('SELECT 1 FROM blob_access WHERE hash = ? LIMIT 1');
 const stmtBlobRemove = blobDb.prepare('DELETE FROM blobs WHERE hash = ?');
@@ -18,7 +22,14 @@ function pruneBlobHashes(hashes) {
     // que recompilarlas en cada borrado de mensaje o historia costaría una
     // compilación por operación.
     for (const hash of new Set(hashes))
-        if (!stmtBlobHasReference.get(hash)) stmtBlobRemove.run(hash);
+        if (!stmtBlobHasReference.get(hash)) {
+            // PERF-P02: el contador global de blobs en RAM se mantiene al día
+            // con la longitud REAL del blob borrado; primera lectura carga de
+            // la base, así que si aún no hay contador no toca nada.
+            const row = Stmt.blobSize.get(hash);
+            stmtBlobRemove.run(hash);
+            if (row) blobBytesGlobalTrack(-(Number(row.bytes || 0)));
+        }
 }
 
 /* Barrido de blobs huérfanos: adjuntos que nadie referencia. Los deja una
@@ -42,6 +53,11 @@ function sweepOrphanBlobs(limit = ORPHAN_SWEEP_BATCH, log = () => { }, sources =
     const ref = (sources.ref || Stmt.referencedBlobHashes.all().map(r => r.hash));
     const huerfanos = orphanBlobHashes(all, ref, limit);
     if (!huerfanos.length) return 0;
+    // PERF-P02: longitud de cada huérfano antes del purgado, para descontar
+    // el contador global de blobs en RAM con cifras reales.
+    let purgados = 0;
+    for (const hash of huerfanos)
+        purgados += Number(Stmt.blobSize.get(hash)?.bytes || 0);
     // Transacción única: o se van todos los de la tanda o ninguno.
     const purge = blobDb.transaction(hashes => {
         for (const hash of hashes) Stmt.deleteBlobByHash.run(hash);
@@ -51,6 +67,7 @@ function sweepOrphanBlobs(limit = ORPHAN_SWEEP_BATCH, log = () => { }, sources =
         Stmt.pruneOrphanBlobAccess.run();
     });
     purge(huerfanos);
+    blobBytesGlobalTrack(-purgados);
     log(`[blobs] purgados ${huerfanos.length} adjuntos huérfanos`);
     return huerfanos.length;
 }
@@ -67,7 +84,11 @@ const groupMemberIds = gid => {
     return [...ids];
 };
 
-const blobAccessWhereCache = new Map();
+// Sentencias compiladas bajo pedido para cada variante de `where` (siempre
+// literales del código, un repertorio acotado): con shared/cache ("Redis sin
+// Redis") el tope desaloja por uso y la memoria queda acotada aunque algo
+// meta un where con datos en la cadena.
+const blobAccessWhereCache = makeCache({ max: 512 });
 function removeBlobAccess(where, ...values) {
     // Cada variante de `where` se compila una sola vez y se reutiliza.
     let pair = blobAccessWhereCache.get(where);

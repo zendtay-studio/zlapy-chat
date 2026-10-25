@@ -52,7 +52,20 @@ function getAuthSession(req, res, url, data, actor) {
     const user = sessionUser(req);
     if (user) {
     setAccountSessionCookie(res, req, user.id, sessionCookie(req));
-    return json(res, 200, { authenticated: true, user: { id: user.id, username: user.username } });
+    /* Estado vivo de las demás cookies de cuenta de ESTE navegador
+       (logout y cambio de contraseña revocan sus sesiones): el panel
+       «Cuentas conectadas» marca cuál sigue conectada y cuál hay que
+       volver a agregar. Solo se informa con sesión autenticada: sin
+       sesión la ruta no revela nada (un UUID probado no confirma que la
+       cuenta exista ni que su sesión viva). */
+    const linked = [];
+    for (const [name, value] of accountCookies(req)) {
+        const accountId = name.slice('chatlocal_account_'.length);
+        if (accountId === user.id) continue;
+        const s = getSessionFromCache(hashSessionToken(value));
+        linked.push({ id: accountId, alive: !!(s && s.userId === accountId && Stmt.getUserById.get(accountId)) });
+    }
+    return json(res, 200, { authenticated: true, user: { id: user.id, username: user.username }, linked });
     }
     // Sin sesión viva: si alguna cookie de cuenta guardada apunta a una
     // cuenta borrada, se avisa y se limpia, para que el cliente la olvide.
@@ -136,7 +149,7 @@ async function postAuthRegister(req, res, url, data, actor) {
         if (accountByName(data.username)) return json(res, 409, { error: 'Username is already taken.' });
         const user = {
             id, username: data.username, passwordHash, passwordSalt,
-            publicKey: null, groupSeen: {}, stickers: [], contacts: [],
+            publicKey: null, groupSeen: {}, stickers: [], contacts: new Set(),
             addPolicy: 'request', sockets: new Set(), online: false, lastSeen: null,
             createdAt: Date.now()
         };
@@ -272,7 +285,22 @@ function postAuthSwitch(req, res, url, data, actor) {
            oráculo de existencia de cuentas (basta con probar un UUID). Con
            sesión vigente sí se puede avisar al cliente. */
         if (!req.authUser) return json(res, 401, { error: 'Sesión no disponible.' });
-        if (!user) return json(res, 401, { error: 'Cuenta no disponible.', gone: true });
+        if (!user) {
+            /* El id guardado ya no coincide con ninguna cuenta del servidor,
+               pero PUEDE existir otra con el mismo nombre de usuario (base
+               restaurada o reinstalada, o la cuenta se borró y se volvió a
+               crear). El cliente pasa el nombre que mostraba en pantalla;
+               si hay homónimo, le explica que la cuenta sigue ahí con otra
+               id en vez de decirle: «ya no existe». Con sesión viva se
+               puede hablar de ello; nunca se confunde la id nueva con la
+               sesión vieja el visitante tendría que volver a entregar la
+               contraseña (add-account), que es la única vía legítima. */
+            const askedName = typeof data.username === 'string' ? data.username.trim().toLowerCase() : '';
+            const homonima = askedName ? accountByName(askedName) : null;
+            if (homonima && homonima.id !== accountIdV)
+                return json(res, 401, { error: 'La cuenta @' + askedName + ' existe, pero con otra identificación en este servidor (¿se restauró o reinstaló?). Agrégala de nuevo con su contraseña para conectarla.', gone: true, rebuilt: { id: homonima.id, username: homonima.username } });
+            return json(res, 401, { error: 'Cuenta no disponible.', gone: true });
+        }
         /* La cookie de la cuenta caducó (o el navegador la perdió), pero la
            cuenta SIGUE existiendo en el servidor. No se marca como eliminada:
            el cliente la quitaría de la lista sin motivo. Se pide volver a
@@ -297,13 +325,28 @@ function postAuthSwitch(req, res, url, data, actor) {
        mantenía el acceso a la cuenta que el usuario creía haber cerrado. */
     const outgoing = req.authUser;
     if (outgoing && outgoing.id !== user.id) {
-        for (const [tokenHash, session] of sessionCache) {
-            if (session.userId === outgoing.id) {
-                sessionCache.delete(tokenHash);
-                try { Stmt.deleteSession.run(tokenHash); } catch { }
-            }
+        /* La revocación es POR NAVEGADOR, no global: se revocan la sesión
+           principal de este navegador y las cookies de cuenta vinculadas a
+           esa misma cuenta grabadas aquí. Antes se borraban TODAS las
+           sesiones de la cuenta a nivel de servidor: cambiar de cuenta en
+           un dispositivo deslogueaba la misma cuenta en los demás (el
+           origen de cuentas con cero sesiones, como zendtay). Un duplicado
+           robado de la cookie vieja deja de anularse por completo — es el
+           mismo riesgo de sesión múltiple que toda app tolera — a cambio
+           de no romper dispositivos ajenos. */
+        const cookiesSalientes = [['main', sessionCookie(req)]];
+        for (const [name, value] of accountCookies(req)) {
+            if (!value) continue;
+            const s = getSessionFromCache(hashSessionToken(value));
+            if (s && s.userId === outgoing.id) cookiesSalientes.push([name, value]);
         }
-        for (const sk of [...(outgoing.sockets || [])]) { try { sk.destroy(); } catch { } }
+        for (const [, raw] of cookiesSalientes) {
+            if (!raw) continue;
+            const h = hashSessionToken(raw);
+            sessionCache.delete(h);
+            try { Stmt.deleteSession.run(h); } catch { }
+            for (const sk of [...(outgoing.sockets || [])]) if (sk.authToken === raw) { try { sk.destroy(); } catch { } }
+        }
         /* La cuenta abandonada recibe una sesión vinculada NUEVA: sigue en la
            lista de cuentas conectadas y se puede volver a ella sin volver a
            iniciar sesión. Sin esto, el siguiente cambio de cuenta exigiría la

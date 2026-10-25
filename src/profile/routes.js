@@ -15,7 +15,7 @@ const { Stmt } = require('../db/statements.js');
 const { pruneBlobHashes, tx } = require('../db/transactions.js');
 const { groupLastEntry, invalidateGroupPubCache, lastGroupMessage, pub, readGroup, readGroupSummary, writeGroupSummary } = require('../groups/store.js');
 const { rejectRateLimited } = require('../http/helpers.js');
-const { passwordCheckLimiter, profileLimiter } = require('../http/rate-limit.js');
+const { passwordCheckLimiter, keyRegenLimiter, profileLimiter } = require('../http/rate-limit.js');
 const { json } = require('../http/responses.js');
 const { broadcastUsers, push, pushName, pushStories } = require('../realtime/notify.js');
 const { normalizeChatAppearanceSettings } = require('../shared/appearance.js');
@@ -23,7 +23,7 @@ const { MESSAGE_LIMITS, characterCount } = require('../shared/limits.js');
 const { NOTE_TTL, validAvatar, validUsername } = require('../shared/validation.js');
 const { blockedSet, callFiles, groupCache, notesMap, profiles, sessionCache, usernameIndex, users } = require('../state.js');
 const { accountId, byName, freshNote, usernameTakenInDb } = require('../users/helpers.js');
-const { accountsBlocked, isBlockedBy, isContact, normPriv, permite, permiteDescripcion, privacyFor } = require('../users/privacy.js');
+const { accountsBlocked, isBlockedBy, isContact, normPriv, permite, permiteDescripcion, privacyCacheBust, privacyFor } = require('../users/privacy.js');
 const { accountByName, purgeUserFromMemory, regenerateAuthKey, saveChatSettings, saveUserToDb } = require('../users/store.js');
 
 function getAccountChatSettings(req, res, url, data, actor) {
@@ -76,7 +76,9 @@ function getProfile(req, res, url, data, actor) {
     }
     if (meQ === p.username) {
     out.blocked = p.blocked || [];
-    out.privacy = privacyFor(p);
+    // Clon superficial: el objeto devuelto se toca (agregarme) y la copia de
+    // privacyFor está memoizada (PERF-P06) — tocarla envenenaría la caché.
+    out.privacy = { ...privacyFor(p) };
     out.privacy.agregarme = { mode: req.authUser.addPolicy || 'request', users: [] };
     if (!out.note) { out.note = p.note || ''; out.noteTs = p.noteTs || 0; }
     }
@@ -175,12 +177,12 @@ async function postAccountProfile(req, res, url, data, actor) {
 }
 
 function postAccountChatSettings(req, res, url, data, actor) {
-    const appearance = normalizeChatAppearanceSettings(
-        data.settings,
-        profiles[actor].chatAppearance || {}
-    );
+    /* Defensiva (BUG-011): si el perfil no está en RAM (purga o desincronía),
+       profiles[actor].chatAppearance estallaba con TypeError → 500. */
+    const profile = profiles[actor] || (profiles[actor] = { username: actor });
+    const appearance = normalizeChatAppearanceSettings(data.settings, profile.chatAppearance || {});
     if (!appearance) return json(res, 400, { error: 'Ajustes inválidos o foto de fondo no válida.' });
-    profiles[actor].chatAppearance = appearance;
+    profile.chatAppearance = appearance;
     try {
         saveChatSettings(req.authUser);
     } catch (error) {
@@ -197,7 +199,10 @@ async function postAccountRegenerateKey(req, res, url, data, actor) {
     // EXIGE CONTRASEÑA: con solo la cookie de sesión, un XSS o una cookie
     // robada bastaban para dejar el historial de la víctima inaccesible. Es la
     // misma regla que borrar la cuenta o cambiar el nombre.
-    if (rejectRateLimited(res, profileLimiter, req.authUser.id, 5, 'regeneraciones de clave por minuto')) return;
+    // Tope propio: la regeneración re-cifra TODO el contenido de la cuenta
+    // (BUG-012): compartía limiter con el perfil (10/min) y el mensaje
+    // prometía 5.
+    if (rejectRateLimited(res, keyRegenLimiter, req.authUser.id, 5, 'regeneraciones de clave por minuto')) return;
     if (typeof data.password !== 'string' || !data.password || data.password.length > 128)
         return json(res, 400, { error: 'Confirma tu contraseña para regenerar la clave.' });
     const account = accountByName(req.authUser.username);
@@ -258,7 +263,7 @@ async function postAccountDelete(req, res, url, data, actor) {
     }
     // 6) Los demás ven desaparecer la conversación y los contactos.
     for (const u of users.values()) {
-        u.contacts = u.contacts.filter(id2 => id2 !== deletedId);
+        u.contacts.delete(deletedId);
         push(u, { type: 'chatDelete', peer: who });
     }
     broadcastUsers(); pushStories();
@@ -333,9 +338,14 @@ function postProfile(req, res, url, data, actor) {
     }
     if (appearance) patch.chatAppearance = appearance;
     if (privacyInput) patch.privacy = privacyInput;
-    if (patch.avatar === '') delete patch.avatar;
+    // avatar: "" QUITA la foto del perfil (vuelve al identicon); antes se
+    // interpretaba como "no tocar" y el avatar era imposible de borrar (BUG-009).
+
     profiles[data.username] = { ...prev, ...patch };
-    if (data.privacy) profiles[data.username].privacy = normPriv(data.privacy);
+    if (data.privacy) {
+        profiles[data.username].privacy = normPriv(data.privacy);
+        privacyCacheBust(profiles[data.username]);
+    }
     if (typeof patch.note === 'string') {
         if (patch.note.trim() === '') profiles[data.username].noteTs = 0;
         else if (patch.note !== prev.note) profiles[data.username].noteTs = Date.now();

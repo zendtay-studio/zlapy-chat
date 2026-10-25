@@ -11,8 +11,9 @@
 const crypto = require('crypto');
 const { decryptAtRest, encryptAtRest } = require('../crypto/setup.js');
 const { Stmt } = require('../db/statements.js');
-const { profiles, users } = require('../state.js');
+const { profiles, users, blobBytesCache } = require('../state.js');
 const { permite } = require('../users/privacy.js');
+const { makeCache } = require('../shared/cache.js');
 
 // Blobs (adjuntos)
 const blobHashOk = h => typeof h === 'string' && /^[a-f0-9]{64}$/i.test(h);
@@ -29,32 +30,50 @@ const BLOB_ACTIVE_MIME_RE = /^(?:text\/(?:html|javascript|ecmascript)|applicatio
 const BLOB_QUOTA_PER_USER_BYTES = 512 * 1024 * 1024;   // 512 MB por cuenta
 const BLOB_QUOTA_GLOBAL_BYTES = 20 * 1024 * 1024 * 1024; // 20 GB en total
 
-/* Espacio ocupado por los adjuntos a los que apunta una cuenta (los que
+/* Caché por cuenta del espacio ocupado por sus adjuntos (los que
    referencia desde sus conversaciones, grupos o historias). La suma real es
-   algo costosa (un hash por adjunto), así que se memoriza unos segundos: la
-   cuota se comprueba en cada envío con adjunto y no hace falta recalcularla
-   en cada petición. */
-const cuotaCache = new Map();
+   algo costosa (un hash por adjunto), así que se memoriza 15 s: la cuota se
+   comprueba en cada envío con adjunto y no hace falta recalcularla en cada
+   petición. Memoria acotada por uso y vida (shared/cache, "Redis sin
+   Redis"). */
 const CUOTA_CACHE_MS = 15 * 1000;
+const cuotaCache = makeCache({ max: 50000, ttl: CUOTA_CACHE_MS });
 function blobBytesOfUser(userId) {
-    const ahora = Date.now();
     const cached = cuotaCache.get(userId);
-    if (cached && cached.hasta > ahora) return cached.bytes;
+    // El total puede ser 0: `cached === undefined` distingue el hueco del cero.
+    if (cached !== undefined) return cached;
     let bytes = 0;
     for (const { hash } of Stmt.userBlobHashes.all(userId, userId, userId, userId)) {
         const row = Stmt.blobSize.get(hash);
         if (row) bytes += Number(row.bytes || 0);
     }
-    cuotaCache.set(userId, { bytes, hasta: ahora + CUOTA_CACHE_MS });
+    cuotaCache.set(userId, bytes);
     return bytes;
 }
 /* Fuera de la caché cuando cambian los adjuntos de esa cuenta (envío o
    borrado), para que la cuota no dé un número obsoleto. */
 function invalidateBlobQuota(userId) { if (userId) cuotaCache.delete(userId); }
+/* Espacio total de la tabla de blobs, mantenido en RAM (PERF-P02): cada
+   subida/borrado ajusta el contador y solo se recalcula con SUM si la cifra
+   se pierde (arranque). Antes cada subida recalcaba `SELECT SUM(LENGTH(data))`
+   sobre la tabla entera, O(blobs) por petición. */
 function blobBytesGlobal() {
-    const row = Stmt.blobBytesGlobal.get();
-    return row ? Number(row.bytes || 0) : 0;
+    if (blobBytesCache.bytes === null) {
+        const row = Stmt.blobBytesGlobal.get();
+        blobBytesCache.bytes = row ? Number(row.bytes || 0) : 0;
+    }
+    return blobBytesCache.bytes;
 }
+/* Ajusta el contador con el delta de una escritura/borrado real. Si el valor
+   aún no se ha cargado se ignora: la primera lectura lo cargará ya puesto
+   al día. */
+function blobBytesGlobalTrack(deltaBytes) {
+    if (deltaBytes === 0 || blobBytesCache.bytes === null) return;
+    blobBytesCache.bytes += deltaBytes;
+}
+/* Invalida el contador: recalcula con SUM en la siguiente lectura. Es la
+   red de seguridad del barrido de huérfanos y del arranque. */
+function blobBytesGlobalReset() { blobBytesCache.bytes = null; }
 
 /* ¿Qepa este adjunto dentro de la cuota? Se comprueba antes de escribir: es
    la última barrera antes de tocar disco. */
@@ -73,7 +92,11 @@ function storeBlob(hash, value) {
     if (BLOB_ACTIVE_MIME_RE.test(mime)) return false;
     const bytes = Buffer.from(match[2], 'base64');
     if (crypto.createHash('sha256').update(bytes).digest('hex') !== hash.toLowerCase()) return false;
-    Stmt.insertBlob.run(hash.toLowerCase(), encryptAtRest(value));
+    const cipher = encryptAtRest(value);
+    // INSERT OR IGNORE: changes===0 solo cuando el hash ya estaba guardado;
+    // contenido y longitud idénticos, así que el contador no se mueve.
+    const info = Stmt.insertBlob.run(hash.toLowerCase(), cipher);
+    if (info.changes) blobBytesGlobalTrack(cipher.length);
     return true;
 }
 
@@ -110,6 +133,8 @@ module.exports = {
     blobQuotaOk,
     blobBytesOfUser,
     blobBytesGlobal,
+    blobBytesGlobalTrack,
+    blobBytesGlobalReset,
     invalidateBlobQuota,
     BLOB_QUOTA_PER_USER_BYTES,
     BLOB_QUOTA_GLOBAL_BYTES,

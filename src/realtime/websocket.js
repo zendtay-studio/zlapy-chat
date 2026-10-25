@@ -27,7 +27,7 @@ const { MESSAGE_LIMITS, characterCount } = require('../shared/limits.js');
 const { NOTE_TTL, validAvatar } = require('../shared/validation.js');
 const { callFiles, notesMap, pendingOffers, profiles, sessionCache, stories, users, setStories } = require('../state.js');
 const { byId, byName } = require('../users/helpers.js');
-const { isBlockedBy, normPriv, permite } = require('../users/privacy.js');
+const { isBlockedBy, normPriv, permite, privacyCacheBust } = require('../users/privacy.js');
 const { loadUserFromRow, saveUserToDb } = require('../users/store.js');
 
 
@@ -237,7 +237,13 @@ const wsUpgradeInner = (req, socket) => {
                     const merged = {};
                     for (const key of Object.keys(current))
                         merged[key] = Object.prototype.hasOwnProperty.call(m.privacy, key) ? incoming[key] : current[key];
-                    if (JSON.stringify(merged) !== JSON.stringify(current)) { p.privacy = merged; dirty = true; }
+                    if (JSON.stringify(merged) !== JSON.stringify(current)) {
+                        p.privacy = merged;
+                        // La copia memoizada de privacyFor queda obsoleta al
+                        // mutar el mismo objeto (PERF-P06).
+                        privacyCacheBust(p);
+                        dirty = true;
+                    }
                 }
                 /* Mismo freno que HTTP /profile (10 guardados por minuto): este
                    frame sería una vía más barata para escribir en la base. El

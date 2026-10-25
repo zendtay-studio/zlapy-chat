@@ -75,6 +75,22 @@ function propagateUsernameChange(previous, next) {
         const g = readGroup(r.gid);
         if (g) { writeGroupMeta(g); }
     }
+    /* Y también los grupos donde el renombrado tiene UNA SOLICITUD de entrada
+       pendiente (BUG-010): writeGroupMeta re-persite las entradas con el
+       username actual en RAM; si no, la lista de admins mostraba el nombre
+       antiguo para siempre y "c" o "b" no coincidían con nada. */
+    /* Y también los grupos donde el renombrado tiene UNA SOLICITUD de entrada
+       pendiente (BUG-010): writeGroupMeta re-persite las entradas con el
+       username actual en RAM; si no, la lista de admins mostraba el nombre
+       antiguo para siempre y "c" o "b" no coincidían con nada. readGroup
+       sirve el objeto de groupCache: se actualiza ESE mismo objeto para que
+       la copia en RAM y la fila en BD cambien a la vez. */
+    for (const r of Stmt.listUserJoinRequests.all(uuid)) {
+        const g = readGroup(r.gid);
+        if (!g || g.memberIds.includes(uuid)) continue;
+        for (const jr of g.joinRequests) if (jr.userId === uuid) jr.username = next;
+        writeGroupMeta(g);
+    }
     groupPubCache.clear();
     for (const ownerUuid of db.prepare('SELECT owner FROM contacts WHERE contact = ?').all(uuid)) {
         renamePeerInSummaries(ownerUuid.owner, uuid, next);
