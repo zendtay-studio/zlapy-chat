@@ -225,20 +225,26 @@ test('el cliente distingue gone de relogin y refresca la lista de cuentas', () =
     assert.match(cuerpo, /finally\s*\{\s*cambiosDeCuentaEnCurso\.delete\(accountId\);/, 'debe liberar el bloqueo al terminar');
 });
 
-test('el compositor vuelve a ser escribible si el envío de la nota de voz falla', () => {
-    /* El envío de un audio va por XHR (barra de progreso). Si la respuesta no
-       se puede leer, el cliente cree que falló: el compositor se quedaba en
-       modo "preview" y el campo de texto desaparecía, sin forma de escribir. */
+test('el compositor se libera antes de subir la nota de voz', () => {
+    /* El envío de un audio va por XHR (barra de progreso). Antes el
+       compositor se quedaba en modo "preview" hasta que terminaba la subida:
+       el campo de texto seguía oculto y no se podía escribir. Ahora la nota
+       sale del compositor y la subida continúa en segundo plano. */
     const bloque = CLIENT.slice(CLIENT.indexOf('async function sendPreview'));
     const fin = bloque.indexOf('\n            let seMode');
     const cuerpo = fin > 0 ? bloque.slice(0, fin) : bloque;
     assert.ok(cuerpo.length > 0, 'debe existir sendPreview');
 
-    // Ambos caminos de fallo (respuesta no válida y envío rechazado) devuelven
-    // el compositor a su estado normal.
-    const ramas = cuerpo.split('if (!sent)');
-    assert.ok(ramas.length >= 2, 'debe comprobar el caso de envío no aceptado');
-    assert.match(ramas[1], /discardPreview\(\);/, 'si el envío no se acepta, el compositor se restaura');
-    assert.match(cuerpo.slice(cuerpo.indexOf('catch (e)')), /discardPreview\(\);/,
-        'si el envío lanza un error, el compositor se restaura');
+    const discard = cuerpo.indexOf('discardPreview();');
+    const send = cuerpo.indexOf("sendPayload('audio'");
+    assert.ok(discard >= 0 && send > discard,
+        'el compositor se restaura antes de iniciar la subida');
+    assert.match(cuerpo.slice(discard), /sendPayload\('audio'[\s\S]*?\{ once: viewOnce, reply \}/,
+        'conserva "ver una vez" y la cita al liberar el compositor');
+
+    // Los fallos posteriores no vuelven a tocar el compositor: ya está libre
+    // y el usuario tiene que poder seguir escribiendo.
+    const fallos = cuerpo.slice(send);
+    assert.doesNotMatch(fallos, /discardPreview\(\);/, 'el fallo no vuelve a bloquear el compositor');
+    assert.match(fallos, /toast\(/, 'el fallo se avisa sin ocultar la barra de texto');
 });

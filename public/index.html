@@ -2485,6 +2485,106 @@
             outline-offset: 4px
         }
 
+        /* Burbuja temporal de subida: se pinta dentro de la lista de
+           mensajes mientras el archivo viaja al servidor. */
+        .uploadMsg {
+            display: flex;
+            flex-direction: column;
+            gap: 9px;
+            width: min(280px, 62vw);
+            min-width: min(230px, 58vw);
+            padding: 2px 0
+        }
+
+        .uploadMsgTop {
+            display: flex;
+            align-items: center;
+            gap: 10px
+        }
+
+        .uploadMsgIcon {
+            display: grid;
+            place-items: center;
+            flex: none;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: color-mix(in srgb, currentColor 12%, transparent)
+        }
+
+        .uploadMsgIcon svg {
+            width: 21px;
+            height: 21px;
+            fill: currentColor
+        }
+
+        .uploadMsgInfo {
+            flex: 1;
+            min-width: 0
+        }
+
+        .uploadMsgName {
+            display: block;
+            overflow: hidden;
+            color: inherit;
+            font-size: 13px;
+            font-weight: 600;
+            line-height: 1.3;
+            text-overflow: ellipsis;
+            white-space: nowrap
+        }
+
+        .uploadMsgSub {
+            display: block;
+            margin-top: 2px;
+            overflow: hidden;
+            color: inherit;
+            font-size: 11.5px;
+            line-height: 1.3;
+            opacity: .8;
+            text-overflow: ellipsis;
+            white-space: nowrap
+        }
+
+        .uploadMsgPct {
+            flex: none;
+            color: inherit;
+            font-size: 11.5px;
+            font-variant-numeric: tabular-nums;
+            opacity: .85
+        }
+
+        .uploadMsgBar {
+            height: 5px;
+            overflow: hidden;
+            border-radius: 999px;
+            background: color-mix(in srgb, currentColor 18%, transparent)
+        }
+
+        .uploadMsgBar>span {
+            display: block;
+            width: 0;
+            height: 100%;
+            border-radius: inherit;
+            background: var(--bubble-accent, var(--accent));
+            transition: width .18s linear
+        }
+
+        .bubble.uploadBubble.uploadError .uploadMsgBar>span {
+            background: #ef5350
+        }
+
+        .bubble.uploadBubble.uploadError .uploadMsgSub {
+            color: #ef5350;
+            opacity: 1
+        }
+
+        @media(prefers-reduced-motion:reduce) {
+            .uploadMsgBar>span {
+                transition: none
+            }
+        }
+
         #recBar {
             display: none;
             align-items: center;
@@ -12180,8 +12280,79 @@
                 document.getElementById('msgInput').focus();
             }
 
+            function uploadIcon(kind) {
+                if (kind === 'audio')
+                    return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2Z"/></svg>';
+                if (kind === 'video')
+                    return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4Z"/></svg>';
+                if (kind === 'file')
+                    return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h8l5 5v7h-2V8h-4V4H8v14h5v2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Zm10 12 5 3-5 3v-2h-4v-2h4v-2Z"/></svg>';
+                return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 19V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2ZM5 5h14v10l-4.5-4.5-3.5 3.5-2.5-2.5L5 15V5Zm2 1.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3Z"/></svg>';
+            }
+            function formatUploadSize(bytes) {
+                const value = Number(bytes) || 0;
+                if (!value) return '';
+                if (value < 1000) return value + ' B';
+                if (value < 1000000) return (value / 1000).toFixed(1) + ' kB';
+                return (value / 1000000).toFixed(1) + ' MB';
+            }
+            function uploadLabel(m) {
+                if (m.kind === 'image') return m.galleryCount > 1 ? `Collage · ${m.galleryCount} fotos` : 'Foto';
+                if (m.kind === 'video') return 'Video';
+                if (m.kind === 'audio') return 'Nota de voz';
+                return m.name || 'Archivo';
+            }
+            function uploadStatusText(m) {
+                if (m.uploadState === 'error') return 'No se pudo enviar';
+                if (m.uploadState === 'processing') return 'Procesando…';
+                if (m.uploadState === 'preparing') return 'Preparando…';
+                return 'Subiendo…';
+            }
+            function uploadStatusDetail(m) {
+                return [uploadStatusText(m), formatUploadSize(m.size)].filter(Boolean).join(' · ');
+            }
+            function uploadProgress(m) {
+                const value = Math.max(0, Math.min(1, Number(m.progress) || 0));
+                return { value, pct: Math.round(value * 100) };
+            }
+            function uploadBubble(m) {
+                const { pct } = uploadProgress(m);
+                const label = uploadLabel(m);
+                return `<div class="bubble me uploadBubble${m.uploadState === 'error' ? ' uploadError' : ''}" id="b${escapeHtml(m.id)}" data-message-id="${escapeHtml(m.id)}" data-upload-id="${escapeHtml(m.id)}">
+                    <div class="uploadMsg">
+                        <div class="uploadMsgTop">
+                            <span class="uploadMsgIcon" aria-hidden="true">${uploadIcon(m.kind)}</span>
+                            <span class="uploadMsgInfo"><span class="uploadMsgName">${escapeHtml(label)}</span><span class="uploadMsgSub" data-upload-status>${escapeHtml(uploadStatusDetail(m))}</span></span>
+                            <span class="uploadMsgPct" data-upload-pct>${pct}%</span>
+                        </div>
+                        <div class="uploadMsgBar" role="progressbar" aria-label="${escapeHtml('Subiendo ' + label)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><span data-upload-fill style="width:${pct}%"></span></div>
+                    </div>
+                </div>`;
+            }
+            function updateUploadBubble(m) {
+                if (!m) return;
+                const root = document.querySelector('.bubble.uploadBubble[data-upload-id="' + m.id + '"]');
+                if (!root) return;
+                const { pct } = uploadProgress(m);
+                const fill = root.querySelector('[data-upload-fill]');
+                if (fill) fill.style.width = pct + '%';
+                const pctEl = root.querySelector('[data-upload-pct]');
+                if (pctEl) pctEl.textContent = pct + '%';
+                const status = root.querySelector('[data-upload-status]');
+                if (status) status.textContent = uploadStatusDetail(m);
+                const bar = root.querySelector('.uploadMsgBar');
+                if (bar) bar.setAttribute('aria-valuenow', String(pct));
+                root.classList.toggle('uploadError', m.uploadState === 'error');
+            }
+            function setUploadProgress(m, progress) {
+                if (!m) return;
+                m.progress = Math.max(0, Math.min(1, Number(progress) || 0));
+                if (m.uploadState !== 'error') m.uploadState = m.progress >= 1 ? 'processing' : 'uploading';
+                updateUploadBubble(m);
+            }
+
             function bubble(m, displayMeta = {}) {
-                if (m.temp) return `<div class="bubble me"><b>${m.name}</b><div class="audioMsg" style="margin-top:4px"><div class="bar"><div class="fill" id="tmpf${m.id}" style="width:${Math.round((m.progress || 0) * 100)}%"></div></div><span class="t" id="tmpt${m.id}">${Math.round((m.progress || 0) * 100)}%</span></div></div>`;
+                if (m.temp) return uploadBubble(m);
                 const t = new Date(m.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                 const plain = (m.plain != null ? m.plain : m.data);
                 const onceView = !!m.once || m.kind === 'seen';
@@ -12765,10 +12936,17 @@
                 });
             }
             window.addEventListener('resize', () => requestAnimationFrame(() => updateExternalMessageMetadata()));
+            function activeConversationKey() {
+                return activeKind === 'group' && activeGroup ? activeGroup.id : active;
+            }
+            function renderConversation(key, forceBottom = false) {
+                if (!key || key !== activeConversationKey()) return;
+                renderAll(forceBottom);
+            }
             function renderAll(forceBottom) {
                 if (!active) { renderContacts(); return; }
                 const el = document.getElementById('msgs');
-                const key = (activeKind === 'group' && activeGroup) ? activeGroup.id : active;
+                const key = activeConversationKey();
                 if (!key) return;
                 const list = conversationFor(key).messages;
                 const wasAtBottom = forceBottom || (el.scrollHeight - el.scrollTop - el.clientHeight < 140);
@@ -13259,16 +13437,24 @@
                     const x = new XMLHttpRequest();
                     x.open('POST', url);
                     x.setRequestHeader('Content-Type', 'application/json');
-                    x.upload.onprogress = e => { if (e.lengthComputable) onProg(e.loaded / e.total); };
+                    x.upload.onprogress = e => { if (e.lengthComputable && onProg) onProg(e.loaded / e.total); };
                     x.onload = () => {
-                        if (x.status >= 200 && x.status < 300) resolve(x.responseText);
-                        else reject(new Error('HTTP ' + x.status));
+                        if (x.status >= 200 && x.status < 300) { resolve(x.responseText); return; }
+                        let message = 'HTTP ' + x.status;
+                        try {
+                            const respuesta = JSON.parse(x.responseText);
+                            if (respuesta && respuesta.error) message = respuesta.error;
+                        } catch { }
+                        const error = new Error(message);
+                        error.status = x.status;
+                        reject(error);
                     };
-                    x.onerror = () => reject(new Error('error'));
+                    x.onerror = () => reject(new Error('No se pudo conectar con el servidor.'));
+                    x.onabort = () => reject(new Error('La subida se canceló.'));
                     x.send(body);
                 });
             }
-            async function sendPayload(kind, name, mime, buf, caption, destination) {
+            async function sendPayload(kind, name, mime, buf, caption, destination, options = {}) {
                 const target = destination ? destination.target : active;
                 const targetKind = destination ? destination.targetKind : activeKind;
                 const targetGroup = destination ? destination.targetGroup : activeGroup;
@@ -13283,8 +13469,8 @@
                 if (destination && (active !== target || activeKind !== targetKind ||
                     (targetKind === 'group' && (!targetGroup || !activeGroup || activeGroup.id !== targetGroup.id))))
                     throw new Error('El chat cambió antes de enviar el archivo; vuelve a seleccionarlo.');
-                const viewOnce = onceMode;
-                const reply = replyPayload(replyTo);
+                const viewOnce = options.once !== undefined ? !!options.once : onceMode;
+                const reply = options.reply !== undefined ? options.reply : replyPayload(replyTo);
                 clearReply();
                 if (targetKind === 'dm' && target && target !== '__saved__' && (isBlocked(target) || blockedByThem(target))) {
                     debugToast('No se pudo enviar: el chat con ' + target + ' está bloqueado. El mensaje se descarta.');
@@ -13294,58 +13480,83 @@
                     debugToast('Este tipo de contenido no está permitido para tu rol en el grupo.');
                     return false;
                 }
+                if (targetKind === 'group' && !targetGroup) return false;
+                const mediaKey = targetKind === 'group' ? targetGroup.id : target;
                 let hash = '', have = false, data = '';
                 if (kind === 'text') data = new TextDecoder().decode(buf);
-                else {
-                    hash = await shaHex(buf);
-                    have = (await fetch('/have?hash=' + hash).then(r => r.json())).ok;
-                    data = have ? '' : 'data:' + (mime || 'application/octet-stream') + ';base64,' + b64(buf);
-                    if (data.length > MAX_MESSAGE_DATA_CHARS)
-                        throw new Error('El archivo supera el límite de tamaño configurado.');
+                let temp = null, tempRemoved = false;
+                const removeTemp = () => {
+                    if (!temp || tempRemoved) return;
+                    tempRemoved = true;
+                    const messages = conv[mediaKey] || [];
+                    if (!messages.includes(temp)) return;
+                    replaceConversation(mediaKey, messages.filter(message => message !== temp));
+                    renderConversation(mediaKey);
+                };
+                const failTemp = () => {
+                    if (!temp || tempRemoved) return;
+                    temp.uploadState = 'error';
+                    updateUploadBubble(temp);
+                    setTimeout(removeTemp, 5000);
+                };
+                if (kind !== 'text') {
+                    /* La burbuja de subida aparece ANTES de calcular hash y
+                       Base64: el usuario ve de inmediato que el archivo ya
+                       está en camino y puede seguir escribiendo mientras
+                       tanto. */
+                    temp = {
+                        id: 'tmp' + (++tempSeq), mine: true, kind, name,
+                        temp: true, progress: 0, uploadState: 'preparing',
+                        size: buf.byteLength, ts: Date.now()
+                    };
+                    insertConversationMessage(mediaKey, temp);
+                    renderConversation(mediaKey, true);
                 }
-                if (targetKind === 'group') {
-                    if (!targetGroup) return false;
-                    const message = { id: crypto.randomUUID(), kind, name, mime, data, hash, once: viewOnce, reply, caption: caption || '' };
-                    const response = await fetch('/groups/' + encodeURIComponent(targetGroup.id), {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message })
-                    });
-                    const result = await response.json();
-                    if (!response.ok) throw new Error(result.error || 'No se pudo enviar al grupo.');
-                    if (result.message) await addGroupMessage(targetGroup.id, result.message);
-                    return true;
-                }
-                if (kind === 'text') {
-                    const response = await fetch('/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: me.username, to: target, kind, data, hash, once: viewOnce, reply, caption: caption || '' }) });
-                    const r = await response.json();
-                    if (!response.ok) { debugToast(r.error || 'No se pudo enviar el mensaje.'); return false; }
-                    if (r && r.blocked) { debugToast('No se pudo enviar: el chat con ' + target + ' está bloqueado.'); return false; }
-                    if (r && r.denied) { debugToast(target + ' no permite mensajes tuyos. Se descarta.'); return false; }
-                    reportPushDelivery(r, target);
-                    return true;
-                }
-                conversationFor(target);
-                const tmp = { id: 'tmp' + (++tempSeq), mine: true, kind, name, temp: true, progress: 0, ts: Date.now() };
-                insertConversationMessage(target, tmp); renderAll(true);
-                let respuesta = '';
                 try {
-                    respuesta = await xhrPost('/send', JSON.stringify({ from: me.username, to: target, kind, name, mime, data, hash, once: viewOnce, reply, caption: caption || '' }), p => { tmp.progress = p; const f = document.getElementById('tmpf' + tmp.id); if (f) f.style.width = (p * 100) + '%'; const t = document.getElementById('tmpt' + tmp.id); if (t) t.textContent = Math.round(p * 100) + '%'; });
-                } finally { replaceConversation(target, conv[target].filter(m => m !== tmp)); }
-                let j;
-                try { j = JSON.parse(respuesta); }
-                catch {
-                    renderAll(true);
-                    throw new Error('El servidor devolvió una respuesta inválida al enviar el archivo.');
+                    if (kind !== 'text') {
+                        hash = await shaHex(buf);
+                        have = (await fetch('/have?hash=' + hash).then(r => r.json())).ok;
+                        data = have ? '' : 'data:' + (mime || 'application/octet-stream') + ';base64,' + b64(buf);
+                        if (data.length > MAX_MESSAGE_DATA_CHARS)
+                            throw new Error('El archivo supera el límite de tamaño configurado.');
+                        if (temp) { temp.uploadState = 'uploading'; updateUploadBubble(temp); }
+                    }
+                    if (kind === 'text') {
+                        const response = await fetch('/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: me.username, to: target, kind, data, hash, once: viewOnce, reply, caption: caption || '' }) });
+                        const r = await response.json();
+                        if (!response.ok) { debugToast(r.error || 'No se pudo enviar el mensaje.'); return false; }
+                        if (r && r.blocked) { debugToast('No se pudo enviar: el chat con ' + target + ' está bloqueado.'); return false; }
+                        if (r && r.denied) { debugToast(target + ' no permite mensajes tuyos. Se descarta.'); return false; }
+                        reportPushDelivery(r, target);
+                        return true;
+                    }
+                    let respuesta;
+                    if (targetKind === 'group') {
+                        const message = { id: crypto.randomUUID(), kind, name, mime, data, hash, once: viewOnce, reply, caption: caption || '' };
+                        respuesta = await xhrPost('/groups/' + encodeURIComponent(targetGroup.id), JSON.stringify({ message }), p => setUploadProgress(temp, p));
+                    } else {
+                        respuesta = await xhrPost('/send', JSON.stringify({ from: me.username, to: target, kind, name, mime, data, hash, once: viewOnce, reply, caption: caption || '' }), p => setUploadProgress(temp, p));
+                    }
+                    let j;
+                    try { j = JSON.parse(respuesta); }
+                    catch { throw new Error('El servidor devolvió una respuesta inválida al enviar el archivo.'); }
+                    if (j && j.error) { failTemp(); toast(j.error); return false; }
+                    if (j && j.blocked) { failTemp(); toast('No se pudo enviar el archivo: ' + target + ' te tiene bloqueado.'); return false; }
+                    if (j && j.denied) { failTemp(); toast(target + ' no permite mensajes tuyos. Se descarta.'); return false; }
+                    if (j && j.texto_bloqueado) { failTemp(); toast('No se pudo enviar: ' + target + ' no permite tus archivos.'); return false; }
+                    if (targetKind === 'group') {
+                        if (j.message) await addGroupMessage(targetGroup.id, j.message);
+                    } else {
+                        if (j.message) await addIncoming(j.message);
+                        reportPushDelivery(j, target);
+                    }
+                    removeTemp();
+                    renderConversation(mediaKey, true);
+                    return true;
+                } catch (error) {
+                    failTemp();
+                    throw error;
                 }
-                if (j && j.error) {
-                    debugToast(j.error);
-                    return false;
-                }
-                if (j && j.blocked) { debugToast('No se pudo enviar el archivo: ' + target + ' te tiene bloqueado.'); return false; }
-                if (j && j.denied) { debugToast(target + ' no permite mensajes tuyos. Se descarta.'); return false; }
-                if (j && j.texto_bloqueado) { debugToast('No se pudo enviar: ' + target + ' no permite tus archivos.'); return false; }
-                reportPushDelivery(j, target);
-                renderAll(true);
-                return true;
             }
             async function sendText() {
                 if (pendingDrafts.length) return sendDraft();
@@ -13707,32 +13918,68 @@
                     debugToast('Las imágenes no están permitidas para tu rol en el grupo.');
                     return false;
                 }
-                const gallery = await prepareGallery(files);
-                const encodedBytes = gallery.reduce((total, item) => total + item.data.length, 0);
-                if (encodedBytes > MAX_GALLERY_UPLOAD_CHARS) throw new Error('El collage supera el límite de tamaño. Reduce las imágenes e inténtalo de nuevo.');
                 if (!destinationIsActive(destination))
-                    throw new Error('El chat cambió durante la preparación de las imágenes; vuelve a enviarlas.');
-                const reply = replyPayload(replyTo);
-                clearReply();
-                const message = { id: crypto.randomUUID(), kind: 'image', data: '', gallery, once: viewOnce, caption, reply };
-                if (targetKind === 'group') {
-                    const response = await fetch('/groups/' + encodeURIComponent(targetGroup.id), {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message })
-                    });
-                    const result = await response.json();
-                    if (!response.ok) throw new Error(result.error || 'No se pudo enviar el collage.');
-                    if (result.message) await addGroupMessage(targetGroup.id, result.message);
+                    throw new Error('El chat cambió antes de enviar el collage; vuelve a intentarlo.');
+                const mediaKey = targetKind === 'group' ? targetGroup.id : target;
+                let temp = null, tempRemoved = false;
+                const removeTemp = () => {
+                    if (!temp || tempRemoved) return;
+                    tempRemoved = true;
+                    const messages = conv[mediaKey] || [];
+                    if (!messages.includes(temp)) return;
+                    replaceConversation(mediaKey, messages.filter(message => message !== temp));
+                    renderConversation(mediaKey);
+                };
+                const failTemp = () => {
+                    if (!temp || tempRemoved) return;
+                    temp.uploadState = 'error';
+                    updateUploadBubble(temp);
+                    setTimeout(removeTemp, 5000);
+                };
+                temp = {
+                    id: 'tmp' + (++tempSeq), mine: true, kind: 'image',
+                    name: `${files.length} fotos`, galleryCount: files.length,
+                    temp: true, progress: 0, uploadState: 'preparing',
+                    size: files.reduce((total, file) => total + (file.size || 0), 0), ts: Date.now()
+                };
+                insertConversationMessage(mediaKey, temp);
+                renderConversation(mediaKey, true);
+                try {
+                    const gallery = await prepareGallery(files);
+                    const encodedBytes = gallery.reduce((total, item) => total + item.data.length, 0);
+                    if (encodedBytes > MAX_GALLERY_UPLOAD_CHARS) throw new Error('El collage supera el límite de tamaño. Reduce las imágenes e inténtalo de nuevo.');
+                    if (!destinationIsActive(destination))
+                        throw new Error('El chat cambió durante la preparación de las imágenes; vuelve a enviarlas.');
+                    const reply = replyPayload(replyTo);
+                    clearReply();
+                    const message = { id: crypto.randomUUID(), kind: 'image', data: '', gallery, once: viewOnce, caption, reply };
+                    temp.uploadState = 'uploading';
+                    updateUploadBubble(temp);
+                    let responseText;
+                    if (targetKind === 'group')
+                        responseText = await xhrPost('/groups/' + encodeURIComponent(targetGroup.id), JSON.stringify({ message }), progress => setUploadProgress(temp, progress));
+                    else
+                        responseText = await xhrPost('/send', JSON.stringify({ from: me.username, to: target, ...message }), progress => setUploadProgress(temp, progress));
+                    let result;
+                    try { result = JSON.parse(responseText); }
+                    catch { throw new Error('El servidor devolvió una respuesta inválida al enviar el collage.'); }
+                    if (result && result.error) { failTemp(); toast(result.error); return false; }
+                    if (result && result.blocked) { failTemp(); throw new Error('Este chat está bloqueado.'); }
+                    if (result && result.denied) { failTemp(); throw new Error('No se permiten mensajes en este chat.'); }
+                    if (result && result.texto_bloqueado) { failTemp(); throw new Error(target + ' no permite tus archivos.'); }
+                    if (targetKind === 'group') {
+                        if (result.message) await addGroupMessage(targetGroup.id, result.message);
+                    } else {
+                        if (result.message) await addIncoming(result.message);
+                        reportPushDelivery(result, target);
+                    }
+                    removeTemp();
+                    renderConversation(mediaKey, true);
                     return true;
+                } catch (error) {
+                    failTemp();
+                    throw error;
                 }
-                const response = await fetch('/send', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ from: me.username, to: target, ...message })
-                });
-                const result = await response.json();
-                if (!response.ok) throw new Error(result.error || 'No se pudo enviar el collage.');
-                if (result.blocked || result.denied) throw new Error(result.blocked ? 'Este chat está bloqueado.' : 'No se permiten mensajes en este chat.');
-                reportPushDelivery(result, target);
-                return true;
             }
             async function sendDraft() {
                 const caption = document.getElementById('msgInput').value.trim();
@@ -14094,30 +14341,33 @@
                     document.getElementById('sendPreviewBtn').disabled = false;
                     return;
                 }
+                const blob = previewBlob;
+                const mime = blob.type || 'audio/webm';
+                const extension = mime.includes('mp4') ? 'm4a' : 'webm';
+                const viewOnce = onceMode;
+                const reply = replyPayload(replyTo);
+                let buffer;
                 try {
-                    const blob = previewBlob;
-                    const mime = blob.type || 'audio/webm';
-                    const extension = mime.includes('mp4') ? 'm4a' : 'webm';
-                    const sent = await sendPayload('audio', 'audio.' + extension, mime, await blob.arrayBuffer());
-                    if (!sent) {
-                        previewSending = false;
-                        document.getElementById('sendPreviewBtn').disabled = false;
-                        /* El compositor vuelve a su estado normal: si no, el
-                           campo de texto se queda oculto y no hay forma de
-                           escribir. */
-                        discardPreview();
-                        return;
-                    }
-                    discardPreview();
-                    scrollToBottom(true);
-                } catch (e) {
+                    buffer = await blob.arrayBuffer();
+                } catch (error) {
                     previewSending = false;
                     document.getElementById('sendPreviewBtn').disabled = false;
-                    debugToast('No se pudo enviar la nota de voz. Puedes volver a intentarlo.');
-                    console.error('[audio] No se pudo enviar la nota de voz:', e);
-                    /* Se restaura el compositor: el usuario siempre tiene que
-                       poder seguir escribiendo. */
-                    discardPreview();
+                    toast('No se pudo preparar la nota de voz para enviarla.');
+                    console.error('[audio] No se pudo leer la nota de voz:', error);
+                    return;
+                }
+                /* El compositor vuelve a su estado normal ANTES de subir la
+                   nota: la barra de texto queda libre y la subida sigue en
+                   segundo plano con su propia burbuja de progreso. */
+                discardPreview();
+                document.getElementById('msgInput').focus();
+                try {
+                    const sent = await sendPayload('audio', 'audio.' + extension, mime, buffer, '', undefined, { once: viewOnce, reply });
+                    if (!sent) return;
+                    scrollToBottom(true);
+                } catch (error) {
+                    toast(error && error.message ? error.message : 'No se pudo enviar la nota de voz.');
+                    console.error('[audio] No se pudo enviar la nota de voz:', error);
                 }
             }
 
