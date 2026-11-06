@@ -1,14 +1,18 @@
 :root {
   color-scheme: dark;
-  --page: #090c0f;
-  --surface: #101419;
-  --surface-raised: #171b21;
-  --surface-hover: #20252d;
-  --line: #292f38;
-  --text: #d5dce2;
-  --muted: #87919d;
-  --accent: #d3dbe1;
-  --accent-ink: #101318;
+  /* Paleta del rediseño: fondos casi negros y acento teal (interior del
+     chat gestionado por preferencias propias de cada cuenta). */
+  --page: #0b141a;
+  --surface: #111b21;
+  --surface-raised: #202c33;
+  --surface-hover: #2a3942;
+  --surface-active: #35444d;
+  --line: #222d34;
+  --text: #e9edef;
+  --muted: #97a5ae;
+  --accent: #00a884;
+  --accent-ink: #0b141a;
+  --accent-hover: #06cf9c;
   --accent-secondary: var(--accent);
 }
 
@@ -134,7 +138,7 @@ body.page-stories a {
 .pickerPerson .av,
 .page-profile .bigAv,
 .page-view .bigAv {
-  background: #262d36;
+  background: var(--surface-hover);
   color: var(--text)
 }
 
@@ -165,7 +169,7 @@ body.page-stories a {
 
 .page-privacy input[type=checkbox],
 .pickerPerson input[type=checkbox] {
-  accent-color: #d3dbe1
+  accent-color: var(--accent)
 }
 
 /* ===== Aspecto de burbujas del chat: anillos y botones circulares ===== */
@@ -279,8 +283,8 @@ body.page-stories a {
 .page-stories button:not(.storyFab),
 .page-privacy .btns button,
 .page-privacy .pickerBtns button {
-  background: #20252c;
-  border: 1px solid #303741;
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
   border-radius: 14px;
   color: var(--text);
   font-weight: 600;
@@ -303,7 +307,7 @@ body.page-stories a {
 .page-stories button:not(.storyFab):hover,
 .page-privacy .btns button:hover,
 .page-privacy .pickerBtns button:hover {
-  background: #2a3039;
+  background: var(--surface-hover);
   transform: translateY(-1px)
 }
 
@@ -312,7 +316,7 @@ body.page-stories a {
 .page-view button.green:hover,
 .page-privacy .btns button.ok:hover,
 .page-privacy .pickerBtns button.ok:hover {
-  background: #e7edf1
+  background: color-mix(in srgb, var(--accent) 82%, white)
 }
 
 .page-profile button.danger,
@@ -322,7 +326,7 @@ body.page-stories a {
 .page-view .danger,
 .page-stories .danger {
   background: #2b1d20;
-  color: #f09b9b;
+  color: #f15c6d;
   border-color: #493035
 }
 
@@ -406,7 +410,7 @@ body.page-stories a {
   flex: none;
   overflow: hidden;
   border-radius: 50%;
-  background: #262d36;
+  background: var(--surface-hover);
   color: var(--text);
   font-size: 16px;
   font-weight: 600
@@ -506,9 +510,9 @@ body.page-stories a {
 
 .mSheet,
 .pickerSheet {
-  background: #11151a;
+  background: var(--surface);
   color: var(--text);
-  border: 1px solid #2b313a;
+  border: 1px solid var(--line);
   border-radius: 24px;
   box-shadow: 0 24px 80px #000b
 }
@@ -521,7 +525,7 @@ body.page-stories a {
 
 .mText,
 .pickerHint {
-  color: #aab3bd
+  color: var(--muted)
 }
 
 .mSheet input,
@@ -545,9 +549,9 @@ body.page-stories a {
 .pickerBtns button,
 .page-privacy .btns button {
   min-height: 46px;
-  background: #20252c;
+  background: var(--surface-raised);
   color: var(--text);
-  border: 1px solid #303741;
+  border: 1px solid var(--line);
   border-radius: 15px;
   padding: 11px 16px;
   font-weight: 600
@@ -569,9 +573,9 @@ body.page-stories a {
 }
 
 #toast {
-  background: #20252c;
+  background: var(--surface-raised);
   color: var(--text);
-  border: 1px solid #383f49;
+  border: 1px solid var(--line);
   border-radius: 16px;
   box-shadow: 0 12px 36px #0008
 }
@@ -581,7 +585,7 @@ a:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible {
-  outline: 2px solid #cbd5df;
+  outline: 2px solid var(--accent);
   outline-offset: 2px
 }
 
@@ -607,7 +611,7 @@ select:focus-visible {
     content: '';
     width: 38px;
     height: 4px;
-    background: #414852;
+    background: var(--line);
     border-radius: 4px;
     align-self: center;
     margin: -10px 0 5px
