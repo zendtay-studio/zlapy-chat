@@ -1,0 +1,607 @@
+/* Visor de tablas de Zlapy.
+   La misma paleta y lenguaje visual que docs/esquema: tema oscuro, barra
+   superior con estadísticas, panel lateral de tablas y rejilla de datos.
+   Sin dependencias. */
+
+:root {
+    --bg: #0b0f14;
+    --bg-grid: #11161d;
+    --panel: #141a22;
+    --card: #111720;
+    --card-hi: #18202b;
+    --line: #232c38;
+    --line-soft: #1b232d;
+    --text: #e6edf3;
+    --dim: #8b98a9;
+    --dimmer: #5c6b7d;
+    --accent: #4a9eff;
+
+    --zlapy: #4a9eff;
+    --blob: #f0b429;
+
+    --pk: #f0b429;
+    --fk: #38bdf8;
+    --uq: #b794f6;
+
+    --sidebar-w: 288px;
+}
+
+* { box-sizing: border-box; }
+
+/* El atributo hidden debe ganar a los display:flex de abajo. */
+[hidden] { display: none !important; }
+
+html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font: 13px/1.45 ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+    overflow: hidden;
+}
+
+body {
+    display: flex;
+    flex-direction: column;
+}
+
+/* ---------------- barra superior ---------------- */
+
+.topbar {
+    display: flex;
+    align-items: center;
+    gap: 22px;
+    padding: 10px 16px;
+    background: linear-gradient(180deg, #141b24, #0f141b);
+    border-bottom: 1px solid var(--line);
+    box-shadow: 0 1px 0 #0008;
+    position: relative;
+    z-index: 10;
+}
+
+.brand h1 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 650;
+    letter-spacing: .2px;
+    white-space: nowrap;
+}
+
+.brand .ver {
+    font-size: 10px;
+    font-weight: 700;
+    color: #0b0f14;
+    background: var(--accent);
+    border-radius: 4px;
+    padding: 1px 5px;
+    vertical-align: 1px;
+    margin-left: 4px;
+}
+
+.brand p {
+    margin: 3px 0 0;
+    font-size: 11px;
+    color: var(--dim);
+    white-space: nowrap;
+}
+
+.brand code {
+    font: 10.5px/1 ui-monospace, "SF Mono", Consolas, monospace;
+    color: #9fb3c8;
+    background: #0d1219;
+    border: 1px solid var(--line-soft);
+    border-radius: 3px;
+    padding: 1px 4px;
+}
+
+.stats {
+    display: flex;
+    gap: 16px;
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--dim);
+    white-space: nowrap;
+}
+
+.stats b {
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+}
+
+.stats .sep {
+    width: 1px;
+    background: var(--line);
+    align-self: stretch;
+}
+
+.controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    white-space: nowrap;
+}
+
+#search {
+    width: 210px;
+    padding: 6px 10px;
+    font: 12px/1 inherit;
+    color: var(--text);
+    background: #0c1118;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    outline: none;
+    transition: border-color .15s, box-shadow .15s;
+}
+
+#search::placeholder { color: var(--dimmer); }
+
+#search:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px #4a9eff22;
+}
+
+.toggle {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11.5px;
+    color: var(--dim);
+    cursor: pointer;
+    user-select: none;
+}
+
+.toggle input {
+    appearance: none;
+    width: 13px;
+    height: 13px;
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    background: #0c1118;
+    cursor: pointer;
+    position: relative;
+}
+
+.toggle input:checked {
+    background: var(--uq);
+    border-color: var(--uq);
+}
+
+.toggle input:checked::after {
+    content: "";
+    position: absolute;
+    left: 3px;
+    top: 1px;
+    width: 4px;
+    height: 7px;
+    border: solid #0b0f14;
+    border-width: 0 2px 2px 0;
+    transform: rotate(42deg);
+}
+
+.zoom {
+    display: flex;
+    align-items: center;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    overflow: hidden;
+    background: #0c1118;
+}
+
+.zoom button {
+    font: 11.5px/1 inherit;
+    color: var(--dim);
+    background: none;
+    border: 0;
+    padding: 7px 10px;
+    cursor: pointer;
+    transition: background .12s, color .12s;
+}
+
+.zoom button:hover { background: #18202b; color: var(--text); }
+
+/* ---------------- maquetación ---------------- */
+
+#layout {
+    flex: 1 1 auto;
+    display: flex;
+    min-height: 0;
+}
+
+#sidebar {
+    width: var(--sidebar-w);
+    flex: none;
+    overflow: auto;
+    padding: 12px 10px 24px;
+    background: linear-gradient(180deg, #0e141b, #0c1118);
+    border-right: 1px solid var(--line);
+}
+
+.side-empty {
+    margin: 18px 10px;
+    font-size: 11.5px;
+    color: var(--dimmer);
+}
+
+.db-section { margin-bottom: 20px; }
+
+.db-title {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin: 0 6px 8px;
+    font: 9.5px/1 ui-monospace, "SF Mono", Consolas, monospace;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--dimmer);
+}
+
+.db-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--c);
+    box-shadow: 0 0 8px var(--c);
+    flex: none;
+}
+
+.tbl-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 6px 9px;
+    margin: 1px 0;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: none;
+    color: #b8c6d6;
+    font: 11.5px/1.3 ui-monospace, "SF Mono", Consolas, monospace;
+    cursor: pointer;
+    text-align: left;
+    transition: background .12s, color .12s, opacity .12s;
+}
+
+.tbl-item:hover { background: #151d27; color: var(--text); }
+
+.tbl-item.active {
+    background: #18202b;
+    border-color: #2a3747;
+    color: #fff;
+    box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.tbl-item .n {
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tbl-item .cnt {
+    flex: none;
+    font-size: 9.5px;
+    font-variant-numeric: tabular-nums;
+    color: var(--dim);
+    background: #0c1118;
+    border: 1px solid var(--line-soft);
+    border-radius: 9px;
+    padding: 1px 6px;
+}
+
+.tbl-item .cnt.zero { opacity: .5; }
+
+.tbl-item.search-dim { opacity: .22; }
+
+#main {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    background-color: var(--bg);
+    background-image:
+        linear-gradient(var(--bg-grid) 1px, transparent 1px),
+        linear-gradient(90deg, var(--bg-grid) 1px, transparent 1px);
+    background-size: 26px 26px;
+    overflow: hidden;
+}
+
+.placeholder {
+    margin: auto;
+    text-align: center;
+    color: var(--dim);
+    font-size: 13px;
+}
+
+.placeholder.error { color: #f87171; max-width: 640px; }
+
+/* ---------------- vista de tabla ---------------- */
+
+#tableView {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    padding: 14px 16px 0;
+}
+
+.table-head {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 2px 2px 10px;
+    flex: none;
+}
+
+.table-head h2 {
+    margin: 0;
+    font: 650 14px/1.2 ui-monospace, "SF Mono", Consolas, monospace;
+    letter-spacing: .2px;
+}
+
+.db-badge {
+    font: 700 9px/1 ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+    color: #0b0f14;
+    background: var(--accent);
+    border-radius: 4px;
+    padding: 3px 6px;
+}
+
+.db-badge.blob { background: var(--blob); }
+
+.table-meta {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--dim);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.table-wrap {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--card);
+    box-shadow: 0 8px 22px #0005, 0 1px 0 #ffffff08 inset;
+}
+
+#dataTable {
+    border-collapse: separate;
+    border-spacing: 0;
+    min-width: 100%;
+}
+
+#dataTable thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    padding: 8px 12px;
+    text-align: left;
+    white-space: nowrap;
+    background: linear-gradient(180deg, #1a222d, #151c26);
+    border-bottom: 1px solid var(--line);
+}
+
+#dataTable thead th .th-name {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font: 600 11.5px/1 ui-monospace, "SF Mono", Consolas, monospace;
+    color: #dbe7f3;
+}
+
+#dataTable thead th .th-type {
+    display: block;
+    margin-top: 3px;
+    font: 9px/1 ui-monospace, "SF Mono", Consolas, monospace;
+    letter-spacing: .05em;
+    color: var(--dimmer);
+}
+
+#dataTable thead th .ck {
+    display: inline-flex;
+    gap: 3px;
+}
+
+#dataTable tbody td {
+    padding: 6px 12px;
+    border-top: 1px solid #ffffff06;
+    font: 11.5px/1.5 ui-monospace, "SF Mono", Consolas, monospace;
+    color: #b8c6d6;
+    white-space: nowrap;
+    max-width: 440px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+#dataTable tbody tr:nth-child(even) { background: #ffffff03; }
+#dataTable tbody tr:hover { background: #4a9eff10; }
+
+#dataTable td.rid {
+    color: var(--dimmer);
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    background: #0d1219;
+    position: sticky;
+    left: 0;
+}
+
+#dataTable thead th.rid-h {
+    background: linear-gradient(180deg, #131a22, #10161e);
+    color: var(--dimmer);
+    font: 600 10px/1 ui-monospace, "SF Mono", Consolas, monospace;
+    text-align: right;
+    position: sticky;
+    left: 0;
+    z-index: 3;
+}
+
+#dataTable td.null {
+    color: var(--dimmer);
+    font-style: italic;
+}
+
+#dataTable td.empty-value {
+    color: var(--dimmer);
+    font-style: italic;
+}
+
+#dataTable td.masked {
+    color: var(--dimmer);
+    letter-spacing: .14em;
+}
+
+/* chips */
+
+.k {
+    font: 700 8.5px/1 ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: .04em;
+    padding: 2px 4px;
+    border-radius: 3px;
+    font-style: normal;
+}
+
+.k.pk { color: #0b0f14; background: var(--pk); }
+.k.fk { color: #06121a; background: var(--fk); }
+.k.uq { color: #0b0f14; background: var(--uq); }
+
+/* vacío */
+
+.empty {
+    margin: 28px 16px;
+    font-size: 12px;
+    color: var(--dim);
+}
+
+/* ---------------- paginación ---------------- */
+
+.pager {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 2px 12px;
+    font-size: 11.5px;
+    color: var(--dim);
+}
+
+.pager button {
+    font: 11.5px/1 inherit;
+    color: var(--dim);
+    background: #0c1118;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 6px 10px;
+    cursor: pointer;
+    transition: background .12s, color .12s, border-color .12s;
+}
+
+.pager button:hover:not(:disabled) {
+    background: #18202b;
+    color: var(--text);
+    border-color: #324154;
+}
+
+.pager button:disabled {
+    opacity: .35;
+    cursor: default;
+}
+
+.pager .spacer { flex: 1; }
+
+.pager .limit {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--dim);
+}
+
+.pager select {
+    font: 11px/1 inherit;
+    color: var(--text);
+    background: #0c1118;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 5px 7px;
+    outline: none;
+}
+
+.pager select:focus { border-color: var(--accent); }
+
+#pageInfo {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+/* ---------------- leyenda y pie ---------------- */
+
+.footer {
+    flex: none;
+    background: linear-gradient(0deg, #10161e, #0d1219);
+    border-top: 1px solid var(--line);
+}
+
+.legend {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 18px;
+    padding: 6px 16px 0;
+    font-size: 11px;
+    color: var(--dim);
+}
+
+.legend .item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+}
+
+.legend .sample {
+    font: 10.5px/1 ui-monospace, Consolas, monospace;
+    font-style: italic;
+}
+
+.legend .sample.null { color: var(--dimmer); }
+.legend .sample.mask { color: var(--dimmer); letter-spacing: .12em; }
+
+.legend .grow { flex: 1; }
+
+.hint {
+    font-size: 10.5px;
+    color: var(--dimmer);
+    padding: 3px 16px 7px;
+    border-top: 1px solid var(--line-soft);
+    background: #0f141b;
+}
+
+.hint kbd {
+    font: 10px/1 ui-monospace, Consolas, monospace;
+    color: var(--dim);
+    border: 1px solid var(--line);
+    border-bottom-width: 2px;
+    border-radius: 3px;
+    padding: 1px 4px;
+    background: #0c1118;
+}
+
+.hint code {
+    font: 10px/1 ui-monospace, Consolas, monospace;
+    color: #9fb3c8;
+}
+
+@media (max-width: 1200px) {
+    .brand p { display: none; }
+    #search { width: 160px; }
+}
+
+@media (max-width: 960px) {
+    .stats { display: none; }
+    :root { --sidebar-w: 210px; }
+}

@@ -1,12 +1,15 @@
         :root {
             color-scheme: dark;
-            --bg: #0b141a;
-            --bg-deep: #070b0e;
-            --panel: #111b21;
-            --panel-2: #202c33;
-            --panel-3: #26343c;
-            --line: #222d34;
-            --line-strong: #2b3a42;
+            /* Misma base que theme.css y detalles del grupo: página #090c0f
+               (el negro profundo del índice) y superficies #101419/#171b21.
+               Sin el tinte verdoso de la variante antigua. */
+            --bg: var(--page);
+            --bg-deep: var(--page);
+            --panel: var(--surface);
+            --panel-2: var(--surface-raised);
+            --panel-3: var(--surface-hover);
+            --line: #292f38;
+            --line-strong: #374045;
             --text: #e9edef;
             --muted: #8696a0;
             --muted-2: #667781;
@@ -36,20 +39,19 @@
 
         html {
             height: 100%;
-            background: var(--bg-deep)
+            background: var(--bg)
         }
 
         body {
             display: flex;
             flex-direction: column;
             width: 100%;
-            max-width: 720px;
             height: 100vh;
             height: 100dvh;
-            margin: 0 auto;
             overflow: hidden;
-            border-inline: 1px solid #20252c;
-            background: var(--bg);
+            background-color: var(--bg-deep);
+            background-image: radial-gradient(circle at 1px 1px, #ffffff08 1px, transparent 1px);
+            background-size: 26px 26px;
             color: var(--text);
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
             -webkit-font-smoothing: antialiased;
@@ -113,8 +115,8 @@
             flex: none;
             padding: 10px 10px 10px 12px;
             padding-top: calc(10px + env(safe-area-inset-top, 0px));
-            background: #101419;
-            border-bottom: 1px solid #20252c
+            background: var(--panel);
+            border-bottom: 1px solid var(--line)
         }
 
         .icon-btn {
@@ -207,7 +209,7 @@
             overflow-y: auto;
             overscroll-behavior: contain;
             scrollbar-width: thin;
-            scrollbar-color: #34434b transparent;
+            scrollbar-color: #38424c transparent;
             -webkit-overflow-scrolling: touch
         }
 
@@ -217,7 +219,7 @@
 
         .content::-webkit-scrollbar-thumb {
             border-radius: 99px;
-            background: #34434b
+            background: #38424c
         }
 
         .identity {
@@ -260,7 +262,7 @@
             border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line));
             background:
                 radial-gradient(circle at 35% 28%, color-mix(in srgb, var(--accent) 24%, transparent), transparent 48%),
-                linear-gradient(145deg, color-mix(in srgb, var(--accent) 22%, #10171a), #10171a)
+                linear-gradient(145deg, color-mix(in srgb, var(--accent) 22%, #12181e), #12181e)
         }
 
         .avatar-art .icon {
@@ -278,7 +280,7 @@
             border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
             background:
                 radial-gradient(circle at 35% 28%, color-mix(in srgb, var(--accent) 32%, transparent), transparent 48%),
-                linear-gradient(145deg, color-mix(in srgb, var(--accent) 30%, #10171a), #10171a)
+                linear-gradient(145deg, color-mix(in srgb, var(--accent) 30%, #12181e), #12181e)
         }
 
         .camera-badge {
@@ -384,7 +386,7 @@
             padding: 9px 11px 17px;
             border: 1px solid #25323a;
             border-radius: 12px;
-            background: #0d171d
+            background: var(--bg)
         }
 
         .desc-wrap textarea {
@@ -479,9 +481,9 @@
             flex: none;
             max-width: 190px;
             padding: 4px 9px 4px 4px;
-            border: 1px solid #2b3a42;
+            border: 1px solid var(--line);
             border-radius: 999px;
-            background: #18262d;
+            background: var(--panel-2);
             color: var(--text);
             font-size: 12.5px;
             font-weight: 500;
@@ -491,8 +493,8 @@
         }
 
         .chip:hover {
-            border-color: #3b5a51;
-            background: #1d302b
+            border-color: var(--line-strong);
+            background: var(--panel-3)
         }
 
         .chip .icon {
@@ -568,7 +570,7 @@
 
         .search:focus-within {
             border-color: color-mix(in srgb, var(--accent) 55%, transparent);
-            background: #23323a
+            background: #26303a
         }
 
         .search > .icon {
@@ -606,13 +608,13 @@
             padding: 0;
             border: 0;
             border-radius: 50%;
-            background: #2b3a42;
+            background: #2f3a43;
             color: #aebac1;
             cursor: pointer
         }
 
         .search-clear:hover {
-            background: #36464f;
+            background: #38424c;
             color: var(--text)
         }
 
@@ -675,7 +677,7 @@
         }
 
         .contact:hover {
-            background: #152128
+            background: var(--panel-3)
         }
 
         .contact[aria-pressed="true"] {
@@ -816,9 +818,9 @@
         .empty-retry {
             margin-top: 12px;
             padding: 9px 14px;
-            border: 1px solid #34454e;
+            border: 1px solid #2f3a43;
             border-radius: 9px;
-            background: #1c2a31;
+            background: #20272e;
             color: var(--text);
             font-size: 12px;
             font-weight: 550;
@@ -860,7 +862,7 @@
         }
 
         .advanced summary:hover {
-            background: #152128
+            background: var(--panel-3)
         }
 
         .adv-icon {
@@ -960,7 +962,7 @@
             padding: 3px;
             border: 1px solid #25323a;
             border-radius: 9px;
-            background: #0b141a
+            background: var(--bg)
         }
 
         .seg button {
@@ -991,6 +993,49 @@
             color: var(--muted-2);
             font-size: 10.5px;
             line-height: 1.45
+        }
+
+        .photo-remove {
+            margin-top: 8px;
+            align-self: flex-start;
+            color: var(--muted)
+        }
+
+        .photo-remove:hover {
+            color: #ff9d9d
+        }
+
+        .adv-subhead {
+            display: grid;
+            gap: 2px;
+            margin-top: 6px;
+            padding-top: 12px;
+            border-top: 1px solid var(--line)
+        }
+
+        .adv-subhead b {
+            color: #d7e0e4;
+            font-size: 12.5px;
+            font-weight: 550
+        }
+
+        .adv-subhead span {
+            color: var(--muted-2);
+            font-size: 10.5px
+        }
+
+        #contentPolicyRows {
+            display: grid;
+            gap: 11px
+        }
+
+        #contentPolicyRows .adv-row {
+            padding-top: 0
+        }
+
+        .seg button:disabled {
+            opacity: .45;
+            cursor: default
         }
 
         .footnote {
@@ -1137,14 +1182,7 @@
 
         @media (min-width: 900px) {
             html {
-                background:
-                    radial-gradient(circle at 50% -12%, #17252d 0, #0b141a 38%, var(--bg-deep) 72%)
-            }
-
-            body {
-                max-width: 1120px;
-                border-inline: 1px solid #202b32;
-                box-shadow: 0 0 70px rgba(0, 0, 0, .35)
+                background: var(--bg-deep)
             }
 
             .appbar {
@@ -1253,7 +1291,7 @@
                 overflow-y: auto;
                 border-top: 1px solid var(--line);
                 scrollbar-width: thin;
-                scrollbar-color: #34434b transparent
+                scrollbar-color: #38424c transparent
             }
 
             .contact {
@@ -1292,10 +1330,6 @@
         }
 
         @media (min-width: 1200px) {
-            body {
-                max-width: 1200px
-            }
-
             .content {
                 grid-template-columns: minmax(330px, 380px) minmax(0, 1fr);
                 gap: 22px 28px;
@@ -1313,6 +1347,47 @@
 
             .name-input {
                 font-size: 22px
+            }
+        }
+
+        @media (min-width: 900px) {
+            body.edit-mode .content {
+                display: flex;
+                width: 100%;
+                max-width: 760px;
+                flex-direction: column;
+                gap: 18px;
+                margin-inline: auto;
+                padding: 24px 22px 30px;
+                overflow-y: auto
+            }
+
+            body.edit-mode .identity {
+                width: 100%;
+                flex-direction: row;
+                align-items: center;
+                gap: 22px;
+                padding: 24px;
+                text-align: left
+            }
+
+            body.edit-mode .identity .avatar {
+                width: 92px;
+                height: 92px
+            }
+
+            body.edit-mode .identity-fields {
+                width: auto
+            }
+
+            body.edit-mode .name-input {
+                font-size: 21px;
+                text-align: left
+            }
+
+            body.edit-mode .advanced {
+                width: 100%;
+                margin: 0
             }
         }
 

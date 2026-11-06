@@ -549,7 +549,8 @@ db.prepare('SELECT username FROM users WHERE username = ?').all('ano');
 6. La contraseña y las claves solo existen en columnas dedicadas y, en el caso
    de las claves, cifradas en reposo.
 7. Datos sensibles (mensajes, historias, adjuntos, claves) nunca se escriben
-   en claro: pasan por AES-256-GCM con la llave maestra (`CHAT_MASTER_KEY` del `.env`).
+   en claro: pasan por AES-256-GCM con la llave maestra (derivada de la
+   credencial del propietario: `DB_USER` + `DB_PASSWORD` del `.env`).
 
 ---
 

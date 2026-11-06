@@ -10,6 +10,22 @@
         mention: 'all'
     };
 
+    const CONTENT_ROWS = [
+        ['image', 'Fotos'],
+        ['video', 'Videos'],
+        ['audio', 'Audio y notas de voz'],
+        ['file', 'Archivos'],
+        ['sticker', 'Stickers'],
+        ['contact', 'Contactos'],
+        ['poll', 'Encuestas']
+    ];
+
+    const params = new URLSearchParams(location.search);
+    const embedded = params.get('embedded') === '1' && window.parent !== window;
+    const editMode = params.get('mode') === 'edit';
+    const editGroupId = editMode ? (params.get('id') || '') : '';
+    if (editMode) document.body.classList.add('edit-mode');
+
     const state = {
         me: null,
         contacts: [],
@@ -17,19 +33,29 @@
         selected: [],
         query: '',
         prefs: { ...PREF_DEFAULTS },
+        contentPolicy: Object.fromEntries(CONTENT_ROWS.map(([kind]) => [kind, 'all'])),
+        group: null,
+        isAdmin: false,
+        canEditGroup: false,
+        avatarChanged: false,
         avatar: '',
         busy: false,
         ready: false,
         loadError: false
     };
 
-    const embedded = new URLSearchParams(location.search).get('embedded') === '1' && window.parent !== window;
-
     const $ = id => document.getElementById(id);
     const refs = {
+        pageTitle: $('pageTitle'),
         createBtn: $('createBtn'),
         closeBtn: $('closeBtn'),
         appbarSub: $('appbarSub'),
+        participantsSection: $('participantsSection'),
+        footnote: $('footnote'),
+        removeAvatarBtn: $('removeAvatarBtn'),
+        contentPolicyHead: $('contentPolicyHead'),
+        contentPolicyRows: $('contentPolicyRows'),
+        advNote: $('advNote'),
         name: $('groupName'),
         nameCount: $('nameCount'),
         descToggle: $('descToggle'),
@@ -105,7 +131,7 @@
 
     function presenceText(contact) {
         if (!contact) return 'Sin conexión';
-        if (contact.online) return 'En línea';
+        if (contact.online) return 'en línea';
         if (!contact.lastSeen) return 'Sin conexión';
         const date = new Date(contact.lastSeen);
         const now = new Date();
@@ -126,6 +152,7 @@
     }
 
     function canCreate() {
+        if (editMode) return Boolean(refs.name.value.trim()) && state.ready && !state.loadError && state.canEditGroup;
         return Boolean(refs.name.value.trim()) && state.selected.length > 0 && state.ready && !state.loadError;
     }
 
@@ -138,7 +165,19 @@
         refs.memberCount.setAttribute('aria-label', `${count} participante${count === 1 ? '' : 's'} seleccionado${count === 1 ? '' : 's'}`);
         refs.nameCount.textContent = `${refs.name.value.length}/40`;
         refs.createBtn.disabled = state.busy || !canCreate();
-        refs.createBtn.textContent = state.busy ? 'Creando…' : 'Crear';
+        refs.createBtn.textContent = state.busy
+            ? (editMode ? 'Guardando…' : 'Creando…')
+            : (editMode ? 'Guardar' : 'Crear');
+
+        if (editMode) {
+            if (state.loadError) refs.appbarSub.textContent = 'No se pudo cargar el grupo';
+            else if (!state.ready) refs.appbarSub.textContent = 'Cargando grupo…';
+            else if (!state.canEditGroup) refs.appbarSub.textContent = 'No puedes editar este grupo';
+            else if (!name) refs.appbarSub.textContent = 'Ponle un nombre al grupo';
+            else if (!state.isAdmin) refs.appbarSub.textContent = 'Cambia el nombre, la foto o la descripción';
+            else refs.appbarSub.textContent = 'Cambia la información y los permisos';
+            return;
+        }
 
         if (state.loadError) refs.appbarSub.textContent = 'No se pudieron cargar los contactos';
         else if (!state.ready) refs.appbarSub.textContent = 'Cargando contactos…';
@@ -233,7 +272,7 @@
             const src = avatarUrl(profile);
             const selected = state.selected.includes(username);
             const status = contact.online
-                ? '<span class="online-dot" aria-hidden="true"></span><span>En línea</span>'
+                ? '<span class="online-dot" aria-hidden="true"></span><span>en línea</span>'
                 : `<span class="sub-sep" aria-hidden="true">·</span><span>${escapeHtml(presenceText(contact))}</span>`;
             return `<button class="contact" type="button" data-contact="${escapeHtml(username)}" aria-pressed="${selected}" aria-label="${selected ? 'Quitar' : 'Añadir'} a ${escapeHtml(name)}">
                 <span class="person-avatar" aria-hidden="true">
@@ -267,15 +306,44 @@
     }
 
     function renderPreferences() {
-        document.querySelectorAll('.advanced .seg').forEach(seg => {
+        document.querySelectorAll('.advanced .seg[data-key]').forEach(seg => {
             const key = seg.dataset.key;
             seg.querySelectorAll('button[data-value]').forEach(button => {
                 const active = button.dataset.value === state.prefs[key];
                 button.classList.toggle('on', active);
                 button.setAttribute('aria-pressed', String(active));
+                button.disabled = editMode && !state.isAdmin;
             });
         });
         updatePreferencesSummary();
+    }
+
+    function renderContentPolicy() {
+        if (!editMode || !state.isAdmin) return;
+        refs.contentPolicyRows.innerHTML = CONTENT_ROWS.map(([kind, label]) => `
+            <div class="adv-row">
+                <div class="adv-label"><b>${label}</b></div>
+                <div class="seg" data-content="${kind}" role="group" aria-label="${label}">
+                    ${[['all', 'Todos'], ['admins', 'Solo admins'], ['off', 'Desactivado']].map(([value, text]) => `
+                        <button type="button" data-value="${value}">${text}</button>
+                    `).join('')}
+                </div>
+            </div>
+        `).join('');
+        refs.contentPolicyHead.hidden = false;
+        refs.contentPolicyRows.hidden = false;
+        renderContentPolicyState();
+    }
+
+    function renderContentPolicyState() {
+        refs.contentPolicyRows.querySelectorAll('.seg[data-content]').forEach(seg => {
+            const kind = seg.dataset.content;
+            seg.querySelectorAll('button[data-value]').forEach(button => {
+                const active = button.dataset.value === state.contentPolicy[kind];
+                button.classList.toggle('on', active);
+                button.setAttribute('aria-pressed', String(active));
+            });
+        });
     }
 
     function updatePreferencesSummary() {
@@ -345,7 +413,7 @@
             refs.name.focus();
             return;
         }
-        if (!state.selected.length) {
+        if (!editMode && !state.selected.length) {
             showToast('Selecciona al menos un participante.');
             refs.search.focus();
             return;
@@ -353,6 +421,38 @@
 
         setBusy(true);
         try {
+            if (editMode) {
+                if (!state.canEditGroup) throw new Error('No tienes permiso para editar este grupo.');
+                const payload = {
+                    rename: name,
+                    description: refs.desc.value.trim()
+                };
+                if (state.avatarChanged) payload.avatar = state.avatar;
+                if (state.isAdmin) {
+                    payload.visibility = state.prefs.visibility;
+                    payload.joinPolicy = state.prefs.join;
+                    payload.writePolicy = state.prefs.write;
+                    payload.addPolicy = state.prefs.add;
+                    payload.editPolicy = state.prefs.edit;
+                    payload.mentionAllPolicy = state.prefs.mention;
+                    payload.contentPolicy = { ...state.contentPolicy };
+                }
+
+                const response = await fetch('/groups/' + encodeURIComponent(editGroupId), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const group = await response.json();
+                if (!response.ok) throw new Error(group.error || 'No se pudo guardar el grupo.');
+                if (embedded) {
+                    window.parent.postMessage({ type: 'zlapy:group-saved', groupId: editGroupId }, location.origin);
+                    return;
+                }
+                location.assign('/');
+                return;
+            }
+
             const response = await fetch('/groups', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -379,8 +479,8 @@
             try { sessionStorage.setItem('zlapy:open-group', group.id); } catch { }
             location.assign('/');
         } catch (error) {
-            console.error('[grupo] No se pudo crear el grupo:', error);
-            showToast(error.message || 'No se pudo crear el grupo.', 'info');
+            console.error('[grupo] No se pudo guardar el grupo:', error);
+            showToast(error.message || (editMode ? 'No se pudo guardar el grupo.' : 'No se pudo crear el grupo.'), 'info');
             setBusy(false);
         }
     }
@@ -415,6 +515,90 @@
                 state.profiles[contact.username] = { username: contact.username };
             }
         }));
+    }
+
+    async function bootEdit() {
+        state.ready = false;
+        state.loadError = false;
+        renderPreferences();
+        updateSummary();
+
+        try {
+            const sessionResponse = await fetch('/auth/session', { cache: 'no-store' });
+            if (!sessionResponse.ok) throw new Error('No se pudo comprobar la sesión.');
+            const session = await sessionResponse.json();
+            if (!session || !session.authenticated) {
+                location.replace('/');
+                return;
+            }
+            state.me = session.user || {};
+
+            if (!editGroupId) throw new Error('Falta el grupo que se va a editar.');
+            const response = await fetch('/groups/' + encodeURIComponent(editGroupId) + '?light=1', { cache: 'no-store' });
+            if (!response.ok) throw new Error(response.status === 404 ? 'No se encontró el grupo.' : 'No se pudo cargar el grupo.');
+            const group = await response.json();
+
+            const isAdmin = Array.isArray(group.admins) && group.admins.includes(state.me.username);
+            const canEditGroup = isAdmin || group.editPolicy === 'all';
+            state.group = group;
+            state.isAdmin = isAdmin;
+            state.canEditGroup = canEditGroup;
+            if (!canEditGroup) throw new Error('No tienes permiso para editar este grupo.');
+
+            document.title = 'Editar grupo — Zlapy';
+            refs.pageTitle.textContent = 'Editar grupo';
+            refs.participantsSection.hidden = true;
+            refs.footnote.hidden = true;
+            refs.advanced.open = true;
+            refs.advNote.textContent = isAdmin
+                ? 'Los cambios se aplican al pulsar Guardar.'
+                : 'Solo los administradores pueden cambiar los permisos.';
+
+            refs.name.value = group.name || '';
+            refs.desc.value = group.description || '';
+            refs.descCount.textContent = `${refs.desc.value.length}/500`;
+            if (refs.desc.value.trim()) refs.descWrap.hidden = false;
+
+            state.avatar = group.avatar || '';
+            if (state.avatar) {
+                refs.avatarImg.src = state.avatar;
+                refs.avatarImg.hidden = false;
+                refs.avatarDefault.hidden = true;
+                refs.removeAvatarBtn.hidden = false;
+            } else {
+                refs.avatarImg.hidden = true;
+                refs.avatarDefault.hidden = false;
+                refs.removeAvatarBtn.hidden = true;
+            }
+
+            state.prefs = {
+                visibility: group.visibility || PREF_DEFAULTS.visibility,
+                join: group.joinPolicy || PREF_DEFAULTS.join,
+                write: group.writePolicy || PREF_DEFAULTS.write,
+                add: group.addPolicy || PREF_DEFAULTS.add,
+                edit: group.editPolicy || PREF_DEFAULTS.edit,
+                mention: group.mentionAllPolicy || PREF_DEFAULTS.mention
+            };
+            if (group.contentPolicy && typeof group.contentPolicy === 'object') {
+                for (const [kind, policy] of Object.entries(group.contentPolicy)) {
+                    if (kind in state.contentPolicy && ['all', 'admins', 'off'].includes(policy)) state.contentPolicy[kind] = policy;
+                }
+            }
+
+            state.ready = true;
+            state.loadError = false;
+            renderPreferences();
+            renderContentPolicy();
+            syncDescriptionToggle();
+            updateSummary();
+        } catch (error) {
+            console.error('[grupo] No se pudo cargar el grupo para editar:', error);
+            state.ready = true;
+            state.loadError = true;
+            renderPreferences();
+            updateSummary();
+            showToast(error.message || 'No se pudo cargar el grupo.', 'info');
+        }
     }
 
     async function boot() {
@@ -479,15 +663,27 @@
                 avatar = await imageToDataUrl(file);
             }
             state.avatar = avatar;
+            state.avatarChanged = true;
             refs.avatarImg.src = state.avatar;
             refs.avatarImg.hidden = false;
             refs.avatarDefault.hidden = true;
+            refs.removeAvatarBtn.hidden = !editMode;
         } catch (error) {
             console.error('[grupo] No se pudo preparar la foto:', error);
             showToast('No se pudo preparar la foto del grupo.');
         } finally {
             refs.avatarInput.value = '';
         }
+    });
+
+    refs.removeAvatarBtn.addEventListener('click', () => {
+        if (!editMode || state.busy) return;
+        state.avatar = '';
+        state.avatarChanged = true;
+        refs.avatarImg.hidden = true;
+        refs.avatarDefault.hidden = false;
+        refs.removeAvatarBtn.hidden = true;
+        showToast('La foto se quitará al guardar.');
     });
 
     refs.name.addEventListener('input', updateSummary);
@@ -538,13 +734,22 @@
         removeContact(chip.dataset.remove);
     });
 
-    document.querySelectorAll('.advanced .seg').forEach(seg => {
+    document.querySelectorAll('.advanced .seg[data-key]').forEach(seg => {
         seg.addEventListener('click', event => {
             const button = event.target.closest('button[data-value]');
-            if (!button) return;
+            if (!button || (editMode && !state.isAdmin)) return;
             state.prefs[seg.dataset.key] = button.dataset.value;
             renderPreferences();
         });
+    });
+
+    refs.contentPolicyRows.addEventListener('click', event => {
+        const button = event.target.closest('button[data-value]');
+        if (!button) return;
+        const seg = button.closest('.seg[data-content]');
+        if (!seg) return;
+        state.contentPolicy[seg.dataset.content] = button.dataset.value;
+        renderContentPolicyState();
     });
 
     refs.createBtn.addEventListener('click', submitGroup);
@@ -559,7 +764,12 @@
 
     refs.descCount.textContent = '0/500';
     renderPreferences();
-    renderAll();
-    syncDescriptionToggle();
-    boot();
+    if (editMode) {
+        syncDescriptionToggle();
+        bootEdit();
+    } else {
+        renderAll();
+        syncDescriptionToggle();
+        boot();
+    }
 })();

@@ -13,20 +13,20 @@
     }
 
     body {
-      background: #111b21;
-      color: #e9edef;
+      background-color: var(--page);
+      background-image: radial-gradient(circle at 1px 1px, #ffffff08 1px, transparent 1px);
+      background-size: 26px 26px;
+      color: var(--text);
       min-height: 100vh;
       min-height: 100dvh;
       display: flex;
       flex-direction: column;
-      width: 100%;
-      max-width: 720px;
-      margin: 0 auto;
-      border-inline: 1px solid #20252c
+      width: 100%
     }
 
     header {
-      background: #202c33;
+      background: var(--surface);
+      border-bottom: 1px solid var(--line);
       padding: 16px 20px;
       font-size: 18px;
       font-weight: 600;
@@ -36,13 +36,14 @@
     }
 
     header a {
-      color: #e9edef;
+      color: var(--text);
       text-decoration: none;
       font-size: 22px
     }
 
     main {
-      width: 100%;
+      width: min(100%, 720px);
+      margin-inline: auto;
       padding: clamp(16px, 5vw, 32px);
       display: flex;
       flex-direction: column;
@@ -111,7 +112,7 @@
     input,
     textarea,
     select {
-      background: #202c33;
+      background: var(--surface-raised);
       border: none;
       border-radius: 8px;
       padding: 12px;

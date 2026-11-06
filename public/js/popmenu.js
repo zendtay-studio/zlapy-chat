@@ -45,6 +45,7 @@
 
     let current = null;
     let currentAnchor = null;
+    let currentOptions = null;
 
     /* Solo nombres de la lista de arriba: nada de HTML crudo, aunque mañana
        alguien le pase un dato suelto al menu. */
@@ -57,8 +58,10 @@
     function close() {
         if (!current) return;
         const menu = current;
+        const opts = currentOptions;
         current = null;
         currentAnchor = null;
+        currentOptions = null;
         menu.classList.remove('on');
         menu.hidden = true;
         document.removeEventListener('pointerdown', onOutside, true);
@@ -67,6 +70,9 @@
         // La fase aquí debe ser la misma que en el add de `open`, o el
         // listener del scroll nunca se va.
         window.removeEventListener('scroll', close);
+        if (opts && typeof opts.onClose === 'function') {
+            try { opts.onClose(); } catch { }
+        }
     }
 
     function onOutside(event) {
@@ -111,6 +117,7 @@
         menu.hidden = false;
         current = menu;
         currentAnchor = opts.anchor || null;
+        currentOptions = opts;
 
         // Colocarlo junto al ancla (o en el punto pedido), siempre en pantalla.
         const rect = currentAnchor && currentAnchor.getBoundingClientRect

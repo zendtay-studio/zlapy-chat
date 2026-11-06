@@ -8,6 +8,7 @@
 
 const crypto = require('crypto');
 const { decryptAtRest, encryptAtRest } = require('../crypto/setup.js');
+const { decField, encField } = require('../crypto/field-crypto.js');
 const { Stmt } = require('../db/statements.js');
 const { push } = require('../realtime/notify.js');
 const { validPushEndpoint } = require('../shared/validation.js');
@@ -85,6 +86,24 @@ async function pushTo(sub, payloadObj) {
     } catch (e) { return { status: 0, error: e && e.message ? e.message : String(e) }; }
 }
 
+/**
+ * Busca la fila de una suscripción por su endpoint.
+ *
+ * El endpoint (URL con el token del push) va cifrado y el cifrado no es
+ * determinista, así que no se puede consultar por SQL: se recorre las
+ * suscripciones de la cuenta, se descifran y se comparan.
+ *
+ * @param {string} userId
+ * @param {string} endpoint
+ * @returns {{rowid: number, endpoint: string, data: string}|null}
+ */
+function findPushSubRow(userId, endpoint) {
+    if (!userId || typeof endpoint !== 'string' || !endpoint) return null;
+    for (const row of Stmt.listPushSubsByUser.all(userId))
+        if (decField('push_subs.endpoint', row.endpoint) === endpoint) return row;
+    return null;
+}
+
 async function notifyUser(username, payload) {
     const id = accountId(username);
     const subs = pushSubs.get(id) || [];
@@ -94,7 +113,8 @@ async function notifyUser(username, payload) {
         const result = await pushTo(sub, payload);
         results.push(result);
         if (result.status === 404 || result.status === 410) {
-            Stmt.deletePushSub.run(id, sub.endpoint);
+            const row = findPushSubRow(id, sub.endpoint);
+            if (row) Stmt.deletePushSubByRowid.run(row.rowid);
             pushSubs.set(id, (pushSubs.get(id) || []).filter(s => s.endpoint !== sub.endpoint));
         }
     }
@@ -117,5 +137,6 @@ module.exports = {
     vapidAuth,
     pushTo,
     notifyUser,
+    findPushSubRow,
     pushNameOf,
 };

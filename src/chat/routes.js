@@ -15,7 +15,7 @@ const crypto = require('crypto');
 const { blobAvailableTo, blobHashOk, blobQuotaOk, invalidateBlobQuota, readBlob, storeBlob } = require('./media.js');
 const { deleteMessageById, filterForViewer, getChatPage, invalidateChatPage, readMessagePage, resolveReply, rowToMessage, updateStoredMessage } = require('./messages.js');
 const { decorateForClient, decryptSummaryCached, healSummary, lastEntryFromMsg, onChatDeletedSummary, onMessageDeletedSummary, onMessageSentSummary, onReadSummary, readSummaryEntry, resolveName, writeSummaryEntry } = require('./summaries.js');
-const { applyChatPrefs, readChatPrefs, resolveTarget } = require('./prefs.js');
+const { applyChatPrefs, readChatPrefs, resolveTarget, unarchiveForIncoming } = require('./prefs.js');
 const { CONFIG } = require('../config.js');
 const { db } = require('../db/database.js');
 const { Stmt } = require('../db/statements.js');
@@ -329,6 +329,10 @@ function postSend(req, res, url, data, actor) {
     // propio emisor al volver a escribir — había borrado de su lista.
     Stmt.deleteChatDeletion.run('chat:' + pk, recipient.id);
     Stmt.deleteChatDeletion.run('chat:' + pk, sender.id);
+    // Un mensaje nuevo devuelve el chat a la lista, salvo que el destinatario
+    // haya activado «Mantener los chats archivados».
+    if (recipient.id !== sender.id)
+        unarchiveForIncoming(recipient.username, recipient.id, 'dm:' + sender.username);
     invalidateChatPage(pk);
     onMessageSentSummary(msg);
     const decorated = decorateForClient(msg);

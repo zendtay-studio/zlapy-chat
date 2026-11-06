@@ -13,11 +13,13 @@ const mtproto = require('../crypto/mtproto.js');
 const { prepareStoredMessage } = require('../chat/messages.js');
 const { CONFIG } = require('../config.js');
 const { authKeyRecord, authKeys, decryptAtRest, decryptForUser, encryptAtRest, encryptForUser, messageContextBytes, messageCrypto } = require('../crypto/setup.js');
+const { decField, encField } = require('../crypto/field-crypto.js');
 const { db } = require('../db/database.js');
 const { SCHEMA_VERSION } = require('../db/schema.js');
 const { Stmt } = require('../db/statements.js');
-const { tx } = require('../db/transactions.js');
+const { pruneBlobHashes, tx } = require('../db/transactions.js');
 const { messageRateLimiter } = require('../http/rate-limit.js');
+const { readImage, storeImage } = require('../profile/images.js');
 const { push } = require('../realtime/notify.js');
 const { blockedSet, callFiles, chatPageCache, groupCache, notesMap, pendingOffers, profiles, pushSubs, sessionCache, stories, usernameIndex, users, setStories } = require('../state.js');
 const { byId, byName, mutedChatPeers, parseJsonSafe } = require('./helpers.js');
@@ -40,14 +42,14 @@ function hydrateUserFromDb(acc) {
     const profile = profiles[acc.username] || {
         username: acc.username,
         name: (row && dec(row.display_name)) || acc.username,
-        avatar: (row && row.avatar) || '',
+        avatar: (row && readImage(row.avatar_ref)) || '',
         desc: (row && dec(row.bio)) || '',
         note: (row && dec(row.note)) || '',
         noteTs: (row && row.note_ts) || 0
     };
     if (row) {
         profile.name = dec(row.display_name) || profile.name;
-        profile.avatar = row.avatar || '';
+        profile.avatar = readImage(row.avatar_ref) || '';
         profile.desc = dec(row.bio) || '';
         profile.note = dec(row.note) || '';
         profile.noteTs = row.note_ts || 0;
@@ -60,7 +62,10 @@ function hydrateUserFromDb(acc) {
     acc.contacts = new Set(Stmt.listContacts.all(acc.id).map(r => r.contact));
 
     // Stickers favoritos
-    acc.stickers = Stmt.listStickers.all(acc.id).map(r => r.sticker).slice(-30);
+    acc.stickers = Stmt.listStickers.all(acc.id)
+        .map(r => decField('user_stickers.sticker', r.sticker))
+        .filter(Boolean)
+        .slice(-30);
 
     // Grupos vistos
     const seen = {};
@@ -98,7 +103,8 @@ function hydrateUserFromDb(acc) {
         for (const r of privacyRows) {
             const names = lists
                 .filter(entry => entry.feature === r.feature)
-                .map(entry => (entry.target_id && byId(entry.target_id)?.username) || entry.target_name)
+                .map(entry => (entry.target_id && byId(entry.target_id)?.username)
+                    || decField('user_privacy_users.target_name', entry.target_name))
                 .filter(Boolean);
             privacy[r.feature] = { mode: r.mode, users: names };
         }
@@ -108,17 +114,27 @@ function hydrateUserFromDb(acc) {
     // Apariencia del chat
     const chat = Stmt.getChatSettings.get(acc.id);
     if (chat) {
-        profile.chatAppearance = {
-            wall: chat.wall || '', opacity: chat.opacity, blur: chat.blur,
-            sender: chat.sender || '', receiver: chat.receiver || '',
-            senderText: chat.sender_text || '', receiverText: chat.receiver_text || '',
-            fontSize: chat.font_size, autoText: !!chat.auto_text, image: chat.wallpaper || ''
-        };
+        profile.keepArchived = !!chat.keep_archived;
+        const wallpaper = readImage(chat.wallpaper_ref);
+        /* Una fila puede existir solo por el ajuste de archivados (sin
+           apariencia guardada todavía): en ese caso no se inventa una
+           apariencia por defecto que pise la copia local/heredada. */
+        if (chat.wall || chat.sender || chat.receiver || wallpaper) {
+            profile.chatAppearance = {
+                wall: decField('user_chat_settings.wall', chat.wall) || '',
+                opacity: chat.opacity, blur: chat.blur,
+                sender: decField('user_chat_settings.sender', chat.sender) || '',
+                receiver: decField('user_chat_settings.receiver', chat.receiver) || '',
+                senderText: decField('user_chat_settings.sender_text', chat.sender_text) || '',
+                receiverText: decField('user_chat_settings.receiver_text', chat.receiver_text) || '',
+                fontSize: chat.font_size, autoText: !!chat.auto_text, image: wallpaper
+            };
+        }
     }
 
     // Chats silenciados
     profile.mutedChatPeers = Stmt.listMutedPeers.all(acc.id)
-        .map(r => (r.peer_id && byId(r.peer_id)?.username) || r.peer_name)
+        .map(r => (r.peer_id && byId(r.peer_id)?.username) || decField('user_muted_peers.peer_name', r.peer_name))
         .filter(Boolean);
 
     // Bloqueados
@@ -407,12 +423,26 @@ function writeUserRows(user) {
         user.createdAt || Date.now(), user.lastSeen || null
     );
     const now = Date.now();
+    /* La foto de perfil y el fondo del chat van al almacén de blobs (cifrados
+       en reposo); en la fila solo queda su hash. Se guardan los valores
+       anteriores para liberar los blobs que queden sin referencia. */
+    const prevProfile = Stmt.getProfile.get(user.id);
+    const prevChat = Stmt.getChatSettings.get(user.id);
+    const chat = profile.chatAppearance;
+    const apariencia = chat && typeof chat === 'object' && !Array.isArray(chat) ? chat : {};
+    /* Si la imagen NO se puede guardar (cuota, tipo no válido), se conserva la
+       anterior en vez de dejar la cuenta sin foto: perderla por un rechazo
+       silencioso sería peor que quedarse con la vieja. */
+    const avatarRef = storeImage(typeof profile.avatar === 'string' ? profile.avatar : '', { userId: user.id })
+        || (prevProfile ? prevProfile.avatar_ref : '');
+    const wallpaperRef = storeImage(typeof apariencia.image === 'string' ? apariencia.image : '', { userId: user.id })
+        || (prevChat ? prevChat.wallpaper_ref : '');
     Stmt.upsertProfile.run(
         user.id,
-        // Nombre, bio y nota se cifran en reposo (el avatar no: es público
-        // por definición).
+        // Nombre, bio y nota se cifran en reposo (PCE3, con la clave del
+        // usuario). El avatar va cifrado también, pero en el almacén de blobs.
         encryptForUser(user.id, typeof profile.name === 'string' && profile.name ? profile.name : user.username),
-        typeof profile.avatar === 'string' ? profile.avatar : '',
+        avatarRef,
         encryptForUser(user.id, typeof profile.desc === 'string' ? profile.desc : ''),
         encryptForUser(user.id, typeof profile.note === 'string' ? profile.note : ''),
         Number.isFinite(profile.noteTs) ? profile.noteTs : 0,
@@ -433,29 +463,33 @@ function writeUserRows(user) {
             const list = Array.isArray(rule.users) ? rule.users : [];
             list.forEach((name, index) => {
                 if (typeof name !== 'string') return;
-                Stmt.upsertPrivacyUser.run(user.id, feature, index, byName(name)?.id || null, name);
+                Stmt.upsertPrivacyUser.run(user.id, feature, index, byName(name)?.id || null,
+                    encField('user_privacy_users.target_name', name));
             });
         }
     }
     // Apariencia del chat
-    const chat = profile.chatAppearance;
     if (chat && typeof chat === 'object' && !Array.isArray(chat)) {
         Stmt.upsertChatSettings.run(
-            user.id, chat.wall || null,
+            user.id, encField('user_chat_settings.wall', chat.wall || null),
             Number.isFinite(chat.opacity) ? chat.opacity : 30,
             Number.isFinite(chat.blur) ? chat.blur : 0,
-            chat.sender || null, chat.receiver || null,
-            chat.senderText || null, chat.receiverText || null,
+            encField('user_chat_settings.sender', chat.sender || null),
+            encField('user_chat_settings.receiver', chat.receiver || null),
+            encField('user_chat_settings.sender_text', chat.senderText || null),
+            encField('user_chat_settings.receiver_text', chat.receiverText || null),
             Number.isFinite(chat.fontSize) ? chat.fontSize : 15,
             chat.autoText === false ? 0 : 1,
-            typeof chat.image === 'string' ? chat.image : '', now
+            wallpaperRef,
+            profile.keepArchived === true ? 1 : 0, now
         );
     }
     // Chats silenciados
     Stmt.deleteMutedPeers.run(user.id);
     for (const peer of Array.isArray(profile.mutedChatPeers) ? profile.mutedChatPeers : []) {
         if (typeof peer !== 'string' || !peer) continue;
-        Stmt.insertMutedPeer.run(user.id, byName(peer)?.id || null, peer);
+        Stmt.insertMutedPeer.run(user.id, byName(peer)?.id || null,
+            encField('user_muted_peers.peer_name', peer));
     }
     // Nota personal (estado)
     // La nota personal se cifra en reposo.
@@ -464,7 +498,7 @@ function writeUserRows(user) {
     // Stickers favoritos
     Stmt.deleteStickers.run(user.id);
     (Array.isArray(user.stickers) ? user.stickers : []).slice(-30).forEach((sticker, index) => {
-        if (typeof sticker === 'string') Stmt.insertSticker.run(user.id, index, sticker);
+        if (typeof sticker === 'string') Stmt.insertSticker.run(user.id, index, encField('user_stickers.sticker', sticker));
     });
     // Grupos vistos
     Stmt.deleteGroupSeenByUser.run(user.id);
@@ -473,6 +507,15 @@ function writeUserRows(user) {
         if (!Number.isFinite(ts)) continue;
         if (Stmt.groupExists.get(gid)) Stmt.upsertGroupSeen.run(user.id, gid, ts);
     }
+    // Blobs que han quedado sin referencia (avatar o fondo sustituidos): se
+    // liberan DESPUÉS de actualizar las filas, para que la comprobación de
+    // referencias vea el estado nuevo.
+    const liberar = [];
+    if (prevProfile && prevProfile.avatar_ref && prevProfile.avatar_ref !== avatarRef)
+        liberar.push(prevProfile.avatar_ref);
+    if (prevChat && prevChat.wallpaper_ref && prevChat.wallpaper_ref !== wallpaperRef)
+        liberar.push(prevChat.wallpaper_ref);
+    if (liberar.length) pruneBlobHashes(liberar);
 }
 
 /* Guardados quirúrgicos: los eventos triviales (visto de grupo, stickers,
@@ -481,28 +524,38 @@ function writeUserRows(user) {
 function saveStickers(user) {
     Stmt.deleteStickers.run(user.id);
     (Array.isArray(user.stickers) ? user.stickers : []).slice(-30).forEach((sticker, index) => {
-        if (typeof sticker === 'string') Stmt.insertSticker.run(user.id, index, sticker);
+        if (typeof sticker === 'string') Stmt.insertSticker.run(user.id, index, encField('user_stickers.sticker', sticker));
     });
 }
 function saveMutedPeers(user, profile) {
     Stmt.deleteMutedPeers.run(user.id);
     for (const peer of Array.isArray(profile.mutedChatPeers) ? profile.mutedChatPeers : []) {
-        if (typeof peer === 'string' && peer) Stmt.insertMutedPeer.run(user.id, byName(peer)?.id || null, peer);
+        if (typeof peer === 'string' && peer) Stmt.insertMutedPeer.run(user.id, byName(peer)?.id || null,
+            encField('user_muted_peers.peer_name', peer));
     }
 }
 function saveChatSettings(user) {
-    const chat = (profiles[user.username] || {}).chatAppearance;
-    if (!chat || typeof chat !== 'object' || Array.isArray(chat)) return;
+    const profile = profiles[user.username] || {};
+    const chat = profile.chatAppearance;
+    const appearance = chat && typeof chat === 'object' && !Array.isArray(chat) ? chat : {};
+    const prevChat = Stmt.getChatSettings.get(user.id);
+    const wallpaperRef = storeImage(typeof appearance.image === 'string' ? appearance.image : '', { userId: user.id })
+        || (prevChat ? prevChat.wallpaper_ref : '');
     Stmt.upsertChatSettings.run(
-        user.id, chat.wall || null,
-        Number.isFinite(chat.opacity) ? chat.opacity : 30,
-        Number.isFinite(chat.blur) ? chat.blur : 0,
-        chat.sender || null, chat.receiver || null,
-        chat.senderText || null, chat.receiverText || null,
-        Number.isFinite(chat.fontSize) ? chat.fontSize : 15,
-        chat.autoText === false ? 0 : 1,
-        typeof chat.image === 'string' ? chat.image : '', Date.now()
+        user.id, encField('user_chat_settings.wall', appearance.wall || null),
+        Number.isFinite(appearance.opacity) ? appearance.opacity : 30,
+        Number.isFinite(appearance.blur) ? appearance.blur : 0,
+        encField('user_chat_settings.sender', appearance.sender || null),
+        encField('user_chat_settings.receiver', appearance.receiver || null),
+        encField('user_chat_settings.sender_text', appearance.senderText || null),
+        encField('user_chat_settings.receiver_text', appearance.receiverText || null),
+        Number.isFinite(appearance.fontSize) ? appearance.fontSize : 15,
+        appearance.autoText === false ? 0 : 1,
+        wallpaperRef,
+        profile.keepArchived === true ? 1 : 0, Date.now()
     );
+    if (prevChat && prevChat.wallpaper_ref && prevChat.wallpaper_ref !== wallpaperRef)
+        pruneBlobHashes([prevChat.wallpaper_ref]);
 }
 
 function saveUserToDb(user) {

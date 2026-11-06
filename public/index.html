@@ -544,7 +544,7 @@
             overflow: hidden
         }
 
-        .requestModalTabs {
+        .requestTabs {
             display: grid;
             grid-template-columns: repeat(2, minmax(0, 1fr));
             gap: 4px;
@@ -554,7 +554,7 @@
             background: #0b141a
         }
 
-        .requestModalTabs button {
+        .requestTabs button {
             display: flex;
             align-items: center;
             justify-content: center;
@@ -572,12 +572,12 @@
             cursor: pointer
         }
 
-        .requestModalTabs button[aria-selected="true"] {
+        .requestTabs button[aria-selected="true"] {
             background: color-mix(in srgb, var(--accent) 14%, transparent);
             color: var(--accent)
         }
 
-        .requestModalTabs .requestTabCount {
+        .requestTabs .requestTabCount {
             display: inline-grid;
             place-items: center;
             min-width: 20px;
@@ -591,9 +591,26 @@
             line-height: 1
         }
 
-        .requestModalTabs button[aria-selected="true"] .requestTabCount {
+        .requestTabs button[aria-selected="true"] .requestTabCount {
             background: color-mix(in srgb, var(--accent) 26%, transparent);
             color: var(--accent)
+        }
+
+        /* En la hoja el scroll lo lleva <main>, no una caja aparte como en el
+           modal: el panel de cada pestaña es una columna libre que crece con
+           la lista y hereda el borde superior de las filas. */
+        .requestSheetList {
+            display: flex;
+            flex-direction: column
+        }
+
+        .requestSheetList[hidden] {
+            display: none
+        }
+
+        .archiveSheetList {
+            display: flex;
+            flex-direction: column
         }
 
         .requestModalHint {
@@ -1813,6 +1830,400 @@
             transition: padding-top 0.25s ease;
             /* <-- AÑADE ESTA LÍNEA */
 
+        }
+
+        /* Panel lateral de "Información del contacto" dentro del chat (como
+           WhatsApp Desktop): columna hermana de #sidebar y #chat en el flex
+           del body. Cerrado mide 0; abierto revela su contenido de ancho fijo
+           (cpInner) con la misma anchura, así la animación no reencaja nada. */
+        #contactPanel {
+            position: relative;
+            flex: none;
+            width: 0;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            background: var(--page);
+            border-left: 1px solid transparent;
+            visibility: hidden;
+            transition: width .28s ease, border-color .28s ease, visibility 0s linear .28s
+        }
+
+        #contactPanel.on {
+            width: var(--info-width, 400px);
+            border-left-color: var(--line);
+            visibility: visible;
+            transition: width .28s ease, border-color .28s ease, visibility 0s
+        }
+
+        #contactPanel .cpInner {
+            flex: 1;
+            min-height: 0;
+            width: var(--info-width, 400px);
+            display: flex;
+            flex-direction: column
+        }
+
+        /* La cabecera usa las mismas variables que #chatHeader / .topbar: sin
+           esto el bloque resaltaba con el gris azulado de WhatsApp y la línea
+           del cabecero no continuaba con las columnas vecinas. */
+        #contactPanel header {
+            background: var(--surface);
+            min-height: 66px;
+            padding: 8px 12px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: var(--text);
+            font-size: 16px;
+            flex: none;
+            border-bottom: 1px solid var(--line)
+        }
+
+        #contactPanel header .iconBtn {
+            background: none;
+            border: none;
+            color: var(--text);
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center
+        }
+
+        #contactPanel main {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            width: 100%;
+            max-width: 560px;
+            margin: 0 auto
+        }
+
+        #contactPanel .avWrap {
+            position: relative;
+            align-self: center;
+            margin-top: 26px
+        }
+
+        #contactPanel .bigAv {
+            width: 110px;
+            height: 110px;
+            border-radius: 50%;
+            background: var(--accent);
+            color: var(--accent-ink);
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 40px;
+            cursor: pointer;
+            flex: none
+        }
+
+        #contactPanel .bigAv img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover
+        }
+
+        #contactPanel .noteFloat {
+            position: absolute;
+            top: -24px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #2a3942;
+            border: 1px solid #374045;
+            color: #d1d7db;
+            font-size: 13px;
+            font-style: italic;
+            padding: 7px 14px;
+            border-radius: 16px;
+            box-shadow: 0 4px 16px #0008;
+            white-space: nowrap;
+            max-width: 240px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            cursor: pointer
+        }
+
+        #contactPanel .noteFloat::after {
+            content: '';
+            position: absolute;
+            left: 50%;
+            bottom: -5px;
+            transform: translateX(-50%) rotate(45deg);
+            width: 10px;
+            height: 10px;
+            background: #2a3942;
+            border-right: 1px solid #374045;
+            border-bottom: 1px solid #374045
+        }
+
+        body.in-call #contactPanel {
+            padding-top: 56px
+        }
+
+        /* Portátiles estrechos: panel algo más angosto para no aplastar el chat */
+        @media (max-width:1024px) {
+            #contactPanel.on {
+                width: min(var(--info-width, 400px), 320px)
+            }
+
+            #contactPanel .cpInner {
+                width: min(var(--info-width, 400px), 320px)
+            }
+        }
+
+        /* Móvil: el panel cubre el chat completo, como las hojas existentes */
+        @media (max-width:768px) {
+            #contactPanel.on {
+                position: fixed;
+                inset: 0;
+                z-index: 7;
+                width: 100%;
+                border-left: none
+            }
+
+            #contactPanel .cpInner {
+                width: 100%
+            }
+        }
+
+        /* Panel lateral de "Información del grupo" dentro del chat activo:
+           misma mecánica de reveal que #contactPanel, pero montando la
+           página group-details.html (embedded) en un iframe, así toda la
+           lógica de solicitudes, integrantes y permisos vive solo ahí. */
+        #groupPanel {
+            position: relative;
+            flex: none;
+            width: 0;
+            min-width: 0;
+            display: flex;
+            overflow: hidden;
+            background: var(--page);
+            border-left: 1px solid transparent;
+            visibility: hidden;
+            transition: width .28s ease, border-color .28s ease, visibility 0s linear .28s
+        }
+
+        #groupPanel.on {
+            width: var(--info-width, 400px);
+            border-left-color: var(--line);
+            visibility: visible;
+            transition: width .28s ease, border-color .28s ease, visibility 0s
+        }
+
+        #groupPanel .gpInner {
+            flex: 1;
+            min-height: 0;
+            width: var(--info-width, 400px);
+            display: flex
+        }
+
+        #groupPanel iframe {
+            width: 100%;
+            height: 100%;
+            border: 0;
+            background: var(--page)
+        }
+
+        /* Portátiles estrechos: igual que el panel de contacto */
+        @media (max-width:1024px) {
+            #groupPanel.on {
+                width: min(var(--info-width, 400px), 320px)
+            }
+
+            #groupPanel .gpInner {
+                width: min(var(--info-width, 400px), 320px)
+            }
+        }
+
+        /* Móvil: el panel cubre el chat completo, como las hojas existentes */
+        @media (max-width:768px) {
+            #groupPanel.on {
+                position: fixed;
+                inset: 0;
+                z-index: 7;
+                width: 100%;
+                border-left: none
+            }
+
+            #groupPanel .gpInner {
+                width: 100%
+            }
+        }
+
+        /* Tirador para redimensionar los paneles desde su borde izquierdo,
+           igual que #sidebarResizeHandle con la lista de contactos. */
+        .infoResize {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: 0;
+            z-index: 3;
+            width: 14px;
+            background: transparent;
+            border: 0;
+            cursor: col-resize;
+            touch-action: none
+        }
+
+        .infoResize::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: 6px;
+            width: 2px;
+            background: transparent;
+            transition: background .15s
+        }
+
+        .infoResize:hover::after {
+            background: #ffffff14
+        }
+
+        .infoResize.dragging::after {
+            background: var(--accent)
+        }
+
+        .infoResize:focus-visible::after {
+            background: #d3dbe14d
+        }
+
+        /* Arrastrar no debe esperar a la animación de reveal */
+        #contactPanel.dragging,
+        #groupPanel.dragging {
+            transition: none
+        }
+
+        @media (max-width:768px) {
+            .infoResize {
+                display: none
+            }
+        }
+
+        /* Iconos de cierre: ✕ en escritorio, flecha atrás en Android. Se
+           controla por clase en <html> porque el atributo hidden no oculta
+           elementos <svg>. */
+        #contactPanel header .icBack {
+            display: none
+        }
+
+        html.android #contactPanel header .icClose {
+            display: none
+        }
+
+        html.android #contactPanel header .icBack {
+            display: block
+        }
+
+        /* Ajustes en dos columnas (solo escritorio): la lista de secciones
+           queda fija a la izquierda y el contenido de la sección activa a la
+           derecha, como los paneles de información del chat. En móvil el
+           comportamiento no cambia (el hub va dentro de #settingsMain). */
+        #settingsSplit {
+            flex: 1;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+            position: relative
+        }
+
+        #settingsHub {
+            display: none
+        }
+
+        /* Tirador del panel de secciones: hermano de hub y main (los renders
+           escriben innerHTML dentro de ellos y lo destruirían), posicionado
+           sobre el borde derecho de la columna con la misma variable. */
+        .setResize {
+            display: none;
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: calc(var(--settings-hub-width, 380px) - 7px);
+            z-index: 3;
+            width: 14px;
+            background: transparent;
+            border: 0;
+            cursor: col-resize;
+            touch-action: none
+        }
+
+        .setResize::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: 6px;
+            width: 2px;
+            background: transparent;
+            transition: background .15s
+        }
+
+        .setResize:hover::after {
+            background: #ffffff14
+        }
+
+        .setResize.dragging::after {
+            background: var(--accent)
+        }
+
+        .setResize:focus-visible::after {
+            background: #d3dbe14d
+        }
+
+        @media (min-width:769px) {
+            #settingsSheet.split #settingsSplit {
+                flex-direction: row
+            }
+
+            #settingsSheet.split #settingsHub {
+                display: flex;
+                flex-direction: column;
+                flex: none;
+                width: var(--settings-hub-width, 380px);
+                overflow-y: auto;
+                padding: 20px 14px;
+                border-right: 1px solid var(--line)
+            }
+
+            #settingsSheet.split #settingsHub .setRow.active {
+                background: var(--surface-hover)
+            }
+
+            #settingsSheet.split .setResize {
+                display: block
+            }
+        }
+
+        /* Perfil integrado como columna de Ajustes (escritorio): la hoja se
+           traslada dentro del split y pierde su posición de pantalla
+           completa; su cabecera la sustituye la de Ajustes. */
+        #profileSheet.embedded {
+            position: static;
+            display: flex;
+            flex: 1;
+            min-height: 0;
+            width: 100%;
+            z-index: auto;
+            background: none
+        }
+
+        #profileSheet.embedded > header {
+            display: none
+        }
+
+        #profileSheet.embedded > main {
+            padding: 0
         }
 
         #chatHeaderWrap {
@@ -3930,9 +4341,15 @@
         }
 
         .bubble.imageTextBubble .messageCaption {
+            box-sizing: border-box;
+            max-width: min(260px, 60vw);
             margin-top: 6px;
             white-space: pre-wrap;
             overflow-wrap: anywhere
+        }
+
+        .bubble.imageTextBubble.galleryTextBubble .messageCaption {
+            max-width: min(340px, calc(75vw - 22px))
         }
 
         /* Sin metadato (mensajes seguidos a la misma hora) no se reserva el
@@ -5561,6 +5978,18 @@
             color: #8696a0
         }
 
+        #settingsSheet .setRow > .sub {
+            display: grid;
+            place-items: center;
+            width: 24px;
+            height: 24px;
+            flex: none;
+            color: var(--muted);
+            font-size: 24px;
+            font-weight: 400;
+            line-height: 1
+        }
+
         .setHead {
             display: flex;
             flex-direction: column;
@@ -5577,6 +6006,13 @@
         .setHead span {
             font-size: 13px;
             color: #8696a0
+        }
+
+        /* En el encabezado de Ajustes la foto y el nombre iban casi pegados
+           (2px de gap): el display_name y el @usuario bajan un poco para que
+           la firma respire bajo el avatar. */
+        .setHead .avWrap + b {
+            margin-top: 8px
         }
 
         .accountIdCard {
@@ -8102,22 +8538,13 @@
             <div id="myAvatar" onclick="openProfile()"></div>
             <b id="meName"></b>
             <button class="btn requestsBtn" type="button" onclick="openContactRequests()" style="display:none"
-                title="Solicitudes de contacto" aria-label="Solicitudes de contacto">
+                title="Solicitudes pendientes" aria-label="Solicitudes pendientes">
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                     <path
                         d="M15 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Zm0-6a2 2 0 1 1 0 4 2 2 0 0 1 0-4ZM6.5 14A4.5 4.5 0 0 0 2 18.5V21h10v-2H4v-.5A2.5 2.5 0 0 1 6.5 16H10v-2Zm11.5 0v2h-3v2h3v3h2v-3h3v-2h-3v-2Z">
                     </path>
                 </svg>
                 <span class="requestsBadge" id="requestsBadge" style="display:none">0</span>
-            </button>
-            <button class="btn requestsBtn" type="button" onclick="openGroupRequests()" title="Solicitudes de grupos"
-                style="display:none" aria-label="Solicitudes de grupos">
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path
-                        d="M16 11a4 4 0 1 0-3.9-4.9A5.8 5.8 0 0 1 13 9a5.8 5.8 0 0 1-.5 2H16Zm-8 0a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm0 2c-3.3 0-6 1.7-6 4v2h12v-2c0-2.3-2.7-4-6-4Zm8 0h-.7c1.7.9 2.7 2.3 2.7 4v2h4v-2c0-2.3-2.7-4-6-4Z">
-                    </path>
-                </svg>
-                <span class="requestsBadge" id="groupRequestsBadge" style="display:none">0</span>
             </button>
         </div>
         <div class="search" style="display:flex;gap:8px;align-items:center">
@@ -8577,12 +9004,51 @@
                 <div id="mgrList" aria-live="polite"></div>
             </main>
         </div>
+        <div id="requestsSheet" class="sheetPage">
+            <header><button class="iconBtn" aria-label="Volver" onclick="userCloseLayer('sheet-requests')"><svg
+                        viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
+                        <path d="M20 11H7.8l5.6-5.6L12 4l-8 8 8 8 1.4-1.4L7.8 13H20v-2z"></path>
+                    </svg></button><b>Solicitudes</b><span style="flex:1"></span></header>
+            <main>
+                <div class="requestTabs" role="tablist" aria-label="Solicitudes pendientes">
+                    <button type="button" role="tab" aria-selected="true" data-contact-tab="incoming">Recibidas <span
+                            class="requestTabCount" data-contact-count="incoming">0</span></button>
+                    <button type="button" role="tab" aria-selected="false" data-contact-tab="sent">Enviadas <span
+                            class="requestTabCount" data-contact-count="sent">0</span></button>
+                </div>
+                <div id="incomingContactRequests" class="requestSheetList" data-contact-pane="incoming"
+                    role="tabpanel"></div>
+                <div id="sentContactRequests" class="requestSheetList" data-contact-pane="sent" role="tabpanel"
+                    hidden></div>
+            </main>
+        </div>
+        <div id="archivedSheet" class="sheetPage">
+            <header><button class="iconBtn" aria-label="Volver" onclick="userCloseLayer('sheet-archived')"><svg
+                        viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
+                        <path d="M20 11H7.8l5.6-5.6L12 4l-8 8 8 8 1.4-1.4L7.8 13H20v-2z"></path>
+                    </svg></button><b>Chats archivados</b><span style="flex:1"></span></header>
+            <main>
+                <div class="switchRow">
+                    <div class="meta"><b>Mantener los chats archivados</b><span>Los chats archivados permanecerán
+                            archivados cuando recibas un mensaje nuevo</span></div>
+                    <button class="tgl" id="swKeepArchived" type="button" aria-pressed="false"
+                        aria-label="Mantener los chats archivados"></button>
+                </div>
+                <div id="archivedList" class="archiveSheetList" role="list"></div>
+            </main>
+        </div>
         <div id="settingsSheet" class="sheetPage">
             <header><button class="iconBtn" onclick="settingsBack()"><svg viewBox="0 0 24 24" width="22" height="22"
                         fill="currentColor">
                         <path d="M20 11H7.8l5.6-5.6L12 4l-8 8 8 8 1.4-1.4L7.8 13H20v-2z"></path>
                     </svg></button><b id="settingsTitle">Ajustes</b><span style="flex:1"></span></header>
-            <main id="settingsMain"></main>
+            <div id="settingsSplit">
+                <div class="settingsHub" id="settingsHub"></div>
+                <div class="setResize" role="separator" aria-orientation="vertical"
+                    aria-label="Cambiar ancho del menú de Ajustes" aria-valuemin="300" aria-valuemax="560"
+                    aria-valuenow="380" tabindex="0"></div>
+                <main id="settingsMain"></main>
+            </div>
         </div>
 
         <!-- CAPA DE LLAMADA -->
@@ -9517,6 +9983,125 @@
                 window.addEventListener('resize', onViewport);
                 if (window.visualViewport) window.visualViewport.addEventListener('resize', onViewport);
             }
+            /* Redimensionado de los paneles de información (contacto y grupo)
+               desde su borde izquierdo: misma mecánica que la lista de chats,
+               con el ancho persistido y usable también con el teclado. */
+            function setupInfoResize() {
+                const handles = Array.from(document.querySelectorAll('.infoResize'));
+                if (!handles.length) return;
+                const minW = 300, maxW = 640, defaultW = 400;
+                let infoWidth = defaultW;
+                const clamp = value => Math.round(Math.min(maxW, Math.max(minW, value)));
+                const apply = value => {
+                    infoWidth = clamp(value);
+                    document.documentElement.style.setProperty('--info-width', infoWidth + 'px');
+                    handles.forEach(handle => {
+                        handle.setAttribute('aria-valuenow', String(infoWidth));
+                        handle.setAttribute('aria-valuemax', String(maxW));
+                    });
+                    return infoWidth;
+                };
+                const stored = parseFloat(localStorage.getItem('chatlocal_info_width'));
+                apply(Number.isFinite(stored) && stored >= minW ? stored : defaultW);
+                handles.forEach(handle => {
+                    handle.addEventListener('pointerdown', event => {
+                        if (viewWidth() <= 768) return;
+                        event.preventDefault();
+                        const startX = event.clientX;
+                        const startWidth = infoWidth;
+                        handle.classList.add('dragging');
+                        try { handle.setPointerCapture(event.pointerId); } catch { }
+                        const move = ev => {
+                            if (!handle.hasPointerCapture(ev.pointerId)) return;
+                            /* El tirador está en el borde IZQUIERDO del panel:
+                               moverlo a la derecha acerca el borde y ENCOGE,
+                               moverlo a la izquierda lo separa y ENSANCHA. */
+                            apply(startWidth - (ev.clientX - startX));
+                        };
+                        const finish = ev => {
+                            if (!handle.hasPointerCapture(ev.pointerId)) return;
+                            handle.releasePointerCapture(ev.pointerId);
+                            handle.classList.remove('dragging');
+                            localStorage.setItem('chatlocal_info_width', String(infoWidth));
+                        };
+                        handle.addEventListener('pointermove', move);
+                        handle.addEventListener('pointerup', finish);
+                        handle.addEventListener('pointercancel', finish);
+                    });
+                    handle.addEventListener('keydown', event => {
+                        if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+                            event.preventDefault();
+                            const step = event.key === 'ArrowRight' ? 1 : -1;
+                            const width = apply(infoWidth + step * (event.shiftKey ? 40 : 16));
+                            localStorage.setItem('chatlocal_info_width', String(width));
+                        } else if (event.key === 'Home') {
+                            event.preventDefault();
+                            localStorage.setItem('chatlocal_info_width', String(apply(defaultW)));
+                        }
+                    });
+                });
+            }
+            /* En escritorio el panel se cierra con ✕; en Android la propia
+               plataforma usa la flecha de retroceso. */
+            function paintInfoHeaderIcons() {
+                if (!/Android/i.test(navigator.userAgent)) return;
+                document.documentElement.classList.add('android');
+                const btn = document.querySelector('#contactPanel header .iconBtn');
+                if (btn) {
+                    btn.setAttribute('aria-label', 'Volver');
+                    btn.setAttribute('title', 'Volver');
+                }
+            }
+            /* Ancho del panel de secciones de Ajustes (escritorio): mismo
+               mecanismo que los paneles de información, con el tirador en el
+               borde derecho de la columna (arrastrar a la derecha ensancha). */
+            function setupSettingsResize() {
+                const handle = document.querySelector('#settingsSplit > .setResize');
+                if (!handle) return;
+                const minW = 300, maxW = 560, defaultW = 380;
+                let hubWidth = defaultW;
+                const clamp = value => Math.round(Math.min(maxW, Math.max(minW, value)));
+                const apply = value => {
+                    hubWidth = clamp(value);
+                    document.documentElement.style.setProperty('--settings-hub-width', hubWidth + 'px');
+                    handle.setAttribute('aria-valuenow', String(hubWidth));
+                    return hubWidth;
+                };
+                const stored = parseFloat(localStorage.getItem('chatlocal_settings_hub_width'));
+                apply(Number.isFinite(stored) && stored >= minW ? stored : defaultW);
+                handle.addEventListener('pointerdown', event => {
+                    if (window.innerWidth <= 768) return;
+                    event.preventDefault();
+                    const startX = event.clientX;
+                    const startWidth = hubWidth;
+                    handle.classList.add('dragging');
+                    try { handle.setPointerCapture(event.pointerId); } catch { }
+                    const move = ev => {
+                        if (!handle.hasPointerCapture(ev.pointerId)) return;
+                        apply(startWidth + (ev.clientX - startX));
+                    };
+                    const finish = ev => {
+                        if (!handle.hasPointerCapture(ev.pointerId)) return;
+                        handle.releasePointerCapture(ev.pointerId);
+                        handle.classList.remove('dragging');
+                        localStorage.setItem('chatlocal_settings_hub_width', String(hubWidth));
+                    };
+                    handle.addEventListener('pointermove', move);
+                    handle.addEventListener('pointerup', finish);
+                    handle.addEventListener('pointercancel', finish);
+                });
+                handle.addEventListener('keydown', event => {
+                    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+                        event.preventDefault();
+                        const step = event.key === 'ArrowRight' ? 1 : -1;
+                        const width = apply(hubWidth + step * (event.shiftKey ? 40 : 16));
+                        localStorage.setItem('chatlocal_settings_hub_width', String(width));
+                    } else if (event.key === 'Home') {
+                        event.preventDefault();
+                        localStorage.setItem('chatlocal_settings_hub_width', String(apply(defaultW)));
+                    }
+                });
+            }
             function setupRobustTaps() {
                 const TAP_SELECTORS = '#myAvatar, #contacts .contact, #storiesRow .storyAv';
                 const tapTarget = t => t && t.closest ? t.closest(TAP_SELECTORS) : null;
@@ -9552,6 +10137,11 @@
             }
             setupRobustTaps();
             setupSidebarResize();
+            /* Los asides viven al final del documento (después de este
+               script): al cargar todavía no están en el DOM. */
+            const setupInfoPanels = () => { setupInfoResize(); paintInfoHeaderIcons(); setupSettingsResize(); };
+            if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', setupInfoPanels);
+            else setupInfoPanels();
 
             let enterBootDone = false, pushBootDone = false;
             function enter() {
@@ -9723,7 +10313,7 @@
                     return;
                 }
                 if (msg.type === 'group-request') {
-                    openGroup(msg.groupId).then(() => openGroupDetailsPage(msg.groupId)).catch(error => {
+                    openGroup(msg.groupId).then(() => openGroupPanel(msg.groupId)).catch(error => {
                         console.error('[groups] No se pudo abrir la solicitud de ingreso:', error);
                         toast('Hay una solicitud para unirse a un grupo.');
                     });
@@ -9765,6 +10355,7 @@
                     // si cambian en otro dispositivo, esta lista se actualiza.
                     setChatPrefs(msg.prefs);
                     renderContacts();
+                    if (document.getElementById('archivedSheet')?.classList.contains('on')) renderArchivedSheet();
                     return;
                 }
                 if (msg.type === 'blocked-change') {
@@ -9859,6 +10450,7 @@
                         const peer = peerOf(m);
                         const isActiveChat = activeKind === 'dm' && active === peer;
                         if (m.from !== me.username) {
+                            if (!keepArchivedChats) unarchiveChatLocally(dmPrefKey(m.from));
                             fetch('/receipt', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: me.username, to: m.from, ids: [m.id], status: 'delivered' }) }).catch(() => { });
                             const chatVisible = isActiveChat && (window.innerWidth > 768 || document.body.classList.contains('chat-open'));
                             if (chatVisible) sendRead(m.from, [m.id]);
@@ -9878,11 +10470,11 @@
                     });
                 }
             }
-            function updateContactRequestBadge(count, sentCount) {
-                pendingContactCount = Math.max(0, Number(count) || 0);
-                if (sentCount !== undefined) pendingContactSentCount = Math.max(0, Number(sentCount) || 0);
+            /* Contactos y grupos comparten una sola entrada y un solo badge:
+               «Solicitudes pendientes» reúne lo que espera respuesta. */
+            function updateRequestBadge() {
                 const badge = document.getElementById('requestsBadge');
-                const total = pendingContactCount + pendingContactSentCount;
+                const total = pendingContactCount + pendingContactSentCount + pendingGroupRequestCount;
                 if (badge) {
                     badge.textContent = total > 99 ? '99+' : String(total);
                     badge.style.display = total ? 'block' : 'none';
@@ -9890,13 +10482,14 @@
                 }
                 if (me) renderContacts();
             }
+            function updateContactRequestBadge(count, sentCount) {
+                pendingContactCount = Math.max(0, Number(count) || 0);
+                if (sentCount !== undefined) pendingContactSentCount = Math.max(0, Number(sentCount) || 0);
+                updateRequestBadge();
+            }
             function updateGroupRequestBadge(count) {
                 pendingGroupRequestCount = Math.max(0, Number(count) || 0);
-                const badge = document.getElementById('groupRequestsBadge');
-                if (!badge) return;
-                badge.textContent = pendingGroupRequestCount > 99 ? '99+' : String(pendingGroupRequestCount);
-                badge.style.display = pendingGroupRequestCount ? 'block' : 'none';
-                badge.parentElement.style.display = pendingGroupRequestCount ? '' : 'none';
+                updateRequestBadge();
             }
             /* Iconos de las acciones de las solicitudes (aceptar, rechazar,
                cancelar y ver perfil) en lugar de botones con texto. */
@@ -9912,25 +10505,175 @@
             // Estado vacío de las solicitudes, con icono y explicación.
             function requestEmptyHTML(scope, pane) {
                 const incoming = pane === 'incoming';
-                const group = scope === 'group';
                 const title = incoming ? 'Sin solicitudes recibidas' : 'Sin solicitudes enviadas';
-                const text = group
+                const text = scope === 'group'
                     ? (incoming ? 'Cuando alguien pida unirse a uno de tus grupos, aparecerá aquí.' : 'Las solicitudes de ingreso que envíes aparecerán aquí.')
-                    : (incoming ? 'Cuando alguien quiera añadirte a sus contactos, aparecerá aquí.' : 'Las solicitudes de contacto que envíes aparecerán aquí.');
+                    : scope === 'all'
+                        ? (incoming ? 'Cuando alguien quiera añadirte o unirse a uno de tus grupos, aparecerá aquí.' : 'Las solicitudes de contacto o de grupo que envíes aparecerán aquí.')
+                        : (incoming ? 'Cuando alguien quiera añadirte a sus contactos, aparecerá aquí.' : 'Las solicitudes de contacto que envíes aparecerán aquí.');
                 return `<div class="requestModalEmpty"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5h16v13H4z"/><path d="M4 13.5h4l1.6 2.6h4.8l1.6-2.6h4"/></svg><b>${title}</b><span>${text}</span></div>`;
             }
-            async function openContactRequests() {
+            /* Las solicitudes de contacto viven en una HOJA con el mismo
+               patrón que Ajustes o Mis historias (cabecera con ATRÁS, mismo
+               ancho y tipografía) en lugar del modal suelto con botón
+               «Cerrar», que rompía la estética del resto de la app. Las
+               pestañas solo alternan el panel visible. */
+            let contactRequestsWired = false;
+            function activateContactRequestsTab(name) {
+                const sheet = document.getElementById('requestsSheet');
+                if (!sheet) return;
+                sheet.querySelectorAll('[data-contact-tab]').forEach(tab =>
+                    tab.setAttribute('aria-selected', String(tab.dataset.contactTab === name)));
+                sheet.querySelectorAll('[data-contact-pane]').forEach(pane => {
+                    pane.hidden = pane.dataset.contactPane !== name;
+                });
+            }
+            function refreshContactRequestCounts() {
+                const sheet = document.getElementById('requestsSheet');
+                if (!sheet) return;
+                for (const kind of ['incoming', 'sent']) {
+                    const pane = sheet.querySelector(`[data-contact-pane="${kind}"]`);
+                    const chip = sheet.querySelector(`[data-contact-count="${kind}"]`);
+                    if (pane && chip) chip.textContent = String(pane.querySelectorAll('.requestCard').length);
+                }
+            }
+            function wireContactRequestsSheet() {
+                if (contactRequestsWired) return;
+                const sheet = document.getElementById('requestsSheet');
+                if (!sheet) return;
+                contactRequestsWired = true;
+                sheet.querySelectorAll('[data-contact-tab]').forEach(tab =>
+                    tab.onclick = () => activateContactRequestsTab(tab.dataset.contactTab));
+                sheet.querySelector('#incomingContactRequests').addEventListener('click', async event => {
+                    const button = event.target.closest('button[data-action]');
+                    const row = button && button.closest('.requestCard');
+                    if (!row) return;
+                    const action = button.dataset.action;
+                    if (action === 'profile') {
+                        openContactSheet(row.dataset.user);
+                        return;
+                    }
+                    button.disabled = true;
+                    const requestList = row.parentElement;
+                    try {
+                        if (action === 'approve-group' || action === 'reject-group') {
+                            const response = await fetch('/groups/' + encodeURIComponent(row.dataset.groupId), {
+                                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ [action === 'approve-group' ? 'approveJoin' : 'rejectJoin']: row.dataset.user })
+                            });
+                            const result = await response.json();
+                            if (!response.ok) throw new Error(result.error || 'No se pudo responder a la solicitud.');
+                            row.remove();
+                            await loadGroupRequests();
+                            refreshContactRequestCounts();
+                            if (!requestList.querySelector('.requestCard'))
+                                requestList.innerHTML = requestEmptyHTML('all', 'incoming');
+                            if (action === 'approve-group') toast(row.dataset.user + ' se unió al grupo.');
+                            else toast('Solicitud de grupo rechazada.');
+                            return;
+                        }
+                        const answer = await fetch('/contacts/respond', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ username: row.dataset.user, accept: action === 'accept' })
+                        });
+                        const data = await answer.json();
+                        if (!answer.ok) throw new Error(data.error || 'No se pudo responder a la solicitud.');
+                        row.remove();
+                        await loadContactRequests();
+                        if (action === 'accept') toast(data.username + ' ya está en tus contactos.');
+                        if (!requestList.querySelector('.requestCard'))
+                            requestList.innerHTML = requestEmptyHTML('all', 'incoming');
+                        refreshContactRequestCounts();
+                    } catch (error) {
+                        button.disabled = false;
+                        console.error('[solicitudes] No se pudo responder:', error);
+                        toast(error.message);
+                    }
+                });
+                sheet.querySelector('#sentContactRequests').addEventListener('click', async event => {
+                    const button = event.target.closest('[data-action="cancel-sent"],[data-action="cancel-group"]');
+                    const row = button && button.closest('.requestCard');
+                    if (!row) return;
+                    const action = button.dataset.action;
+                    button.disabled = true;
+                    const requestList = row.parentElement;
+                    try {
+                        if (action === 'cancel-group') {
+                            const response = await fetch('/groups/' + encodeURIComponent(row.dataset.groupId), {
+                                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ cancelJoin: true })
+                            });
+                            const result = await response.json();
+                            if (!response.ok) throw new Error(result.error || 'No se pudo cancelar la solicitud.');
+                            row.remove();
+                            await loadGroupRequests();
+                            refreshContactRequestCounts();
+                            if (!requestList.querySelector('.requestCard'))
+                                requestList.innerHTML = requestEmptyHTML('all', 'sent');
+                            toast('Solicitud de grupo cancelada.');
+                            return;
+                        }
+                        const response = await fetch('/contacts/cancel', {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ username: row.dataset.user })
+                        });
+                        const result = await response.json();
+                        if (!response.ok) throw new Error(result.error || 'No se pudo cancelar la solicitud.');
+                        row.remove();
+                        await loadContactRequests();
+                        if (!requestList.querySelector('.requestCard'))
+                            requestList.innerHTML = requestEmptyHTML('all', 'sent');
+                        refreshContactRequestCounts();
+                        toast('Solicitud cancelada.');
+                    } catch (error) {
+                        button.disabled = false;
+                        console.error('[solicitudes] No se pudo cancelar:', error);
+                        toast(error.message);
+                    }
+                });
+            }
+            async function openContactRequests(fromPop = false) {
+                const sheet = document.getElementById('requestsSheet');
                 try {
-                    const [incomingResponse, sentResponse] = await Promise.all([
+                    // Como Ajustes: la hoja aparece al instante y la lista se
+                    // rellena cuando llegan los datos (nunca se espera con la
+                    // pantalla congelada).
+                    if (!sheet.classList.contains('on')) openSheet('requestsSheet', 'sheet-requests', fromPop);
+                    wireContactRequestsSheet();
+                    const [incomingResponse, sentResponse, groupData] = await Promise.all([
                         fetch('/contacts/requests', { cache: 'no-store' }),
-                        fetch('/contacts/requests/sent', { cache: 'no-store' })
+                        fetch('/contacts/requests/sent', { cache: 'no-store' }),
+                        loadGroupRequests()
                     ]);
                     const [incomingResult, sentResult] = await Promise.all([incomingResponse.json(), sentResponse.json()]);
                     if (!incomingResponse.ok) throw new Error(incomingResult.error || 'No se pudieron cargar las solicitudes recibidas.');
                     if (!sentResponse.ok) throw new Error(sentResult.error || 'No se pudieron cargar las solicitudes enviadas.');
                     const incoming = incomingResult.requests || [], sent = sentResult.requests || [];
+                    const groupIncoming = groupData ? groupData.incoming : [];
+                    const groupSent = groupData ? groupData.sent : [];
+                    if (groupData) pendingGroupRequestCount = groupIncoming.length + groupSent.length;
                     pendingContactSentCount = sent.length;
                     updateContactRequestBadge(incoming.length);
+                    const incomingGroups = groupIncoming.map(request => {
+                        const group = groups.find(item => item.id === request.groupId);
+                        const groupName = group ? group.name : 'Un grupo';
+                        return `<div class="requestCard" data-kind="group" data-group-id="${escapeHtml(request.groupId)}" data-user="${escapeHtml(request.username)}">
+      <div class="avatar groupGrid">${groupAvHTML(group || { id: request.groupId, members: [] })}</div>
+      <div class="requestInfo"><b>${escapeHtml(groupName)} <span class="sub">grupo</span></b>
+        <p>@${escapeHtml(request.username)} quiere unirse</p></div>
+      <div class="requestButtons">
+        <button type="button" class="accept" data-action="approve-group" title="Aceptar" aria-label="Aceptar a @${escapeHtml(request.username)} en ${escapeHtml(groupName)}">${requestActionIcon('accept')}</button>
+        <button type="button" class="reject" data-action="reject-group" title="Rechazar" aria-label="Rechazar a @${escapeHtml(request.username)}">${requestActionIcon('reject')}</button>
+      </div>
+    </div>`;
+                    }).join('');
+                    const sentGroups = groupSent.map(request => `<div class="requestCard" data-kind="group" data-group-id="${escapeHtml(request.id)}">
+      <div class="avatar groupGrid">${request.avatar ? `<img src="${escapeHtml(request.avatar)}" alt="">` : escapeHtml((request.name || 'G')[0].toUpperCase())}</div>
+      <div class="requestInfo"><b>${escapeHtml(request.name)} <span class="sub">grupo</span></b>
+        <p>Solicitud enviada · ${request.visibility === 'public' ? 'Grupo público' : 'Grupo privado'}</p></div>
+      <div class="requestButtons"><button type="button" class="reject" data-action="cancel-group" title="Cancelar" aria-label="Cancelar la solicitud a ${escapeHtml(request.name)}">${requestActionIcon('cancel')}</button></div>
+    </div>`).join('');
                     const incomingRows = incoming.map(request => `<div class="requestCard" data-user="${escapeHtml(request.username)}">
       <div class="avatar"><img src="${escapeHtml(request.avatar ? request.avatar : avatarUrl(request.username, request.id))}" alt=""></div>
       <div class="requestInfo"><b>${escapeHtml(request.name || request.username)} <span class="sub">@${escapeHtml(request.username)}</span></b>
@@ -9947,80 +10690,13 @@
         <p>Solicitud enviada · esperando respuesta</p></div>
       <div class="requestButtons"><button type="button" class="reject" data-action="cancel-sent" title="Cancelar" aria-label="Cancelar la solicitud a @${escapeHtml(request.username)}">${requestActionIcon('cancel')}</button></div>
     </div>`).join('');
-                    Modal.vivo({
-                        titulo: 'Solicitudes de contacto',
-                        clase: 'requestModalSheet',
-                        html: `<div class="requestModalContent">
-        <p class="requestModalHint">Gestiona a quién has añadido y a quién te han solicitado.</p>
-        <div class="requestModalTabs" role="tablist" aria-label="Solicitudes de contacto">
-          <button type="button" role="tab" aria-selected="true" data-contact-tab="incoming">Recibidas <span class="requestTabCount">${incoming.length}</span></button>
-          <button type="button" role="tab" aria-selected="false" data-contact-tab="sent">Enviadas <span class="requestTabCount">${sent.length}</span></button>
-        </div>
-        <div id="incomingContactRequests" class="requestModalList" data-contact-pane="incoming" role="tabpanel">${incomingRows || requestEmptyHTML('contact', 'incoming')}</div>
-        <div id="sentContactRequests" class="requestModalList" data-contact-pane="sent" role="tabpanel" data-hidden="true" style="display:none">${sentRows || requestEmptyHTML('contact', 'sent')}</div>
-      </div>`,
-                        acciones: [{ txt: 'Cerrar', valor: null }],
-                        onMount(sheet) {
-                            const tabs = sheet.querySelectorAll('[data-contact-tab]');
-                            const panes = sheet.querySelectorAll('[data-contact-pane]');
-                            tabs.forEach(tab => tab.onclick = () => {
-                                tabs.forEach(item => item.setAttribute('aria-selected', String(item === tab)));
-                                panes.forEach(pane => pane.style.display = pane.dataset.contactPane === tab.dataset.contactTab ? '' : 'none');
-                            });
-                            sheet.querySelector('#incomingContactRequests').addEventListener('click', async event => {
-                                const button = event.target.closest('button[data-action]');
-                                const row = button && button.closest('.requestCard');
-                                if (!row) return;
-                                if (button.dataset.action === 'profile') {
-                                    openContactSheet(row.dataset.user);
-                                    return;
-                                }
-                                button.disabled = true;
-                                try {
-                                    const answer = await fetch('/contacts/respond', {
-                                        method: 'POST',
-                                        headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({ username: row.dataset.user, accept: button.dataset.action === 'accept' })
-                                    });
-                                    const data = await answer.json();
-                                    if (!answer.ok) throw new Error(data.error || 'No se pudo responder a la solicitud.');
-                                    const requestList = row.parentElement;
-                                    row.remove();
-                                    await loadContactRequests();
-                                    if (button.dataset.action === 'accept') toast(data.username + ' ya está en tus contactos.');
-                                    if (!requestList.querySelector('.requestCard'))
-                                        requestList.innerHTML = requestEmptyHTML('contact', 'incoming');
-                                } catch (error) {
-                                    button.disabled = false;
-                                    console.error('[contacts] No se pudo responder a la solicitud:', error);
-                                    toast(error.message);
-                                }
-                            });
-                            sheet.querySelector('#sentContactRequests').addEventListener('click', async event => {
-                                const button = event.target.closest('[data-action="cancel-sent"]');
-                                const row = button && button.closest('.requestCard');
-                                if (!row) return;
-                                button.disabled = true;
-                                try {
-                                    const response = await fetch('/contacts/cancel', {
-                                        method: 'POST', headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({ username: row.dataset.user })
-                                    });
-                                    const result = await response.json();
-                                    if (!response.ok) throw new Error(result.error || 'No se pudo cancelar la solicitud.');
-                                    row.remove();
-                                    await loadContactRequests();
-                                    if (!sheet.querySelector('#sentContactRequests .requestCard'))
-                                        sheet.querySelector('#sentContactRequests').innerHTML = requestEmptyHTML('contact', 'sent');
-                                    toast('Solicitud cancelada.');
-                                } catch (error) {
-                                    button.disabled = false;
-                                    console.error('[contacts] No se pudo cancelar la solicitud:', error);
-                                    toast(error.message);
-                                }
-                            });
-                        }
-                    });
+                    sheet.querySelector('#incomingContactRequests').innerHTML = incomingGroups + incomingRows || requestEmptyHTML('all', 'incoming');
+                    sheet.querySelector('#sentContactRequests').innerHTML = sentGroups + sentRows || requestEmptyHTML('all', 'sent');
+                    sheet.querySelector('[data-contact-count="incoming"]').textContent = String(groupIncoming.length + incoming.length);
+                    sheet.querySelector('[data-contact-count="sent"]').textContent = String(groupSent.length + sent.length);
+                    // Al abrir se muestra Recibidas: es la pestaña que trae el
+                    // aviso del badge y la que el usuario viene a atender.
+                    activateContactRequestsTab('incoming');
                 } catch (error) {
                     console.error('[contacts] No se pudieron cargar las solicitudes:', error);
                     toast(error.message || 'No se pudieron cargar las solicitudes.');
@@ -10046,88 +10722,8 @@
                 }
             }
             async function openGroupRequests() {
-                try {
-                    const requestData = await loadGroupRequests();
-                    if (!requestData) throw new Error('No se pudieron cargar las solicitudes de grupos.');
-                    const { sent, incoming } = requestData;
-                    const incomingRows = incoming.map(request => {
-                        const group = groups.find(item => item.id === request.groupId);
-                        return `<div class="requestCard" data-group-id="${escapeHtml(request.groupId)}" data-user="${escapeHtml(request.username)}">
-      <div class="avatar groupGrid">${groupAvHTML(group || { id: request.groupId, members: [] })}</div>
-      <div class="requestInfo"><b>${escapeHtml(request.username)}</b><p>Quiere unirse a ${escapeHtml(group ? group.name : 'un grupo')}</p></div>
-      <div class="requestButtons"><button type="button" class="accept" data-action="approve-group" title="Aceptar" aria-label="Aceptar a @${escapeHtml(request.username)} en ${escapeHtml(group ? group.name : 'el grupo')}">${requestActionIcon('accept')}</button><button type="button" class="reject" data-action="reject-group" title="Rechazar" aria-label="Rechazar a @${escapeHtml(request.username)}">${requestActionIcon('reject')}</button></div>
-    </div>`;
-                    }).join('');
-                    const sentRows = sent.map(request => `<div class="requestCard" data-group-id="${escapeHtml(request.id)}">
-      <div class="avatar groupGrid">${request.avatar ? `<img src="${escapeHtml(request.avatar)}" alt="">` : escapeHtml((request.name || 'G')[0].toUpperCase())}</div>
-      <div class="requestInfo"><b>${escapeHtml(request.name)}</b><p>Solicitud enviada · ${request.visibility === 'public' ? 'Grupo público' : 'Grupo privado'}</p></div>
-      <div class="requestButtons"><button type="button" class="reject" data-action="cancel-group" title="Cancelar" aria-label="Cancelar la solicitud a ${escapeHtml(request.name)}">${requestActionIcon('cancel')}</button></div>
-    </div>`).join('');
-                    Modal.vivo({
-                        titulo: 'Solicitudes de grupos',
-                        clase: 'requestModalSheet',
-                        html: `<div class="requestModalContent"><p class="requestModalHint">Acepta o rechaza a quien quiere unirse a tus grupos y gestiona las solicitudes que has enviado.</p><div class="requestModalTabs" role="tablist" aria-label="Solicitudes de grupos"><button type="button" role="tab" aria-selected="true" data-group-tab="incoming">Recibidas <span class="requestTabCount">${incoming.length}</span></button><button type="button" role="tab" aria-selected="false" data-group-tab="sent">Enviadas <span class="requestTabCount">${sent.length}</span></button></div><div id="incomingGroupRequests" class="requestModalList" data-group-pane="incoming" role="tabpanel">${incomingRows || requestEmptyHTML('group', 'incoming')}</div><div id="sentGroupRequests" class="requestModalList" data-group-pane="sent" role="tabpanel" style="display:none">${sentRows || requestEmptyHTML('group', 'sent')}</div></div>`,
-                        acciones: [{ txt: 'Cerrar', valor: null }],
-                        onMount(sheet) {
-                            const tabs = sheet.querySelectorAll('[data-group-tab]');
-                            const panes = sheet.querySelectorAll('[data-group-pane]');
-                            tabs.forEach(tab => tab.onclick = () => {
-                                tabs.forEach(item => item.setAttribute('aria-selected', String(item === tab)));
-                                panes.forEach(pane => pane.style.display = pane.dataset.groupPane === tab.dataset.groupTab ? '' : 'none');
-                            });
-                            sheet.querySelector('#incomingGroupRequests').addEventListener('click', async event => {
-                                const button = event.target.closest('[data-action="approve-group"],[data-action="reject-group"]');
-                                const row = button && button.closest('.requestCard');
-                                if (!row) return;
-                                button.disabled = true;
-                                try {
-                                    const action = button.dataset.action === 'approve-group' ? 'approveJoin' : 'rejectJoin';
-                                    const response = await fetch('/groups/' + encodeURIComponent(row.dataset.groupId), {
-                                        method: 'POST', headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({ [action]: row.dataset.user })
-                                    });
-                                    const data = await response.json();
-                                    if (!response.ok) throw new Error(data.error || 'No se pudo responder a la solicitud.');
-                                    row.remove();
-                                    await loadGroupRequests();
-                                    if (!sheet.querySelector('#incomingGroupRequests .requestCard'))
-                                        sheet.querySelector('#incomingGroupRequests').innerHTML = requestEmptyHTML('group', 'incoming');
-                                    if (action === 'approveJoin') toast(row.dataset.user + ' se unió al grupo.');
-                                } catch (error) {
-                                    button.disabled = false;
-                                    console.error('[groups] No se pudo responder a la solicitud:', error);
-                                    toast(error.message);
-                                }
-                            });
-                            sheet.querySelector('#sentGroupRequests').addEventListener('click', async event => {
-                                const button = event.target.closest('[data-action="cancel-group"]');
-                                const row = button && button.closest('.requestCard');
-                                if (!row) return;
-                                button.disabled = true;
-                                try {
-                                    const response = await fetch('/groups/' + encodeURIComponent(row.dataset.groupId), {
-                                        method: 'POST', headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({ cancelJoin: true })
-                                    });
-                                    const data = await response.json();
-                                    if (!response.ok) throw new Error(data.error || 'No se pudo cancelar la solicitud.');
-                                    row.remove();
-                                    await loadGroupRequests();
-                                    if (!sheet.querySelector('#sentGroupRequests .requestCard'))
-                                        sheet.querySelector('#sentGroupRequests').innerHTML = requestEmptyHTML('group', 'sent');
-                                    toast('Solicitud de grupo cancelada.');
-                                } catch (error) {
-                                    button.disabled = false;
-                                    console.error('[groups] No se pudo cancelar la solicitud:', error);
-                                    toast(error.message);
-                                }
-                            });
-                        }
-                    });
-                } catch (error) {
-                    console.error('[groups] No se pudieron cargar las solicitudes:', error);
-                    toast(error.message || 'No se pudieron cargar las solicitudes de grupos.');
-                }
+                /* Las solicitudes de grupo ya viven dentro de la hoja común. */
+                return openContactRequests();
             }
             function sendRead(peer, ids) { fetch('/receipt', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: me.username, to: peer, ids, status: 'read' }) }).catch(() => { }); }
             function markReadOnOpen() {
@@ -10312,20 +10908,54 @@
             let groupCreateRouteFrame = null;
             let groupCreateAfterClose = null;
             let groupCreateClosing = false;
-            function mountGroupCreatePage() {
-                if (groupCreateRouteFrame) return;
+            function groupCreateUrl(id = '') {
+                const query = new URLSearchParams({ embedded: '1' });
+                if (id) {
+                    query.set('mode', 'edit');
+                    query.set('id', id);
+                }
+                return '/group-create.html?' + query.toString();
+            }
+            function mountGroupCreatePage(id = '') {
+                if (groupCreateRouteFrame) {
+                    if (groupCreateRouteFrame.dataset.groupId !== (id || '')) {
+                        groupCreateRouteFrame.dataset.groupId = id || '';
+                        try { groupCreateRouteFrame.contentWindow.location.replace(groupCreateUrl(id)); }
+                        catch { groupCreateRouteFrame.src = groupCreateUrl(id); }
+                    }
+                    return;
+                }
                 groupCreateClosing = false;
                 groupCreateRouteFrame = document.createElement('iframe');
-                groupCreateRouteFrame.title = 'Crear grupo';
-                groupCreateRouteFrame.src = '/group-create.html?embedded=1';
-                groupCreateRouteFrame.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;z-index:99998;border:0;background:#111b21';
+                groupCreateRouteFrame.title = id ? 'Editar grupo' : 'Crear grupo';
+                groupCreateRouteFrame.dataset.groupId = id || '';
+                groupCreateRouteFrame.src = groupCreateUrl(id);
+                groupCreateRouteFrame.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;z-index:99998;border:0;background:#090c0f';
                 document.body.appendChild(groupCreateRouteFrame);
             }
             function openGroupCreatePage() {
                 if (groupCreateRouteFrame || groupCreateClosing) return;
                 groupCreateAfterClose = null;
-                history.pushState({ ...(history.state && typeof history.state === 'object' ? history.state : {}), appRoute: 'group-create' }, '', location.href);
+                const state = { ...(history.state && typeof history.state === 'object' ? history.state : {}) };
+                delete state.groupId;
+                delete state.section;
+                history.pushState(nextRouteState({ ...state, appRoute: 'group-create' }), '', location.href);
                 mountGroupCreatePage();
+            }
+            function openGroupCreateEditPage(id) {
+                if (!id) return;
+                hideChatMenu();
+                if (groupCreateRouteFrame) {
+                    if (groupCreateRouteFrame.dataset.groupId === id) return;
+                    try { history.replaceState({ ...(history.state && typeof history.state === 'object' ? history.state : {}), appRoute: 'group-create', groupId: id }, '', location.href); } catch { }
+                    groupCreateAfterClose = null;
+                    mountGroupCreatePage(id);
+                    return;
+                }
+                if (groupCreateClosing) return;
+                groupCreateAfterClose = null;
+                history.pushState(nextRouteState({ ...(history.state && typeof history.state === 'object' ? history.state : {}), appRoute: 'group-create', groupId: id }), '', location.href);
+                mountGroupCreatePage(id);
             }
             function closeGroupCreatePage() {
                 if (!groupCreateRouteFrame || groupCreateClosing) return;
@@ -10339,17 +10969,35 @@
                 if (data.type === 'zlapy:group-created' && typeof data.groupId === 'string' && data.groupId) {
                     groupCreateAfterClose = () => openGroup(data.groupId).catch(error => console.error('[grupos] No se pudo abrir el grupo creado:', error));
                     closeGroupCreatePage();
+                } else if (data.type === 'zlapy:group-saved' && typeof data.groupId === 'string' && data.groupId) {
+                    const savedId = data.groupId;
+                    groupCreateAfterClose = () => {
+                        fetch('/groups/' + encodeURIComponent(savedId) + '?light=1', { cache: 'no-store' })
+                            .then(response => response.ok ? response.json() : null)
+                            .then(group => { if (group && group.id) applyGroupFromDetails(group); })
+                            .catch(error => console.error('[grupos] No se pudo refrescar el grupo editado:', error))
+                            .finally(() => loadGroups());
+                    };
+                    closeGroupCreatePage();
                 } else if (data.type === 'zlapy:group-close') {
                     closeGroupCreatePage();
                 }
             });
+            // Índice de la entrada actual del historial. Cada entrada que
+            // empuja la app lo lleva consigo para poder distinguir "hacia
+            // delante" de "hacia atrás" en el popstate: sin esto, volver
+            // atrás a una entrada vieja de "Detalles del grupo" resucitaba
+            // los detalles del último grupo (y recargaba la vista).
+            let routeNav = 0;
+            function nextRouteState(state) {
+                routeNav += 1;
+                return { ...(state && typeof state === 'object' ? state : {}), __nav: routeNav };
+            }
             let groupDetailsRouteFrame = null;
             let groupDetailsAfterClose = null;
             let groupDetailsClosing = false;
-            function groupDetailsUrl(id, section = '') {
-                const query = new URLSearchParams({ embedded: '1', id });
-                if (section) query.set('section', section);
-                return '/group-details.html?' + query.toString();
+            function groupDetailsUrl(id) {
+                return '/group-details.html?' + new URLSearchParams({ embedded: '1', id }).toString();
             }
             function applyGroupFromDetails(group) {
                 if (!group || typeof group.id !== 'string' || !group.id) return;
@@ -10370,14 +11018,15 @@
                 }
                 renderContacts();
             }
-            function mountGroupDetailsPage(id, section = '') {
+            function mountGroupDetailsPage(id) {
                 if (!id) return;
+                groupDetailsClosing = false;
                 if (groupDetailsRouteFrame) {
-                    const nextSrc = groupDetailsUrl(id, section);
-                    if (groupDetailsRouteFrame.dataset.groupId !== id || groupDetailsRouteFrame.dataset.section !== section) {
+                    const nextSrc = groupDetailsUrl(id);
+                    if (groupDetailsRouteFrame.dataset.groupId !== id) {
                         groupDetailsRouteFrame.dataset.groupId = id;
-                        groupDetailsRouteFrame.dataset.section = section;
-                        groupDetailsRouteFrame.src = nextSrc;
+                        try { groupDetailsRouteFrame.contentWindow.location.replace(nextSrc); }
+                        catch { groupDetailsRouteFrame.src = nextSrc; }
                     }
                     return;
                 }
@@ -10385,32 +11034,63 @@
                 groupDetailsRouteFrame = document.createElement('iframe');
                 groupDetailsRouteFrame.title = 'Detalles del grupo';
                 groupDetailsRouteFrame.dataset.groupId = id;
-                groupDetailsRouteFrame.dataset.section = section;
-                groupDetailsRouteFrame.src = groupDetailsUrl(id, section);
-                groupDetailsRouteFrame.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;z-index:99998;border:0;background:#111b21';
+                groupDetailsRouteFrame.src = groupDetailsUrl(id);
+                groupDetailsRouteFrame.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;z-index:99998;border:0;background:#090c0f';
                 document.body.appendChild(groupDetailsRouteFrame);
             }
-            function openGroupDetailsPage(id, options = {}) {
+            function rememberGroupPreview(groupId) {
+                const group = activeGroup && activeGroup.id === groupId
+                    ? activeGroup
+                    : groups.find(entry => entry.id === groupId);
+                if (!group || !me) return;
+                try {
+                    sessionStorage.setItem('zlapy:group-details-preview:' + groupId, JSON.stringify({
+                        group,
+                        me: { username: me.username }
+                    }));
+                } catch { }
+            }
+            function openGroupDetailsPage(id) {
                 const groupId = typeof id === 'string' && id ? id : activeGroup && activeGroup.id;
                 if (!groupId) return;
+                rememberGroupPreview(groupId);
                 hideChatMenu();
-                const section = options && options.section === 'settings' ? 'settings' : '';
                 if (groupDetailsRouteFrame) {
-                    if (groupDetailsRouteFrame.dataset.groupId === groupId && groupDetailsRouteFrame.dataset.section === section) return;
-                    try { history.replaceState({ ...(history.state && typeof history.state === 'object' ? history.state : {}), appRoute: 'group-details', groupId, section }, '', location.href); } catch { }
+                    if (groupDetailsRouteFrame.dataset.groupId === groupId) return;
+                    try { history.replaceState({ ...(history.state && typeof history.state === 'object' ? history.state : {}), appRoute: 'group-details', groupId }, '', location.href); } catch { }
                     groupDetailsAfterClose = null;
-                    mountGroupDetailsPage(groupId, section);
+                    mountGroupDetailsPage(groupId);
                     return;
                 }
                 if (groupDetailsClosing) return;
                 groupDetailsAfterClose = null;
-                history.pushState({ ...(history.state && typeof history.state === 'object' ? history.state : {}), appRoute: 'group-details', groupId, section }, '', location.href);
-                mountGroupDetailsPage(groupId, section);
+                history.pushState(nextRouteState({ ...(history.state && typeof history.state === 'object' ? history.state : {}), appRoute: 'group-details', groupId }), '', location.href);
+                mountGroupDetailsPage(groupId);
             }
             function closeGroupDetailsPage() {
                 if (!groupDetailsRouteFrame || groupDetailsClosing) return;
                 groupDetailsClosing = true;
-                history.back();
+                const state = history.state;
+                if (state && state.appRoute === 'group-details') {
+                    history.back();
+                    return;
+                }
+                // La entrada de los detalles ya no está arriba (otra vista
+                // empujó historial después): se retira la marca para que
+                // ningún "atrás" posterior resucite este grupo.
+                try {
+                    const clean = { ...(state && typeof state === 'object' ? state : {}) };
+                    delete clean.appRoute;
+                    delete clean.groupId;
+                    delete clean.section;
+                    history.replaceState(clean, '', location.href);
+                } catch { }
+                groupDetailsRouteFrame.remove();
+                groupDetailsRouteFrame = null;
+                groupDetailsClosing = false;
+                const afterClose = groupDetailsAfterClose;
+                groupDetailsAfterClose = null;
+                if (afterClose) afterClose();
             }
             // El grupo ya no existe para esta cuenta (salida, borrado o un
             // cambio hecho en otro dispositivo): se limpia el estado y se
@@ -10433,9 +11113,53 @@
                 dismissLayer('chat');
                 toast(deleted ? 'Grupo eliminado para todos' : 'Saliste del grupo');
             }
+            /* Panel lateral de detalles del grupo dentro del chat activo
+               (misma columna que #contactPanel): carga la misma página
+               group-details.html en modo embedded dentro del panel. La vista
+               fullscreen con entrada propia de historial se mantiene para
+               restauración de rutas. */
+            let gpTarget = null;
+            let groupPanelFrame = null;
+            function closeGroupPanel() {
+                gpTarget = null;
+                if (groupPanelFrame) { groupPanelFrame.remove(); groupPanelFrame = null; }
+                const panel = document.getElementById('groupPanel');
+                panel.classList.remove('on');
+                panel.setAttribute('aria-hidden', 'true');
+            }
+            function openGroupPanel(id) {
+                if (cpTarget !== null) dismissLayer('panel-contact'); // solo un panel de información a la vez
+                const groupId = typeof id === 'string' && id ? id : activeGroup && activeGroup.id;
+                // Fuera de un chat de grupo activo se mantiene la vista
+                // completa con su propia entrada de historial.
+                if (!groupId || activeKind !== 'group' || !activeGroup || activeGroup.id !== groupId)
+                    return openGroupDetailsPage(groupId);
+                hideChatMenu();
+                const panel = document.getElementById('groupPanel');
+                gpTarget = groupId;
+                const nextSrc = groupDetailsUrl(groupId);
+                if (!groupPanelFrame) {
+                    groupPanelFrame = document.createElement('iframe');
+                    groupPanelFrame.title = 'Detalles del grupo';
+                    groupPanelFrame.dataset.groupId = groupId;
+                    groupPanelFrame.src = nextSrc;
+                    panel.querySelector('.gpInner').appendChild(groupPanelFrame);
+                } else if (groupPanelFrame.dataset.groupId !== groupId) {
+                    groupPanelFrame.dataset.groupId = groupId;
+                    try { groupPanelFrame.contentWindow.location.replace(nextSrc); }
+                    catch { groupPanelFrame.src = nextSrc; }
+                }
+                rememberGroupPreview(groupId);
+                const yaAbierto = panel.classList.contains('on');
+                panel.classList.add('on');
+                panel.setAttribute('aria-hidden', 'false');
+                if (!yaAbierto) Layer.push('panel-group');
+            }
             window.addEventListener('message', event => {
-                if (event.origin !== location.origin || !groupDetailsRouteFrame) return;
-                if (event.source && event.source !== groupDetailsRouteFrame.contentWindow) return;
+                if (event.origin !== location.origin) return;
+                const fromRoute = !!groupDetailsRouteFrame && event.source === groupDetailsRouteFrame.contentWindow;
+                const fromPanel = !!groupPanelFrame && event.source === groupPanelFrame.contentWindow;
+                if (!fromRoute && !fromPanel) return;
                 const data = event.data;
                 if (!data || typeof data !== 'object') return;
                 if (data.type === 'zlapy:group-updated') {
@@ -10443,7 +11167,40 @@
                     return;
                 }
                 if (data.type === 'zlapy:group-details-close') {
-                    closeGroupDetailsPage();
+                    if (fromPanel) userCloseLayer('panel-group'); // el panel vive en el historial de capas
+                    else closeGroupDetailsPage();
+                    return;
+                }
+                if (data.type === 'zlapy:edit-group' && typeof data.groupId === 'string' && data.groupId) {
+                    const groupId = data.groupId;
+                    if (fromPanel) {
+                        userCloseLayer('panel-group');
+                        openGroupCreateEditPage(groupId);
+                        // Al cerrar el editor se refresca el grupo y se vuelve
+                        // a abrir el panel sobre el chat (de ahí venía).
+                        groupCreateAfterClose = () => {
+                            fetch('/groups/' + encodeURIComponent(groupId) + '?light=1', { cache: 'no-store' })
+                                .then(response => response.ok ? response.json() : null)
+                                .then(group => { if (group && group.id) applyGroupFromDetails(group); })
+                                .catch(error => console.error('[grupos] No se pudo refrescar el grupo editado:', error))
+                                .finally(() => loadGroups());
+                            if (activeKind === 'group' && activeGroup && activeGroup.id === groupId) openGroupPanel(groupId);
+                        };
+                    } else {
+                        groupDetailsAfterClose = () => openGroupCreateEditPage(groupId);
+                        closeGroupDetailsPage();
+                    }
+                    return;
+                }
+                if (data.type === 'zlapy:open-chat' && typeof data.username === 'string' && data.username) {
+                    const username = data.username;
+                    if (fromPanel) {
+                        userCloseLayer('panel-group');
+                        openChat(username).catch(error => console.error('[chat] No se pudo abrir el chat:', error));
+                    } else {
+                        groupDetailsAfterClose = () => openChat(username).catch(error => console.error('[chat] No se pudo abrir el chat:', error));
+                        closeGroupDetailsPage();
+                    }
                     return;
                 }
                 // La página de detalles hace sus propios avisos (salir, eliminar,
@@ -10451,7 +11208,11 @@
                 if (data.type === 'zlapy:group-left' || data.type === 'zlapy:group-deleted') {
                     const groupId = typeof data.groupId === 'string' ? data.groupId : '';
                     const deleted = data.type === 'zlapy:group-deleted';
-                    if (groupDetailsRouteFrame) {
+                    if (fromPanel) {
+                        // forgetRemovedGroup cierra el chat y, con él, el panel
+                        // (el guard de closeChat hace el cierre del panel).
+                        forgetRemovedGroup(groupId, deleted);
+                    } else if (groupDetailsRouteFrame) {
                         groupDetailsAfterClose = () => forgetRemovedGroup(groupId, deleted);
                         closeGroupDetailsPage();
                     } else {
@@ -10467,12 +11228,12 @@
                 storiesRouteFrame.title = 'Historias';
                 storiesRouteFrame.src = '/stories.html?embedded=1';
                 storiesRouteFrame.allow = 'microphone';
-                storiesRouteFrame.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;z-index:99998;border:0;background:#111b21';
+                storiesRouteFrame.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;z-index:99998;border:0;background:#090c0f';
                 document.body.appendChild(storiesRouteFrame);
             }
             function openStoriesPage() {
                 if (storiesRouteFrame) return;
-                history.pushState({ ...(history.state && typeof history.state === 'object' ? history.state : {}), appRoute: 'stories' }, '', location.href);
+                history.pushState(nextRouteState({ ...(history.state && typeof history.state === 'object' ? history.state : {}), appRoute: 'stories' }), '', location.href);
                 mountStoriesPage();
             }
             function closeStoriesRoute() {
@@ -10692,6 +11453,13 @@
                     };
                 }
                 chatPrefs = next;
+                // Los resúmenes que manda el servidor también traen
+                // `archived`: se alinean para que desarchivar (o el ajuste de
+                // "mantener archivados") no deje el chat atascado en la carpeta.
+                for (const peer in chatSummary)
+                    chatSummary[peer].archived = next['dm:' + peer]?.archived === true;
+                for (const gid in groupSummary)
+                    groupSummary[gid].archived = next['group:' + gid]?.archived === true;
             }
             async function loadChatPrefs() {
                 const revision = ++chatPrefsRevision;
@@ -10889,10 +11657,14 @@
                     if (s && s.archived) { const k = groupPrefKey(gid); if (!keys.includes(k)) keys.push(k); }
                 return keys;
             }
-            function openArchivedChats() {
-                const keys = archivedChatKeys();
-                if (!keys.length) { toast('No hay chats archivados.'); return; }
-                const rows = keys.map(key => `<div class="archivedRow">
+            /* Chats archivados: hoja con el mismo patrón que Ajustes o
+               Solicitudes. El switch decide si un mensaje nuevo devuelve el
+               chat a la lista (apagado) o lo conserva archivado (encendido). */
+            let keepArchivedChats = false;
+            let keepArchivedRevision = 0;
+            let archivedSheetWired = false;
+            function archivedRowHTML(key) {
+                return `<div class="archivedRow" role="listitem">
       <div class="avatar">${key.startsWith('group:')
             ? groupAvHTML(groups.find(item => item.id === key.slice(6)) || { id: key.slice(6), members: [] })
             : `<img src="${escapeHtml(avatarUrl(key.startsWith('dm:') ? key.slice(3) : key))}" alt="">`}</div>
@@ -10900,26 +11672,96 @@
       <button class="archivedUnarchive" type="button" data-archived-unarchive="${escapeHtml(key)}" title="Desarchivar" aria-label="Desarchivar ${escapeHtml(chatDisplayName(key))}">
         <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11h14V8"/><path d="M10 4v9M7 10l3-3 3 3"/></svg>
       </button>
-    </div>`).join('');
-                Modal.vivo({
-                    titulo: 'Chats archivados',
-                    clase: 'requestModalSheet',
-                    html: `<div class="requestModalList">${rows}</div>`,
-                    acciones: [{ txt: 'Cerrar', valor: null }],
-                    onMount(sheet) {
-                        sheet.querySelectorAll('[data-archived-unarchive]').forEach(button => {
-                            button.onclick = async () => {
-                                const key = button.dataset.archivedUnarchive;
-                                if (await applyChatPrefs([key], { archived: false })) {
-                                    toast('Chat desarchivado.');
-                                    const row = button.closest('.archivedRow');
-                                    if (row) row.remove();
-                                    if (!sheet.querySelector('.archivedRow')) sheet.querySelector('.mBtns button')?.click();
-                                }
-                            };
-                        });
-                    }
+    </div>`;
+            }
+            function renderArchivedSheet() {
+                const list = document.getElementById('archivedList');
+                if (!list) return;
+                const keys = archivedChatKeys();
+                list.innerHTML = keys.length
+                    ? keys.map(archivedRowHTML).join('')
+                    : `<div class="requestModalEmpty" role="status"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11h14V8"/><path d="M10 12h4"/></svg><b>Sin chats archivados</b><span>Los chats que archives desde su menú aparecerán aquí.</span></div>`;
+                const sw = document.getElementById('swKeepArchived');
+                if (sw) {
+                    sw.classList.toggle('on', keepArchivedChats);
+                    sw.setAttribute('aria-pressed', String(keepArchivedChats));
+                }
+            }
+            function wireArchivedSheet() {
+                if (archivedSheetWired) return;
+                const sheet = document.getElementById('archivedSheet');
+                if (!sheet) return;
+                archivedSheetWired = true;
+                sheet.querySelector('#archivedList').addEventListener('click', async event => {
+                    const button = event.target.closest('[data-archived-unarchive]');
+                    if (!button) return;
+                    button.disabled = true;
+                    if (await applyChatPrefs([button.dataset.archivedUnarchive], { archived: false }))
+                        toast('Chat desarchivado.');
+                    renderArchivedSheet();
                 });
+                sheet.querySelector('#swKeepArchived').onclick = async () => {
+                    const button = sheet.querySelector('#swKeepArchived');
+                    const next = !keepArchivedChats;
+                    button.disabled = true;
+                    try {
+                        const response = await fetch('/account/chat-settings', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ keepArchived: next })
+                        });
+                        const result = await response.json().catch(() => ({}));
+                        if (!response.ok) throw new Error(result.error || 'No se pudo guardar el ajuste.');
+                        keepArchivedChats = next;
+                        keepArchivedRevision++;
+                        toast(next
+                            ? 'Los chats archivados se conservarán al recibir mensajes.'
+                            : 'Los mensajes nuevos devolverán el chat a la lista.');
+                    } catch (error) {
+                        console.error('[archived] No se pudo guardar el ajuste:', error);
+                        toast(error.message || 'No se pudo guardar el ajuste.');
+                    } finally {
+                        button.disabled = false;
+                        renderArchivedSheet();
+                    }
+                };
+            }
+            async function refreshKeepArchivedSetting() {
+                const revision = ++keepArchivedRevision;
+                try {
+                    const response = await fetch('/account/chat-settings', { cache: 'no-store' });
+                    if (!response.ok) return;
+                    const result = await response.json();
+                    if (revision !== keepArchivedRevision || typeof result.keepArchived !== 'boolean') return;
+                    keepArchivedChats = result.keepArchived;
+                    if (document.getElementById('archivedSheet')?.classList.contains('on')) renderArchivedSheet();
+                } catch (error) {
+                    console.error('[archived] No se pudo leer el ajuste de archivados:', error);
+                }
+            }
+            function openArchivedChats(fromPop = false) {
+                wireArchivedSheet();
+                renderArchivedSheet();
+                openSheet('archivedSheet', 'sheet-archived', fromPop);
+                void refreshKeepArchivedSetting();
+            }
+            /* El servidor ya quitó el archivado al entrar el mensaje; esta
+               copia local se actualiza sin esperar a recargar la lista. */
+            function unarchiveChatLocally(key) {
+                const pref = chatPrefs[key];
+                if (pref) {
+                    pref.archived = false;
+                    if (!pref.pinned && !pref.unread) delete chatPrefs[key];
+                }
+                if (key.startsWith('dm:')) {
+                    const summary = chatSummary[key.slice(3)];
+                    if (summary) summary.archived = false;
+                } else if (key.startsWith('group:')) {
+                    const summary = groupSummary[key.slice(6)];
+                    if (summary) summary.archived = false;
+                }
+                renderContacts();
+                if (document.getElementById('archivedSheet')?.classList.contains('on')) renderArchivedSheet();
             }
             (function bindContactListActions() {
                 const box = document.getElementById('contacts');
@@ -11039,6 +11881,8 @@
                    usuario abre un chat, este flujo no debe secuestrar el estado */
                 const openVersion = ++chatOpenVersion;
                 hideChatMenu();
+                if (cpTarget !== null) dismissLayer('panel-contact'); // el panel es del chat anterior
+                if (gpTarget !== null) dismissLayer('panel-group'); // y el del grupo anterior
                 if (pendingDrafts.length) cancelDraft();
                 const wasOpen = document.body.classList.contains('chat-open');
                 const cachedGroup = groups.find(group => group.id === id) || null;
@@ -11256,6 +12100,7 @@
                     unread[groupId] = (unread[groupId] || 0) + 1;
                     beep();
                 }
+                if (!hydrated.mine && !keepArchivedChats) unarchiveChatLocally(groupPrefKey(groupId));
                 renderContacts();
             }
             async function mergeGroupMessages(g) {
@@ -11412,7 +12257,7 @@
                     else if (result.id) {
                         upsertGroup(result);
                         await openGroup(result.id);
-                        toast('Te uniste al grupo.');
+                        toast(result.alreadyMember ? 'Ya eras miembro de este grupo.' : 'Te uniste al grupo.');
                     }
                 } catch (error) {
                     console.error('[groups] No se pudo procesar el enlace de invitación:', error);
@@ -11511,18 +12356,18 @@
   <div class="meta"><div class="name">Mensajes Guardados</div><div class="sub">${escapeHtml(lastPreview(me.username) || 'Envíate notas y archivos')}</div></div>
 </div>`;
 
-                // === Solicitudes de contacto pendientes ===
-                const contactRequestTotal = pendingContactCount + pendingContactSentCount;
+                // === Solicitudes pendientes (contactos y grupos) ===
+                const requestTotal = pendingContactCount + pendingContactSentCount + pendingGroupRequestCount;
                 const contactActions = q === '' ? `
-  ${contactRequestTotal > 0 ? `
+  ${requestTotal > 0 ? `
   <div class="contact" onclick="openContactRequests()">
     <div class="avatar" style="background:#ea4335">
       <svg viewBox="0 0 24 24" width="22" height="22" fill="#fff" aria-hidden="true">
         <path d="M15 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Zm0-6a2 2 0 1 1 0 4 2 2 0 0 1 0-4Zm-8.5 8a4.5 4.5 0 0 0-4.5 4.5V21h10v-2H4v-.5A2.5 2.5 0 0 1 6.5 16H10v-2Zm12-1v3h-3v2h3v3h2v-3h3v-2h-3v-3Z"/>
       </svg>
     </div>
-    <div class="meta"><div class="name">Solicitudes de contacto</div><div class="sub">${contactRequestTotal} pendiente${contactRequestTotal === 1 ? '' : 's'}</div></div>
-    <div class="unread">${contactRequestTotal > 99 ? '99+' : contactRequestTotal}</div>
+    <div class="meta"><div class="name">Solicitudes pendientes</div><div class="sub">${requestTotal} pendiente${requestTotal === 1 ? '' : 's'}</div></div>
+    <div class="unread">${requestTotal > 99 ? '99+' : requestTotal}</div>
   </div>` : ''}
 ` : '';
 
@@ -11551,6 +12396,8 @@
             async function openChat(u) {
                 const openVersion = ++chatOpenVersion;
                 hideChatMenu();
+                if (cpTarget !== null) dismissLayer('panel-contact'); // el panel es del chat anterior
+                if (gpTarget !== null) dismissLayer('panel-group');
                 if (pendingDrafts.length) cancelDraft();
                 let name = u;
                 if (u === '__saved__') name = me.username;
@@ -11703,14 +12550,14 @@
             }
             async function runChatMenuAction(action, target, group) {
                 if (group) {
-                    if (action === 'info') openGroupDetailsPage(group.id);
-                    else if (action === 'settings') openGroupDetailsPage(group.id, { section: 'settings' });
+                    if (action === 'info') openGroupPanel(group.id);
+                    else if (action === 'settings') openGroupCreateEditPage(group.id);
                     else if (action === 'add') addMembersFlow();
                     else if (action === 'share') shareGroup();
                     else if (action === 'leave') leaveGroup();
                     return;
                 }
-                if (action === 'profile') openContactSheet(target);
+                if (action === 'profile') openContactPanel(target);
                 else if (action === 'calls') openCallLog(target);
                 else if (action === 'block') await chatMenuAction('block', target);
                 else if (action === 'remove') await removeContactFromChat(target);
@@ -11857,7 +12704,7 @@
                 } else if (el) {
                     txt.textContent = active + ' te ha bloqueado: no puedes enviarle mensajes ni llamarle, y no recibes sus mensajes.';
                     btn.textContent = 'Ver perfil';
-                    btn.onclick = () => openContactSheet(active);
+                    btn.onclick = () => openContactPanel(active);
                     btn.style.display = 'block';
                 } else if (!puedeEscribir || !puedeLlamar) {
                     let txt2;
@@ -11866,7 +12713,7 @@
                     else txt2 = active + ' tiene restringidas las llamadas: no acepta llamadas tuyas.';
                     txt.textContent = txt2;
                     btn.textContent = 'Ver perfil';
-                    btn.onclick = () => openContactSheet(active);
+                    btn.onclick = () => openContactPanel(active);
                     btn.style.display = 'block';
                 } else {
                     bar.style.display = 'none';
@@ -11948,6 +12795,8 @@
                    pasaría el guard y re-empujaría al stack la vista de chat */
                 chatOpenVersion++;
                 hideChatMenu();
+                if (cpTarget !== null) dismissLayer('panel-contact'); // el panel nunca sobrevive al chat
+                if (gpTarget !== null) dismissLayer('panel-group');
                 document.body.classList.remove('chat-open');
                 active = null; activeKind = 'dm'; activeGroup = null;
                 document.getElementById('msgs').innerHTML = '';   // salir deja la vista limpia
@@ -11965,10 +12814,10 @@
             // La cabecera es la misma para chats y grupos: según lo que haya
             // abierto en ese momento se abre el perfil o los detalles del grupo.
             function chatHeaderClick() {
-                if (activeKind === 'group' && activeGroup) { openGroupDetailsPage(activeGroup.id); return; }
+                if (activeKind === 'group' && activeGroup) { openGroupPanel(activeGroup.id); return; }
                 viewContactProfile();
             }
-            function viewContactProfile() { if (!active || active === me.username || active === '__saved__' || activeKind !== 'dm') return; openContactSheet(active); }
+            function viewContactProfile() { if (!active || active === me.username || active === '__saved__' || activeKind !== 'dm') return; openContactPanel(active); }
 
             let imageViewerPreviousFocus = null;
             let imageViewerPreviousOverflow = '';
@@ -12404,6 +13253,7 @@
                 else body += `<a href="${mediaUrl(m.plain)}" download="${downloadName(m)}">${escapeHtml(m.name || 'Archivo')}</a>`;
                 const esSticker = m.kind === 'sticker';
                 const imageTextBubble = m.kind === 'image' && !m.once && (!!String(m.caption || '').trim() || !!m.reply);
+                const galleryTextBubble = imageTextBubble && Array.isArray(m.gallery) && m.gallery.length > 0;
                 if (m.caption && m.kind !== 'text')
                     body += `<div class="${imageTextBubble ? 'messageCaption' : ''}" style="${imageTextBubble ? '' : 'margin-top:4px'}">${escapeHtml(m.caption)}</div>`;
                 const nombre = m.inGroup && !m.mine ? `<div class="fname" style="font-weight:600;margin-bottom:2px">${replyQuien({ from: m.from, fromId: m.fromId })}</div>` : '';
@@ -12429,7 +13279,7 @@
                                 ? `${nombre}${body}<span class="stickerReplyMeta">${displayMeta.hide ? '' : `<span class="time">${t}</span>${m.inGroup ? '' : TICK(m)}`}</span>`
                                 : `${nombre}${body}${meta}`;
                 const sinMeta = displayMeta.hide ? ' noMeta' : '';
-                return `<div class="bubble ${m.mine ? 'me' : 'them'}${onceView ? ' onceViewBubble' : ''}${m.kind === 'contact' ? ' contactBubble' : ''}${m.kind === 'audio' ? ' audioBubble' : ''}${(m.kind === 'image' || m.kind === 'file') && !m.once ? ' mediaBubble' : ''}${imageTextBubble ? ' imageTextBubble' : ''}${m.kind === 'image' ? ' imageBubble' : ''}${m.kind === 'poll' ? ' pollBubble' : ''}${esSticker ? ' stickerB' : ''}${esSticker && m.reply ? ' stickerReplyB' : ''}${sinMeta}${m.inGroup ? ' groupBubbleAction' : ''}" id="b${escapeHtml(m.id)}" data-message-id="${escapeHtml(m.id)}">${m.inGroup ? '' : m.kind === 'contact' ? '' : `<span class="replyBtn" onclick="event.stopPropagation();setReply('${jsArg(m.id)}')"><svg viewBox="0 0 24 24"><path d="M10 9V5l-7 7 7 7v-4.1c5 0 8.5 1.6 11 5.1-1-5-4-10-11-11z"/></svg></span>`}${content}</div>`;
+                return `<div class="bubble ${m.mine ? 'me' : 'them'}${onceView ? ' onceViewBubble' : ''}${m.kind === 'contact' ? ' contactBubble' : ''}${m.kind === 'audio' ? ' audioBubble' : ''}${(m.kind === 'image' || m.kind === 'file') && !m.once ? ' mediaBubble' : ''}${imageTextBubble ? ' imageTextBubble' : ''}${galleryTextBubble ? ' galleryTextBubble' : ''}${m.kind === 'image' ? ' imageBubble' : ''}${m.kind === 'poll' ? ' pollBubble' : ''}${esSticker ? ' stickerB' : ''}${esSticker && m.reply ? ' stickerReplyB' : ''}${sinMeta}${m.inGroup ? ' groupBubbleAction' : ''}" id="b${escapeHtml(m.id)}" data-message-id="${escapeHtml(m.id)}">${m.inGroup ? '' : m.kind === 'contact' ? '' : `<span class="replyBtn" onclick="event.stopPropagation();setReply('${jsArg(m.id)}')"><svg viewBox="0 0 24 24"><path d="M10 9V5l-7 7 7 7v-4.1c5 0 8.5 1.6 11 5.1-1-5-4-10-11-11z"/></svg></span>`}${content}</div>`;
             }
             function groupedMessageMetadata(messages) {
                 const display = new Map();
@@ -15407,7 +16257,7 @@
                 push(name) {
                     if (this.stack[this.stack.length - 1] === name) return;
                     this.stack.push(name);
-                    try { history.pushState({ layer: name }, ''); } catch { }
+                    try { history.pushState(nextRouteState({ layer: name }), ''); } catch { }
                 },
                 pop(name) { const i = this.stack.lastIndexOf(name); if (i >= 0) this.stack.splice(i, 1); }
             };
@@ -15415,19 +16265,55 @@
                 if (name === 'editor') return closeStoryEditor(true);
                 if (name === 'story') return closeStory(true);
                 if (name === 'chat') return closeChat(true);
-                if (name === 'sheet-profile' || name === 'sheet-contact' || name === 'sheet-stories' || name === 'sheet-settings') return closeSheet(name === 'sheet-profile' ? 'profileSheet' : name === 'sheet-contact' ? 'contactSheet' : name === 'sheet-stories' ? 'storiesMgrSheet' : 'settingsSheet', true);
+                if (name === 'panel-contact') return closeContactPanel();
+                if (name === 'panel-group') return closeGroupPanel();
+                if (name === 'sheet-profile' || name === 'sheet-contact' || name === 'sheet-stories' || name === 'sheet-requests' || name === 'sheet-archived' || name === 'sheet-settings') return closeSheet(name === 'sheet-profile' ? 'profileSheet' : name === 'sheet-contact' ? 'contactSheet' : name === 'sheet-stories' ? 'storiesMgrSheet' : name === 'sheet-requests' ? 'requestsSheet' : name === 'sheet-archived' ? 'archivedSheet' : 'settingsSheet', true);
             }
+            /* En userCloseLayer/dismissLayer manda la ENTRADA ACTUAL del
+               historial, no solo la pila Layer.stack. Tras una recarga (o el
+               descarte de la pestaña que hace Android) la pila se rearma
+               cuando se reabre la capa, pero puede quedar una entrada
+               fantasma con la marca por debajo: history.back() entonces no
+               cierra la vista, navega a esa entrada (o a otro documento, en
+               el peor caso) y recarga toda la página. */
+            const layerMarkActive = name => {
+                const state = history.state;
+                return !!state && typeof state === 'object' && state.layer === name;
+            };
+            const stripLayerMark = () => {
+                try {
+                    const clean = { ...history.state };
+                    delete clean.layer;
+                    delete clean.section;
+                    history.replaceState(clean, '', location.href);
+                } catch { }
+            };
             function userCloseLayer(name) {
-                if (Layer.stack.includes(name)) { try { history.back(); return; } catch { } }
+                const mark = layerMarkActive(name);
+                if (Layer.stack.includes(name) && mark) { try { history.back(); return; } catch { } }
+                if (Layer.stack.includes(name)) Layer.pop(name);
                 closeLayerUI(name);
+                if (mark) stripLayerMark();
             }
             function dismissLayer(name) {
-                if (Layer.stack.includes(name)) { Layer.skipPop = true; Layer.pop(name); try { history.back(); } catch { } }
+                const mark = layerMarkActive(name);
+                if (Layer.stack.includes(name) && mark) {
+                    Layer.skipPop = true;
+                    Layer.pop(name);
+                    try { history.back(); } catch { }
+                    closeLayerUI(name);
+                    return;
+                }
+                if (Layer.stack.includes(name)) Layer.pop(name);
                 closeLayerUI(name);
+                if (mark) stripLayerMark();
             }
             window.addEventListener('popstate', event => {
+                const nav = event.state && typeof event.state.__nav === 'number' ? event.state.__nav : null;
+                const forward = nav !== null && nav > routeNav;
+                routeNav = nav === null ? 0 : nav;
                 if (event.state && event.state.appRoute === 'group-create') {
-                    mountGroupCreatePage();
+                    mountGroupCreatePage(event.state.groupId || '');
                     return;
                 }
                 if (groupCreateRouteFrame) {
@@ -15440,7 +16326,29 @@
                     return;
                 }
                 if (event.state && event.state.appRoute === 'group-details') {
-                    mountGroupDetailsPage(event.state.groupId, event.state.section || '');
+                    if (forward) {
+                        mountGroupDetailsPage(event.state.groupId);
+                        return;
+                    }
+                    if (groupDetailsRouteFrame) {
+                        groupDetailsRouteFrame.remove();
+                        groupDetailsRouteFrame = null;
+                        groupDetailsClosing = false;
+                        const afterClose = groupDetailsAfterClose;
+                        groupDetailsAfterClose = null;
+                        if (afterClose) afterClose();
+                        return;
+                    }
+                    // Entrada huérfana de una visita anterior a los detalles:
+                    // se neutraliza para que "atrás" no vuelva a abrir los
+                    // detalles del último grupo.
+                    try {
+                        const clean = { ...event.state };
+                        delete clean.appRoute;
+                        delete clean.groupId;
+                        delete clean.section;
+                        history.replaceState(clean, '', location.href);
+                    } catch { }
                     return;
                 }
                 if (groupDetailsRouteFrame) {
@@ -15485,12 +16393,30 @@
                 // vistas que necesitan datos (chat, historia) se dejan como
                 // están para no inventar un estado que el historial no guarda.
                 if (destination && !Layer.stack.includes(destination)) {
+                    if (destination === 'chat') {
+                        // Entrada fantasma de un chat que ya no está abierto
+                        // (recarga o descarte de la pestaña): se retira la
+                        // marca para que no consuma un ATRÁS extra.
+                        try {
+                            const clean = { ...event.state };
+                            delete clean.layer;
+                            delete clean.section;
+                            history.replaceState(clean, '', location.href);
+                        } catch { }
+                        return;
+                    }
                     if (destination === 'sheet-settings') {
                         restoreSettings((event.state && event.state.section) || 'hub');
                     } else if (destination === 'sheet-profile'
                         && document.getElementById('settingsSheet').classList.contains('on')
                         && !document.getElementById('profileSheet').classList.contains('on')) {
                         openProfileSheet(true).catch(error => console.error('[historial] No se pudo reabrir el perfil:', error));
+                    } else if (destination === 'sheet-requests'
+                        && !document.getElementById('requestsSheet').classList.contains('on')) {
+                        openContactRequests(true).catch(error => console.error('[historial] No se pudieron reabrir las solicitudes:', error));
+                    } else if (destination === 'sheet-archived'
+                        && !document.getElementById('archivedSheet').classList.contains('on')) {
+                        openArchivedChats(true);
                     }
                     return;
                 }
@@ -15518,38 +16444,26 @@
                 if (layer) { if (fromPop) Layer.stack.push(layer); else Layer.push(layer); }
             }
             function closeSheet(id, fromPop) {
-                if (id === 'settingsSheet') stopMediaTests();
+                if (id === 'settingsSheet') { stopMediaTests(); restoreProfileSheetHome(); }
                 const el = document.getElementById(id);
                 el.classList.remove('on');
                 el.style.zIndex = '';
-                const layer = id === 'profileSheet' ? 'sheet-profile' : id === 'contactSheet' ? 'sheet-contact' : id === 'storiesMgrSheet' ? 'sheet-stories' : 'sheet-settings';
+                const layer = id === 'profileSheet' ? 'sheet-profile' : id === 'contactSheet' ? 'sheet-contact' : id === 'requestsSheet' ? 'sheet-requests' : id === 'archivedSheet' ? 'sheet-archived' : id === 'storiesMgrSheet' ? 'sheet-stories' : 'sheet-settings';
                 if ((id === 'contactSheet' || id === 'profileSheet' || id === 'settingsSheet') && document.getElementById('storyView').style.display === 'flex')
                     resumeStoryInteraction();
                 if (!fromPop) {
-                    if (Layer.stack.includes(layer)) { Layer.skipPop = true; Layer.pop(layer); try { history.back(); } catch { } }
-                    else Layer.pop(layer);
+                    const mark = layerMarkActive(layer);
+                    if (Layer.stack.includes(layer) && mark) { Layer.skipPop = true; Layer.pop(layer); try { history.back(); } catch { } }
+                    else {
+                        if (Layer.stack.includes(layer)) Layer.pop(layer);
+                        if (mark) stripLayerMark();
+                    }
                 }
             }
             let psAvatarData = '', psAvatarRemoved = false;
-            async function openProfileSheet(fromPop = false) {
-                const p = await getProfile(me.username);
-                setAvatar(document.getElementById('psAvatar'), p);
-                document.getElementById('psName').value = p.name || me.username;
-                document.getElementById('psUsername').value = me.username;
-                try {
-                    const full = await fetch('/profile?username=' + encodeURIComponent(me.username) + '&me=' + encodeURIComponent(me.username)).then(r => r.json());
-                    const description = document.getElementById('psDesc');
-                    description.value = full.desc || '';
-                    description.oninput = () => resizeProfileDescription(description);
-                    resizeProfileDescription(description);
-                    if (window.ZlapyAutoGrow) ZlapyAutoGrow.grow(description, { maxHeight: 180 });
-                } catch { }
-                document.getElementById('psNoteFloat').textContent = p.note || '';
-                psAvatarData = '';
-                psAvatarRemoved = false;
-                togglePsAvatarRemove(p.avatar);
-                openSheet('profileSheet', 'sheet-profile', fromPop);
-            }
+            // openProfileSheet vive junto a fillProfileFields (más abajo):
+            // la hoja completa y la versión embebida en Ajustes comparten el
+            // mismo llenado de campos.
             // El icono de la papelera solo aparece si hay foto propia puesta.
             function togglePsAvatarRemove(avatar) {
                 const button = document.getElementById('psAvatarRemoveBtn');
@@ -15685,6 +16599,12 @@
                 if (active && p) showNoteCard(p);
                 dismissLayer('sheet-profile');
                 toast('Perfil guardado');
+                /* El panel del split muestra nombre y avatar: invalida la
+                   copia guardada y repíntalo con los datos nuevos. */
+                const hub = document.getElementById('settingsHub');
+                if (hub) delete hub.dataset.hubUser;
+                if (document.getElementById('settingsSheet').classList.contains('split'))
+                    renderSettingsHub(hub, document.getElementById('settingsMain'));
             }
             let csTarget = null, csBlocked = false;
             async function openContactSheet(username) {
@@ -15775,6 +16695,114 @@
                     renderContacts();
                 };
                 openSheet('contactSheet', 'sheet-contact');
+            }
+            /* Panel lateral de "Información del contacto" (escritorio): columna
+               a la derecha del chat activo, como WhatsApp Desktop. Espejo de
+               openContactSheet con ids cp*. Fuera del contexto de un DM activo
+               (lista de contactos, menciones, historias, hash #/contacto/) se
+               degrada a la hoja completa #contactSheet, que sigue existiendo. */
+            let cpTarget = null;
+            function closeContactPanel() {
+                cpTarget = null;
+                const panel = document.getElementById('contactPanel');
+                panel.classList.remove('on');
+                panel.setAttribute('aria-hidden', 'true');
+            }
+            async function openContactPanel(username) {
+                if (!username || username === me.username || username === '__saved__' || activeKind !== 'dm' || active !== username)
+                    return openContactSheet(username);
+                if (gpTarget !== null) dismissLayer('panel-group'); // solo un panel de información a la vez
+                const panel = document.getElementById('contactPanel');
+                const yaAbierto = panel.classList.contains('on');
+                cpTarget = username;
+                const p = await fetch('/profile?username=' + encodeURIComponent(username) + '&me=' + encodeURIComponent(me.username)).then(r => r.json()).catch(() => ({}));
+                if (cpTarget !== username) return; // se cerró o cambió de destino mientras llegaba la respuesta
+                profilesCache[username] = p;
+                document.getElementById('cpName').textContent = p.name || username;
+                document.getElementById('cpUsername').textContent = '@' + (p.username || username);
+                const presence = document.getElementById('cpPresence');
+                const contactPresence = contacts.find(contact => contact.username === username);
+                presence.textContent = p.online !== undefined
+                    ? presenceText({ online: p.online, lastSeen: p.lastSeen })
+                    : (contactPresence ? presenceText(contactPresence) : 'Presencia no disponible');
+                presence.style.color = p.online ? 'var(--accent)' : '';
+                const av = document.getElementById('cpAvatar');
+                av.style.opacity = 1;
+                av.innerHTML = `<img src="${escapeHtml(p.avatar || avatarUrl(username, p.id))}" alt="">`;
+                const viewAvatar = () => {
+                    const image = av.querySelector('img');
+                    if (image) openImageViewer(image.currentSrc || image.src, p.name || username);
+                };
+                av.onclick = viewAvatar;
+                av.onkeydown = event => {
+                    if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); viewAvatar(); }
+                };
+                const nb = document.getElementById('cpNoteFloat');
+                if (p.note) { nb.textContent = String(p.note).slice(0, 60); nb.style.display = 'block'; }
+                else nb.style.display = 'none';
+                document.getElementById('cpDesc').textContent = p.desc ||
+                    (p.permisos && p.permisos.verDescripcion === false ? 'Descripción privada' : 'Sin descripción');
+                const perms = p.permisos || {};
+                document.getElementById('cpRest').style.display = (perms.escribir === false || perms.llamar === false) ? 'block' : 'none';
+                document.getElementById('cpChat').style.display = perms.escribir === false ? 'none' : 'grid';
+                document.getElementById('cpCall').style.display = perms.llamar === false ? 'none' : 'grid';
+                document.getElementById('cpVideo').style.display = perms.llamar === false ? 'none' : 'grid';
+                let bloqueado = false;
+                try {
+                    const myself = await fetch('/profile?username=' + encodeURIComponent(me.username) + '&me=' + encodeURIComponent(me.username)).then(r => r.json());
+                    bloqueado = (myself.blocked || []).includes(username);
+                } catch { }
+                document.getElementById('cpBlock').textContent = bloqueado ? 'Desbloquear' : 'Bloquear';
+                document.getElementById('cpRemove').style.display = contacts.some(contact => contact.username === username) ? 'block' : 'none';
+                document.getElementById('cpChat').onclick = () => dismissLayer('panel-contact');
+                document.getElementById('cpCall').onclick = () => { dismissLayer('panel-contact'); startCall(false); };
+                document.getElementById('cpVideo').onclick = () => { dismissLayer('panel-contact'); startCall(true); };
+                document.getElementById('cpBlock').onclick = async () => {
+                    const r = await fetch('/block', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: me.username, target: username }) }).then(r => r.json());
+                    document.getElementById('cpBlock').textContent = r.blocked ? 'Desbloquear' : 'Bloquear';
+                    delete profilesCache[me.username]; delete profilesCache[username];
+                    await getProfile(me.username); await getProfile(username);
+                    renderContacts();
+                    if (active === username) applyBlockedUI();
+                };
+                document.getElementById('cpRemove').onclick = async () => {
+                    const ok = await Modal.confirmar({
+                        titulo: 'Eliminar contacto',
+                        texto: 'Se eliminará de tus contactos y de los suyos. El historial del chat no se borrará.',
+                        acciones: [{ txt: 'Cancelar', valor: false }, { txt: 'Eliminar contacto', valor: true, tipo: 'peligro' }]
+                    });
+                    if (!ok) return;
+                    try {
+                        const response = await fetch('/contacts/remove', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ username })
+                        });
+                        const result = await response.json();
+                        if (!response.ok) throw new Error(result.error || 'HTTP ' + response.status);
+                        contacts = contacts.filter(contact => contact.username !== username);
+                        dismissLayer('panel-contact');
+                        renderContacts();
+                        toast('Contacto eliminado');
+                    } catch (error) {
+                        console.error('No se pudo eliminar el contacto:', error);
+                        toast('No se pudo eliminar el contacto');
+                    }
+                };
+                document.getElementById('cpDel').onclick = async () => {
+                    const ok = await Modal.confirmar({ titulo: 'Eliminar chat', texto: 'Se borrará la conversación para los dos.', acciones: [{ txt: 'Cancelar', valor: false }, { txt: 'Eliminar', valor: true, tipo: 'peligro' }] });
+                    if (!ok) return;
+                    await fetch('/chat/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: me.username, to: username }) })
+                        .then(r => { if (!r.ok) toast('No se pudo vaciar el chat.'); })
+                        .catch(() => toast('No se pudo vaciar el chat.'));
+                    delete conv[username];
+                    if (active === username) dismissLayer('chat'); // closeChat cierra también el panel
+                    else dismissLayer('panel-contact');
+                    renderContacts();
+                };
+                panel.classList.add('on');
+                panel.setAttribute('aria-hidden', 'false');
+                if (!yaAbierto) Layer.push('panel-contact');
             }
             async function openStoriesMgrSheet() {
                 openStoriesPage();
@@ -16122,6 +17150,7 @@
                     throw new Error('El servidor devolvió una respuesta no válida al cargar los ajustes.');
                 }
                 if (!response.ok) throw new Error(result.error || 'No se pudieron cargar los ajustes de apariencia.');
+                if (typeof result.keepArchived === 'boolean') keepArchivedChats = result.keepArchived;
                 let legacy = {};
                 try {
                     const legacyKey = legacyChatAppearanceKey();
@@ -16340,36 +17369,138 @@
                 }
                 userCloseLayer('sheet-settings');
             }
+            /* Pinta la lista inicial de Ajustes (cabecera de perfil + filas de
+               secciones) en `el` y vacía `otherEl` para que el id #setAvatar
+               nunca quede duplicado. En el panel lateral (#settingsHub, modo
+               split) se reutiliza lo ya pintado del mismo usuario. */
+            async function renderSettingsHub(el, otherEl) {
+                /* Solo se limpia el hermano si contiene el hub (con #setAvatar):
+                   así no se borra la sección recién pintada ni el perfil
+                   embebido, y el id nunca queda duplicado. */
+                if (otherEl.querySelector('#setAvatar')) otherEl.innerHTML = '';
+                if (el.id === 'settingsHub' && el.dataset.hubUser === me.username && el.querySelector('.setHead')) {
+                    el.querySelectorAll('.setRow[data-s]').forEach(node => node.classList.toggle('active', node.dataset.s === settingsSection));
+                    return;
+                }
+                const p = await getProfile(me.username);
+                /* Si mientras cargaba el perfil se entró a una sección y este
+                   hub iba al main (vista de inicio), ya no toca pintarlo:
+                   paintSettings habría repintado la sección. */
+                if (el.id !== 'settingsHub' && settingsSection !== 'hub') return;
+                const rows = [
+                    ['perfil', 'Perfil', 'Nombre, foto del perfil, nombre de usuario'],
+                    ['cuenta', 'Cuenta', 'Tus cuentas conectadas y seguridad'],
+                    ['priv', 'Privacidad', 'Ajustes de privacidad y contactos bloqueados'],
+                    ['chats', 'Chats', 'Estilo, fondo, ajustes del chat'],
+                    ['media', 'Video y voz', 'Cámara, micrófono y altavoces'],
+                    ['notif', 'Notificaciones', 'Avisos, sonidos y diagnóstico']
+                ];
+                el.innerHTML =
+                    `<div class="setHead" onclick="openSettingsSection('perfil')">
+        <div class="avWrap"><div class="bigAv" id="setAvatar"></div>${p.note ? `<div class="noteFloat">${escapeHtml(String(p.note).slice(0, 40))}</div>` : ''}</div>
+        <b>${escapeHtml(p.name || me.username)}</b><span>@${me.username}</span>
+      </div>` +
+                    rows.map(r => `<div class="setRow" data-s="${r[0]}"><div class="pic">${SET_ICON[r[0]]}</div><div class="meta"><b>${r[1]}</b><span>${r[2]}</span></div><span class="sub">›</span></div>`).join('') +
+                    `<div class="setRow" style="cursor:default;opacity:.82"><div class="pic">${SET_ICON.general || ''}</div><div class="meta"><b>Versión de la app</b><span>zlapy v28 · 16 oct 2026</span></div></div>`;
+                setAvatar(document.getElementById('setAvatar'), p);
+                el.querySelectorAll('.setRow').forEach(node => node.onclick = () => openSettingsSection(node.dataset.s));
+                el.querySelectorAll('.setRow[data-s]').forEach(node => node.classList.toggle('active', node.dataset.s === settingsSection));
+                el.dataset.hubUser = me.username;
+            }
+            /* El editor de perfil (#profileSheet) se puede integrar como
+               columna derecha de Ajustes en escritorio: la hoja se TRASLADA
+               (no se clona) dentro de #settingsMain, conservando listeners e
+               ids, y vuelve a su sitio original al salir de la sección. */
+            let profileSheetHome = null;
+            function embedProfileSheet() {
+                const ps = document.getElementById('profileSheet');
+                if (!ps.classList.contains('embedded')) {
+                    if (!profileSheetHome) profileSheetHome = { parent: ps.parentElement, next: ps.nextSibling };
+                    if (ps.classList.contains('on')) closeSheet('profileSheet', true);
+                    ps.classList.add('embedded');
+                }
+                return ps;
+            }
+            function restoreProfileSheetHome() {
+                const ps = document.getElementById('profileSheet');
+                if (!ps || !ps.classList.contains('embedded')) return;
+                ps.classList.remove('embedded');
+                if (profileSheetHome && profileSheetHome.parent && profileSheetHome.parent.isConnected) {
+                    try { profileSheetHome.parent.insertBefore(ps, profileSheetHome.next); }
+                    catch { profileSheetHome.parent.appendChild(ps); }
+                }
+            }
+            /* Rellena los campos del editor de perfil con los datos actuales;
+               lo usan la hoja completa y la versión embebida en Ajustes. */
+            async function fillProfileFields() {
+                const p = await getProfile(me.username);
+                setAvatar(document.getElementById('psAvatar'), p);
+                document.getElementById('psName').value = p.name || me.username;
+                document.getElementById('psUsername').value = me.username;
+                try {
+                    const full = await fetch('/profile?username=' + encodeURIComponent(me.username) + '&me=' + encodeURIComponent(me.username)).then(r => r.json());
+                    const description = document.getElementById('psDesc');
+                    description.value = full.desc || '';
+                    description.oninput = () => resizeProfileDescription(description);
+                    resizeProfileDescription(description);
+                    if (window.ZlapyAutoGrow) ZlapyAutoGrow.grow(description, { maxHeight: 180 });
+                } catch { }
+                document.getElementById('psNoteFloat').textContent = p.note || '';
+                psAvatarData = '';
+                psAvatarRemoved = false;
+                togglePsAvatarRemove(p.avatar);
+            }
+            async function openProfileSheet(fromPop = false) {
+                await fillProfileFields();
+                openSheet('profileSheet', 'sheet-profile', fromPop);
+            }
             async function paintSettings() {
                 const sh = document.getElementById('settingsSheet');
                 if (!sh || !sh.classList.contains('on')) return;
                 const main = document.getElementById('settingsMain');
+                const hub = document.getElementById('settingsHub');
+                /* 'perfil' solo existe como sección en escritorio: en móvil
+                   la hoja vuelve al inicio (el editor se abre como hoja). */
+                if (settingsSection === 'perfil' && window.innerWidth <= 768) settingsSection = 'hub';
+                /* El perfil embebido vive en la columna derecha: al pintar
+                   cualquier otra sección (o el inicio) vuelve a su sitio. */
+                if (settingsSection !== 'perfil') restoreProfileSheetHome();
+                /* En escritorio, al entrar a una sección, la lista del inicio
+                   queda fija a la izquierda y el contenido se pinta a la
+                   derecha; en móvil y en el inicio se comporta como hoy. */
+                const split = window.innerWidth > 768 && settingsSection !== 'hub';
+                sh.classList.toggle('split', split);
                 document.getElementById('settingsTitle').textContent = settingsSection === 'hub' ? 'Ajustes' :
-                    { cuenta: 'Cuenta', chats: 'Chats', media: 'Video y voz', notif: 'Notificaciones', priv: 'Privacidad' }[settingsSection] || 'Ajustes';
+                    { perfil: 'Perfil', cuenta: 'Cuenta', chats: 'Chats', media: 'Video y voz', notif: 'Notificaciones', priv: 'Privacidad' }[settingsSection] || 'Ajustes';
                 if (settingsSection === 'hub') {
-                    const p = await getProfile(me.username);
-                    const rows = [
-                        ['perfil', 'Perfil', 'Nombre, foto del perfil, nombre de usuario'],
-                        ['cuenta', 'Cuenta', 'Tus cuentas conectadas y seguridad'],
-                        ['priv', 'Privacidad', 'Ajustes de privacidad y contactos bloqueados'],
-                        ['chats', 'Chats', 'Estilo, fondo, ajustes del chat'],
-                        ['media', 'Video y voz', 'Cámara, micrófono y altavoces'],
-                        ['notif', 'Notificaciones', 'Avisos, sonidos y diagnóstico']
-                    ];
-                    main.innerHTML =
-                        `<div class="setHead" onclick="openProfileSheet()">
-        <div class="avWrap"><div class="bigAv" id="setAvatar"></div>${p.note ? `<div class="noteFloat">${escapeHtml(String(p.note).slice(0, 40))}</div>` : ''}</div>
-        <b>${escapeHtml(p.name || me.username)}</b><span>@${me.username}</span>
-      </div>` +
-                        rows.map(r => `<div class="setRow" data-s="${r[0]}"><div class="pic">${SET_ICON[r[0]]}</div><div class="meta"><b>${r[1]}</b><span>${r[2]}</span></div><span class="sub">›</span></div>`).join('') +
-                        `<div class="setRow" style="cursor:default;opacity:.82"><div class="pic">${SET_ICON.general || ''}</div><div class="meta"><b>Versión de la app</b><span>zlapy v28 · 16 oct 2026</span></div></div>`;
-                    setAvatar(document.getElementById('setAvatar'), p);
-                    main.querySelectorAll('.setRow').forEach(el => el.onclick = () => openSettingsSection(el.dataset.s));
+                    await renderSettingsHub(main, hub);
+                    return;
+                }
+                if (split) await renderSettingsHub(hub, main);
+                if (settingsSection === 'perfil') {
+                    const ps = embedProfileSheet();
+                    if (ps.parentElement !== main) {
+                        main.innerHTML = '';
+                        main.appendChild(ps);
+                    }
+                    await fillProfileFields();
                     return;
                 }
                 if (settingsSection === 'cuenta') {
                     const p = await getProfile(me.username);
                     const accounts = linkedAccounts();
+                    /* El nombre visible de cada fila es el display_name del
+                       perfil (con el que la persona se presenta), no el
+                       @usuario: getProfile lo deja en profilesCache y
+                       displayNameOf cae al username si no hay nombre o si el
+                       perfil oculta el nombre. */
+                    const accountProfiles = await Promise.all(accounts.map(async account => {
+                        try { return await getProfile(account.username); }
+                        catch (error) {
+                            console.error(`[account] No se pudo cargar el perfil de @${account.username}:`, error);
+                            return null;
+                        }
+                    }));
                     main.innerHTML =
                         `<div class="setRow"><div class="pic">${SET_ICON.perfil}</div><div class="meta"><b>${escapeHtml(p.name || me.username)}</b><span>@${escapeHtml(me.username)}</span></div></div>
       <div class="sub" style="padding:8px 10px">ID permanente de la cuenta</div>
@@ -16377,7 +17508,7 @@
       <div class="setHead accountSectionHead"><b>Cuentas conectadas</b><span>Cambia de cuenta sin volver a iniciar sesión.</span></div>
       <div class="linkedAccountList">${accounts.map(account =>
                             `<div class="linkedAccountRow"><div class="savedAvatar" data-account-avatar="${account.id}">${account.avatar ? `<img src="${escapeHtml(account.avatar)}" alt="">` : escapeHtml(account.username[0].toUpperCase())}</div>
-          <div class="meta"><b>${escapeHtml(account.username)}${account.id === me.id ? ' · Activa' : ''}</b><span>${escapeHtml(account.id)}</span>${linkedAlive && !linkedAlive.has(account.id) && account.id !== me.id ? '<span class="accountDeadHint">Sesión guardada caducó: hay que volver a conectarla con «Agregar cuenta»</span>' : ''}</div>
+          <div class="meta"><b>${escapeHtml(displayNameOf(account.username))}${account.id === me.id ? ' · Activa' : ''}</b><span>${escapeHtml(account.id)}</span>${linkedAlive && !linkedAlive.has(account.id) && account.id !== me.id ? '<span class="accountDeadHint">Sesión guardada caducó: hay que volver a conectarla con «Agregar cuenta»</span>' : ''}</div>
           ${account.id === me.id ? '' : `<button class="accountIconAction" type="button" data-switch-id="${account.id}" title="Cambiar a @${escapeHtml(account.username)}" aria-label="Cambiar a @${escapeHtml(account.username)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7h-9a4 4 0 0 0-4 4v1"/><path d="m4 9 3 3 3-3M4 17h9a4 4 0 0 0 4-4v-1"/><path d="m20 15-3-3-3 3"/></svg></button><button class="accountIconAction danger" type="button" data-remove-id="${account.id}" title="Quitar cuenta" aria-label="Quitar ${escapeHtml(account.username)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg></button>`}
         </div>`).join('')}
       </div>
@@ -16396,13 +17527,6 @@
                     document.getElementById('regenerateKey').onclick = regenerateAccountKey;
                     document.getElementById('logoutAccount').onclick = logout;
                     document.getElementById('deleteAccountButton').onclick = deleteAccount;
-                    const accountProfiles = await Promise.all(accounts.map(async account => {
-                        try { return await getProfile(account.username); }
-                        catch (error) {
-                            console.error(`[account] No se pudo cargar el avatar de @${account.username}:`, error);
-                            return null;
-                        }
-                    }));
                     const compactAvatars = await Promise.all(accountProfiles.map(async (profile, index) => {
                         const account = accounts[index];
                         if (!profile) return null;
@@ -16468,7 +17592,7 @@
         <div class="chatAppearancePreviewBubble receiver">Así se ve un mensaje recibido</div>
         <div class="chatAppearancePreviewBubble sender">Así se ve tu mensaje</div>
       </div>
-      <div class="chatAppearanceActions"><button class="mBtn chatPrimaryBtn" type="button" id="saveChatMessageColors">Guardar colores</button><button class="mBtn" type="button" id="resetChatMessageColors">Restablecer colores</button></div>
+      <div class="chatAppearanceActions"><button class="mBtn" type="button" id="resetChatMessageColors">Restablecer colores</button></div>
     </div>
     <div class="chatAppearanceGroup">
       <div class="chatAppearanceSectionHead"><span class="chatAppearanceSectionIcon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 19h16M6 16V9m4 7V5m4 11v-4m4 4V7"/></svg></span><div class="chatAppearanceSectionCopy"><div class="chatAppearanceTitle">Tamaño del texto</div><div class="chatAppearanceHint">Haz los mensajes más cómodos de leer en la conversación.</div></div></div>
@@ -16551,16 +17675,6 @@
                         const autoText = !event.target.classList.contains('on');
                         const next = saveChatAppearance(autoText ? { autoText: true } : { autoText: false });
                         if (next) updatePreviews(next);
-                    };
-                    document.getElementById('saveChatMessageColors').onclick = async () => {
-                        clearTimeout(chatAppearanceSaveTimer);
-                        try {
-                            await persistChatAppearanceAccount(accountAppearanceFields(getChatAppearance()));
-                            toast('Colores guardados en tu cuenta.');
-                        } catch (error) {
-                            console.error('[appearance] No se pudieron guardar los colores:', error);
-                            toast(error.message || 'No se pudieron guardar los colores.');
-                        }
                     };
                     document.getElementById('chatSenderTextColor').oninput = event => {
                         const next = saveChatAppearance({ senderText: event.target.value });
@@ -16741,16 +17855,50 @@
                 }).finally(() => clearTimeout(timer));
             }
             function openSettingsSection(s) {
-                if (s === 'perfil') { openProfileSheet(); return; }
+                stopMediaTests();
+                if (s === 'perfil') {
+                    /* Escritorio: Perfil es una sección más del layout
+                       dividido; en móvil sigue abriendo su hoja completa. */
+                    if (window.innerWidth > 768) {
+                        settingsSection = s;
+                        if (!(history.state && history.state.layer === 'sheet-settings' && history.state.section === s)) {
+                            try { history.pushState(nextRouteState({ layer: 'sheet-settings', section: s }), ''); } catch { }
+                        }
+                        paintSettings();
+                        return;
+                    }
+                    openProfileSheet();
+                    return;
+                }
                 settingsSection = s;
                 if (s === 'priv') settingsPrivKey = null;
                 // Cada sección es una entrada de historial: ATRÁS vuelve al
                 // inicio de Ajustes antes de cerrar la hoja.
                 if (!(history.state && history.state.layer === 'sheet-settings' && history.state.section === s)) {
-                    try { history.pushState({ layer: 'sheet-settings', section: s }, ''); } catch { }
+                    try { history.pushState(nextRouteState({ layer: 'sheet-settings', section: s }), ''); } catch { }
                 }
                 paintSettings();
             }
+            /* Al cruzar el umbral escritorio/móvil con la hoja de Ajustes
+               abierta, el layout dividido aparece o desaparece: un único
+               repinto en el momento del cambio, no en cada píxel de resize. */
+            let settingsSplitTimer = 0;
+            window.addEventListener('resize', () => {
+                if (settingsSplitTimer) clearTimeout(settingsSplitTimer);
+                settingsSplitTimer = setTimeout(() => {
+                    settingsSplitTimer = 0;
+                    const sh = document.getElementById('settingsSheet');
+                    if (!sh || !sh.classList.contains('on')) return;
+                    const split = window.innerWidth > 768 && settingsSection !== 'hub';
+                    if (sh.classList.contains('split') !== split) {
+                        /* Si se estaba editando el Perfil embebido y se pasó
+                           a móvil, el editor se reabre como hoja completa. */
+                        const leavingPerfil = !split && settingsSection === 'perfil';
+                        paintSettings();
+                        if (leavingPerfil) openProfileSheet();
+                    }
+                }, 120);
+            });
             const PRIV_ROWS_IN = [
                 { key: 'foto', label: 'Foto de perfil', sub: 'Quién puede ver mi foto' },
                 { key: 'nota', label: 'Mi nota', sub: 'Quién puede ver mi nota (dura 24 h)' },
@@ -17955,9 +19103,32 @@
                     // (BACK) Entrada con recarga fresca tras el botón ATRÁS: se
                     // reconstruye la capa/vista que el historial indica.
                     try {
+                        if (history.state && typeof history.state.__nav === 'number') routeNav = history.state.__nav;
                         if (history.state && history.state.layer === 'sheet-settings')
                             openSettingsSilent(history.state.section || 'hub');
                         else if (history.state && history.state.appRoute === 'stories' && typeof mountStoriesPage === 'function') mountStoriesPage();
+                        else if (history.state && history.state.appRoute === 'group-details') {
+                            // Los detalles son una vista encima del chat: tras una
+                            // recarga no se arrastran. Se limpia la marca para
+                            // que ningún "atrás" posterior abra el grupo anterior.
+                            const clean = { ...history.state };
+                            delete clean.appRoute;
+                            delete clean.groupId;
+                            delete clean.section;
+                            history.replaceState(clean, '', location.href);
+                        }
+                        else if (history.state && (history.state.layer === 'chat' || history.state.layer === 'story' || history.state.layer === 'editor')) {
+                            // Tras una recarga la vista del chat (y la de las
+                            // historias) no se reconstruye: al reabrir la capa la
+                            // app empuja otra entrada nueva. Si la marca sobrevive
+                            // en la entrada actual, el primer ATRÁS cae en esa
+                            // entrada fantasma (no hace nada) y el siguiente
+                            // consumiría la entrada base, saliendo de la app.
+                            const clean = { ...history.state };
+                            delete clean.layer;
+                            delete clean.section;
+                            history.replaceState(clean, '', location.href);
+                        }
                     } catch (error) { console.error('[historial] No se pudo restaurar la vista:', error); }
                     setTimeout(async () => {
                         const storyTs = Number(deep.get('story'));
@@ -18056,6 +19227,64 @@
         </script>
     </div>
 
+    <aside id="contactPanel" aria-hidden="true">
+        <div class="infoResize" role="separator" aria-orientation="vertical" aria-label="Cambiar ancho del panel"
+            aria-valuemin="300" aria-valuemax="640" aria-valuenow="400" tabindex="0"></div>
+        <div class="cpInner">
+            <header><button class="iconBtn" onclick="userCloseLayer('panel-contact')" aria-label="Cerrar información del contacto" title="Cerrar"><svg class="icClose" viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
+                        <path
+                            d="M18.3 5.7L12 12l6.3 6.3-1.4 1.4L10.6 13.4 4.3 19.7 2.9 18.3 9.2 12 2.9 5.7l1.4-1.4L10.6 10.6l6.3-6.3z">
+                        </path>
+                    </svg><svg class="icBack" viewBox="0 0 24 24" width="22" height="22" fill="currentColor" hidden>
+                        <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20z"></path>
+                    </svg></button><b>Información del contacto</b><span style="flex:1"></span></header>
+            <main style="align-items:center;text-align:center">
+                <div class="avWrap">
+                    <div class="bigAv" id="cpAvatar" role="button" tabindex="0" aria-label="Ver foto de perfil"></div>
+                    <div class="noteFloat" id="cpNoteFloat" style="display:none"></div>
+                </div>
+                <b id="cpName" style="font-size:22px"></b>
+                <div class="sub" id="cpUsername"></div>
+                <div class="sub" id="cpPresence"></div>
+                <p id="cpDesc" class="sub"></p>
+                <div class="sub" id="cpRest" style="display:none;color:#53bdeb">Este contacto tiene restricciones de
+                    privacidad activadas</div>
+                <div class="profileActions" aria-label="Acciones del perfil">
+                    <button class="profileAction" id="cpChat" type="button" aria-label="Abrir chat" title="Abrir chat">
+                        <svg viewBox="0 0 24 24">
+                            <path
+                                d="M4 3h16a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-9l-6 4v-4H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zm0 2v11h3v2.26L10.32 16H20V5H4z" />
+                        </svg>
+                    </button>
+                    <button class="profileAction" id="cpCall" type="button" aria-label="Llamar" title="Llamar">
+                        <svg viewBox="0 0 24 24">
+                            <path
+                                d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.02-.24c1.12.37 2.33.57 3.57.57a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1C10.61 21 3 13.39 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.24.2 2.45.57 3.57a1 1 0 0 1-.25 1.02z" />
+                        </svg>
+                    </button>
+                    <button class="profileAction" id="cpVideo" type="button" aria-label="Videollamar"
+                        title="Videollamar">
+                        <svg viewBox="0 0 24 24">
+                            <path
+                                d="M17 10.5V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-3.5l5 5v-13z" />
+                        </svg>
+                    </button>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:10px;width:100%">
+                    <button class="mBtn peligro" id="cpBlock">Bloquear</button>
+                    <button class="mBtn peligro" id="cpRemove">Eliminar contacto</button>
+                    <button class="mBtn peligro" id="cpDel">Eliminar chat</button>
+                </div>
+            </main>
+        </div>
+    </aside>
+
+    <aside id="groupPanel" aria-hidden="true">
+        <div class="infoResize" role="separator" aria-orientation="vertical" aria-label="Cambiar ancho del panel"
+            aria-valuemin="300" aria-valuemax="640" aria-valuenow="400" tabindex="0"></div>
+        <div class="gpInner"></div>
+    </aside>
+
     <div id="proxShade" title="Pantalla oscurecida"></div>
 
     <div id="callBanner" onclick="maximizeCall()">
@@ -18071,7 +19300,7 @@
 
 
     <script src="/js/avatar-editor.js?v=1"></script>
-    <script src="/js/popmenu.js?v=1"></script>
+    <script src="/js/popmenu.js?v=2"></script>
     <script src="/js/autogrow.js?v=1"></script>
 
 </body>

@@ -9,10 +9,35 @@
  */
 'use strict';
 
-const crypto = require('crypto');
 const mtproto = require('./mtproto');
 
 const AUTH_KEY_CACHE_MAX = 500;
+
+/* Error de dominio: la fila de `user_auth_keys` existe pero NO se descifra
+ * con la llave maestra actual. Suele significar dos cosas muy distintas:
+ *
+ *   · la llave maestra del `.env` no es la que cifró esa fila (se giró la
+ *     llave con el servidor vivo: el proceso viejo seguía escribiendo con
+ *     la anterior), o
+ *   · la fila quedó corrupta.
+ *
+ * Antes esto se manifestaba como `UNIQUE constraint failed:
+ * user_auth_keys.user_id`: `ensureAuthKey` no distinguía "no hay fila" de
+ * "hay fila ilegible" y en el segundo caso intentaba un INSERT que
+ * reventaba con un error de SQLite que no explicaba nada. Con este error
+ * el operador sabe exactamente qué pasar (restaurar la llave del respaldo o
+ * resetear la fila de esa cuenta). */
+class AuthKeyUnreadableError extends Error {
+    constructor(userId, cause) {
+        super(`La auth_key del usuario ${userId} existe pero no se descifra con la llave maestra actual. ` +
+            'O la llave del .env no es la que la cifró (se giró con el servidor en marcha) o la fila está corrupta. ' +
+            'Arregla la fila con `npm run repair -- --apply` o restaura la llave maestra del respaldo.');
+        this.name = 'AuthKeyUnreadableError';
+        this.code = 'AUTH_KEY_UNREADABLE';
+        this.userId = userId;
+        if (cause) this.cause = cause;
+    }
+}
 
 function createUserAuthKeys({ db, Stmt, encryptAtRest, decryptAtRest, onAuthKeyCreated }) {
     if (!db || !Stmt) throw new TypeError('createUserAuthKeys necesita db y Stmt.');
@@ -37,10 +62,37 @@ function createUserAuthKeys({ db, Stmt, encryptAtRest, decryptAtRest, onAuthKeyC
         return rec;
     }
 
+    /* Igual que `authKeyRecord`, pero distingue los tres estados:
+     *   'ok'       → la fila existe y se descifra
+     *   'ausente'  → no hay fila: se puede crear sin más
+     *   'ilegible' → hay fila y NO se descifra con la llave actual
+     * Es lo que permite que `ensureAuthKey` no intente un INSERT a ciegas
+     * sobre una fila que ya existe. */
+    function authKeyState(userId) {
+        const cached = authKeyCache.get(userId);
+        if (cached) return { state: 'ok', record: cached };
+        const row = Stmt.getAuthKey.get(userId);
+        if (!row) return { state: 'ausente', record: null };
+        let key = null;
+        try { key = Buffer.from(decryptAtRest(row.auth_key), 'hex'); } catch { }
+        if (!key || key.length !== mtproto.AUTH_KEY_BYTES)
+            return { state: 'ilegible', record: null };
+        const rec = { key, keyId: row.key_id };
+        if (authKeyCache.size >= AUTH_KEY_CACHE_MAX) authKeyCache.delete(authKeyCache.keys().next().value);
+        authKeyCache.set(userId, rec);
+        return { state: 'ok', record: rec };
+    }
+
     /* Devuelve la auth_key del usuario, creandola si todavia no existe. */
     function ensureAuthKey(userId) {
-        const existing = authKeyRecord(userId);
-        if (existing) return existing;
+        const { state, record } = authKeyState(userId);
+        if (state === 'ok') return record;
+        /* Fila presente pero ilegible: NO se inserta nada (sería un
+         * `UNIQUE constraint failed` que oculta la causa real) y NO se
+         * regenera la clave en silencio (dejaría sin descifrar todo el
+         * contenido del usuario). Se lanza un error que sí explica qué
+         * pasa. */
+        if (state === 'ilegible') throw new AuthKeyUnreadableError(userId);
         const key = mtproto.generateAuthKey();
         const keyId = mtproto.authKeyId(key);
         const now = Date.now();
@@ -92,6 +144,7 @@ function createUserAuthKeys({ db, Stmt, encryptAtRest, decryptAtRest, onAuthKeyC
 
     return {
         authKeyRecord,
+        authKeyState,
         ensureAuthKey,
         encryptForUser,
         decryptForUser,
@@ -100,4 +153,4 @@ function createUserAuthKeys({ db, Stmt, encryptAtRest, decryptAtRest, onAuthKeyC
     };
 }
 
-module.exports = { createUserAuthKeys, AUTH_KEY_CACHE_MAX };
+module.exports = { createUserAuthKeys, AuthKeyUnreadableError, AUTH_KEY_CACHE_MAX };

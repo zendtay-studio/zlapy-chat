@@ -72,7 +72,7 @@ test('borrar una cuenta elimina todo en cascada y libera el nombre de usuario', 
     ensureSchema(db);
     const { idA, idB } = seedUsers(db);
 
-    db.prepare("INSERT INTO user_profiles (user_id, display_name, avatar, bio) VALUES (?, 'Ana', '', 'hola')").run(idA);
+    db.prepare("INSERT INTO user_profiles (user_id, display_name, avatar_ref, bio) VALUES (?, 'Ana', '', 'hola')").run(idA);
     db.prepare('INSERT INTO user_privacy (user_id, feature, mode) VALUES (?, ?, ?)').run(idA, 'foto', 'contacts');
     db.prepare('INSERT INTO user_chat_settings (user_id) VALUES (?)').run(idA);
     db.prepare('INSERT INTO user_notes (user_id, data, ts) VALUES (?, ?, 1)').run(idA, '{"text":"x"}');

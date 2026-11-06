@@ -1,9 +1,17 @@
 /**
- * Esquema de la base de datos de Zlapy (v3).
+ * Esquema de la base de datos de Zlapy (v4).
  *
  * Tablas normalizadas con CHECK/UNIQUE y claves ajenas con ON DELETE CASCADE:
  * borrar una fila de `users` arrastra en cascada todo lo suyo, y borrar un
  * grupo lo arrastra con él.
+ *
+ * v4 (credencial derivada + nada en texto plano):
+ *   · `user_profiles.avatar`      → `avatar_ref`  (hash del blob cifrado)
+ *   · `user_chat_settings.wallpaper` → `wallpaper_ref` (hash del blob cifrado)
+ *   · `groups.avatar`             → `avatar_ref`  (hash del blob cifrado)
+ *   La foto de perfil, el fondo del chat y el avatar de grupo ya NO son
+ *   data-URLs guardados en la fila: viven en `blob.db`, cifrados en reposo.
+ *   En la base solo queda su hash, que no revela el contenido.
  *
  * Es la única fuente de verdad del esquema: src/db/database.js lo aplica al
  * arrancar con `ensureSchema` (idempotente) y test/schema.test.js
@@ -12,9 +20,9 @@
  */
 'use strict';
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
-// Esquema v3
+// Esquema v4
 // Orden de creación: primero las tablas padre (users, groups) para que las
 // claves ajenas apunten a tablas que ya existen.
 const SCHEMA_SQL = `
@@ -33,7 +41,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS user_profiles (
     user_id      TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     display_name TEXT NOT NULL DEFAULT '',
-    avatar       TEXT NOT NULL DEFAULT '',
+    avatar_ref   TEXT NOT NULL DEFAULT '',
     bio          TEXT NOT NULL DEFAULT '',
     note         TEXT NOT NULL DEFAULT '',
     note_ts      INTEGER NOT NULL DEFAULT 0,
@@ -80,7 +88,8 @@ CREATE TABLE IF NOT EXISTS user_chat_settings (
     receiver_text TEXT,
     font_size     REAL NOT NULL DEFAULT 15,
     auto_text     INTEGER NOT NULL DEFAULT 1 CHECK (auto_text IN (0,1)),
-    wallpaper     TEXT NOT NULL DEFAULT '',
+    wallpaper_ref TEXT NOT NULL DEFAULT '',
+    keep_archived INTEGER NOT NULL DEFAULT 0 CHECK (keep_archived IN (0,1)),
     updated_at    INTEGER NOT NULL DEFAULT 0
 );
 
@@ -128,7 +137,7 @@ CREATE TABLE IF NOT EXISTS groups (
     crypto_id          TEXT NOT NULL,
     name               TEXT NOT NULL,
     description        TEXT NOT NULL DEFAULT '',
-    avatar             TEXT NOT NULL DEFAULT '',
+    avatar_ref         TEXT NOT NULL DEFAULT '',
     owner_id           TEXT REFERENCES users(id) ON DELETE SET NULL,
     visibility         TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('public','private')),
     join_policy        TEXT NOT NULL DEFAULT 'request' CHECK (join_policy IN ('open','request','closed')),
@@ -384,6 +393,8 @@ function applySchema(db) {
     // migraciones generales, pero esta columna sí se puede añadir después).
     if (!tableColumns(db, 'user_chat_prefs').has('archived'))
         db.exec('ALTER TABLE user_chat_prefs ADD COLUMN archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0,1))');
+    if (!tableColumns(db, 'user_chat_settings').has('keep_archived'))
+        db.exec('ALTER TABLE user_chat_settings ADD COLUMN keep_archived INTEGER NOT NULL DEFAULT 0 CHECK (keep_archived IN (0,1))');
 }
 
 /* Aplica el esquema si falta algo (idempotente) y registra la versión.
@@ -432,8 +443,13 @@ function deleteGroupRows(db, gid) {
 }
 
 /* Borra una cuenta completa. Devuelve { hashes, groupsTouched, groupsRemoved }
-   para que el servidor pueda limpiar los blobs y refrescar la RAM. */
-function deleteAccountRows(db, userId, username) {
+   para que el servidor pueda limpiar los blobs y refrescar la RAM.
+
+   `options.peerMatches` es el comparador del historial de llamadas: el
+   nombre del par va CIFRADO (columna `calls.peer`), así que no se puede
+   borrar con un WHERE sobre el texto. Quien trae la llave (src/db/
+   transactions.js) lo pasa; sin él, se compara el texto en claro (legacy). */
+function deleteAccountRows(db, userId, username, options = {}) {
     const hashes = [];
     const groupsTouched = [];
     const groupsRemoved = [];
@@ -476,7 +492,15 @@ function deleteAccountRows(db, userId, username) {
     // 4) Historias del usuario.
     hashes.push(...db.prepare('SELECT DISTINCT hash FROM blob_access WHERE story_user = ?').pluck().all(userId));
     // 5) Historial de llamadas donde era el otro extremo.
-    db.prepare('DELETE FROM calls WHERE peer = ?').run(username);
+    //    El nombre del par va CIFRADO: el borrado recorre las filas y delega
+    //    la comparación en quien tiene la llave.
+    if (typeof options.peerMatches === 'function') {
+        for (const row of db.prepare('SELECT id, peer FROM calls').all())
+            if (options.peerMatches(row.peer))
+                db.prepare('DELETE FROM calls WHERE id = ?').run(row.id);
+    } else {
+        db.prepare('DELETE FROM calls WHERE peer = ?').run(username);
+    }
     // 6) El borrado de la cuenta: aquí caen TODAS las cascadas del esquema.
     db.prepare('DELETE FROM users WHERE id = ?').run(userId);
 

@@ -9,7 +9,8 @@
 'use strict';
 
 const crypto = require('crypto');
-const { accountCookieName, accountCookies, clearCookie, clearSessionCookie, createLinkedAccountSession, createSession, getSessionFromCache, hashSessionToken, passwordDigest, safeEqualHex, sessionCookie, sessionUser, setAccountSessionCookie } = require('./sessions.js');
+const { accountCookieName, accountCookies, clearCookie, clearSessionCookie, createLinkedAccountSession, createSession, getSessionFromCache, hashSessionToken, sessionCookie, sessionUser, setAccountSessionCookie } = require('./sessions.js');
+const { esHashAntiguo, hashPassword, verifyPassword } = require('./password.js');
 const { Stmt } = require('../db/statements.js');
 const { loginAttempts, registerAttempts } = require('../http/rate-limit.js');
 const { json } = require('../http/responses.js');
@@ -143,8 +144,10 @@ async function postAuthRegister(req, res, url, data, actor) {
         return json(res, 400, { error: 'El nombre admite hasta 64 caracteres.' });
     try {
         const id = crypto.randomUUID();
-        const passwordSalt = crypto.randomBytes(16).toString('hex');
-        const passwordHash = await passwordDigest(data.password, passwordSalt);
+        /* bcrypt lleva la sal dentro del hash: la columna de sal queda vacía.
+           El cálculo va en un worker aparte para no frenar el servidor. */
+        const passwordSalt = '';
+        const passwordHash = await hashPassword(data.password);
         // Segunda comprobación tras el hash, por si dos registros compiten.
         if (accountByName(data.username)) return json(res, 409, { error: 'Username is already taken.' });
         const user = {
@@ -194,8 +197,8 @@ async function postAuthLogin(req, res, url, data, actor) {
     const user = name ? accountByName(name) : null;
     let valid = false;
     if (user && typeof data.password === 'string' && data.password.length <= 128)
-        valid = safeEqualHex(user.passwordHash, await passwordDigest(data.password, user.passwordSalt));
-    else await passwordDigest('invalid-password', '00'.repeat(16));
+        valid = await verifyPassword(data.password, user.passwordHash, user.passwordSalt);
+    else await verifyPassword('invalid-password', '$2b$10$invalidinvalidinvalidinvalidinvalidinvalidinvalidinvalidinv', '');
     if (!valid) {
         // Se registra el fallo y se FRENA el siguiente intento de este cubo.
         const entry = acct && acct.until > now ? acct : { count: 0, until: now + LOGIN_WINDOW_MS };
@@ -211,6 +214,19 @@ async function postAuthLogin(req, res, url, data, actor) {
         loginAttempts.set('brk:' + ip, brk);
         await new Promise(resolve => setTimeout(resolve, loginDelayMs(entry.count)));
         return json(res, 401, { error: 'Invalid username or password.' });
+    }
+    /* Migración perezosa del formato: las cuentas viejas guardan el hash en
+       scrypt; al entrar bien se re-hashean con bcrypt y la columna de sal
+       queda vacía (bcrypt lleva la sal dentro). */
+    if (valid && esHashAntiguo(user.passwordHash)) {
+        try {
+            const nuevoHash = await hashPassword(data.password);
+            user.passwordHash = nuevoHash;
+            user.passwordSalt = '';
+            Stmt.updateUser.run(user.username, nuevoHash, '', user.addPolicy || 'request', user.lastSeen || null, user.id);
+        } catch (error) {
+            console.warn('[auth] no se pudo actualizar el hash de la cuenta:', error.message);
+        }
     }
     // Acierto: el cubo de esa cuenta e IP se limpia, el acceso legítimo vuelve
     // a ser inmediato (también el de la víctima tras los fallos de un atacante).
@@ -236,8 +252,8 @@ async function postAuthAddAccount(req, res, url, data, actor) {
     const user = validUsername(username) ? accountByName(username) : null;
     const password = typeof data.password === 'string' ? data.password : '';
     const valid = user && password.length <= 128
-        ? safeEqualHex(user.passwordHash, await passwordDigest(password, user.passwordSalt))
-        : (await passwordDigest('invalid-password', '00'.repeat(16)), false);
+        ? await verifyPassword(password, user.passwordHash, user.passwordSalt)
+        : (await verifyPassword('invalid-password', '$2b$10$invalidinvalidinvalidinvalidinvalidinvalidinvalidinvalidinv', ''), false);
     if (!valid) {
         const entry = acct && acct.until > now ? acct : { count: 0, until: now + LOGIN_WINDOW_MS };
         entry.count++;

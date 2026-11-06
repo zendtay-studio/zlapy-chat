@@ -22,15 +22,14 @@ const Stmt = {
     touchUser: db.prepare('UPDATE users SET last_seen = ? WHERE id = ?'),
     groupExists: db.prepare('SELECT 1 FROM groups WHERE id = ?'),
     listOwnersByContact: db.prepare('SELECT owner FROM contacts WHERE contact = ?'),
-    renameCallsPeer: db.prepare('UPDATE calls SET peer = ? WHERE peer = ?'),
     listGroupsOfUser: db.prepare('SELECT gid FROM group_members WHERE user_id = ?'),
     listAllUsers: db.prepare('SELECT * FROM users'),
 
     // Perfil público
-    getProfile: db.prepare('SELECT display_name, avatar, bio, note, note_ts FROM user_profiles WHERE user_id = ?'),
-    upsertProfile: db.prepare(`INSERT INTO user_profiles (user_id, display_name, avatar, bio, note, note_ts, updated_at)
+    getProfile: db.prepare('SELECT display_name, avatar_ref, bio, note, note_ts FROM user_profiles WHERE user_id = ?'),
+    upsertProfile: db.prepare(`INSERT INTO user_profiles (user_id, display_name, avatar_ref, bio, note, note_ts, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET
-        display_name = excluded.display_name, avatar = excluded.avatar, bio = excluded.bio,
+        display_name = excluded.display_name, avatar_ref = excluded.avatar_ref, bio = excluded.bio,
         note = excluded.note, note_ts = excluded.note_ts, updated_at = excluded.updated_at`),
 
     // Claves del dispositivo (cifradas en reposo)
@@ -55,14 +54,16 @@ const Stmt = {
     getChatSettings: db.prepare('SELECT * FROM user_chat_settings WHERE user_id = ?'),
     upsertChatSettings: db.prepare(`INSERT OR REPLACE INTO user_chat_settings
         (user_id, wall, opacity, blur, sender, receiver, sender_text, receiver_text,
-         font_size, auto_text, wallpaper, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+         font_size, auto_text, wallpaper_ref, keep_archived, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
 
     // Chats silenciados
-    listMutedPeers: db.prepare('SELECT peer_id, peer_name FROM user_muted_peers WHERE user_id = ?'),
+    listMutedPeers: db.prepare('SELECT rowid, peer_id, peer_name FROM user_muted_peers WHERE user_id = ?'),
     insertMutedPeer: db.prepare('INSERT OR REPLACE INTO user_muted_peers (user_id, peer_id, peer_name) VALUES (?, ?, ?)'),
     deleteMutedPeers: db.prepare('DELETE FROM user_muted_peers WHERE user_id = ?'),
-    deleteMutedPeer: db.prepare('DELETE FROM user_muted_peers WHERE user_id = ? AND peer_name = ?'),
+    /* El nombre del par silenciado va cifrado: no se puede borrar por nombre
+       con un WHERE, así que se borra por rowid tras descifrar y comparar. */
+    deleteMutedPeerByRowid: db.prepare('DELETE FROM user_muted_peers WHERE rowid = ?'),
 
     // Preferencias de la lista de chats (fijado / no leído / archivado)
     listChatPrefs: db.prepare('SELECT peer_key, pinned_at, unread, archived FROM user_chat_prefs WHERE user_id = ?'),
@@ -105,7 +106,6 @@ const Stmt = {
     lastMessages: db.prepare('SELECT * FROM messages WHERE chat = ? ORDER BY ts DESC, id DESC LIMIT ?'),
     // Borrados con alcance por usuario
     insertMessageDeletion: db.prepare('INSERT OR REPLACE INTO message_deletions (message_id, user_id, deleted_at) VALUES (?, ?, ?)'),
-    messageDeletedFor: db.prepare('SELECT 1 FROM message_deletions WHERE message_id = ? AND user_id = ?'),
     // Los borrados por usuario ya no se materializan por perfil (filterForViewer
     // consulta SOLO los ids de la página, en messages.js).
     insertChatDeletion: db.prepare('INSERT OR REPLACE INTO chat_deletions (chat, user_id, deleted_at) VALUES (?, ?, ?)'),
@@ -114,7 +114,6 @@ const Stmt = {
     prevMessages: db.prepare(`SELECT * FROM messages WHERE chat = ? AND (ts < ? OR (ts = ? AND id < ?))
         ORDER BY ts DESC, id DESC LIMIT ?`),
     lastMessage: db.prepare('SELECT * FROM messages WHERE chat = ? ORDER BY ts DESC, id DESC LIMIT 1'),
-    deleteAllByChat: db.prepare('DELETE FROM messages WHERE chat = ?'),
 
     // Blob access
     insertBlobAccessChat: db.prepare('INSERT OR REPLACE INTO blob_access (hash, message_id, kind, chat_a, chat_b) VALUES (?, ?, ?, ?, ?)'),
@@ -134,7 +133,6 @@ const Stmt = {
         JOIN group_members gm ON ba.gid = gm.gid
         WHERE ba.hash = ? AND ba.kind = 'group' AND gm.user_id = ? LIMIT 1`),
     blobAccessMemberCount: db.prepare('SELECT COUNT(*) AS c FROM blob_access_members WHERE hash = ?'),
-    blobAccessMembersByMessage: db.prepare('SELECT hash FROM blob_access_members WHERE message_id = ?'),
     deleteBlobAccessMembersByMessage: db.prepare('DELETE FROM blob_access_members WHERE message_id = ?'),
     /* Purga de filas de acceso cuyo mensaje ya no existe (borrados masivos por
        SQL, como el vaciado de chats o de cuentas, no pueden avisar a ninguna
@@ -156,9 +154,16 @@ const Stmt = {
         SELECT hash FROM blob_access WHERE kind = 'chat' AND (chat_a = ? OR chat_b = ?)
         UNION SELECT ba.hash FROM blob_access ba JOIN group_members gm ON gm.gid = ba.gid
             WHERE ba.kind = 'group' AND gm.user_id = ?
-        UNION SELECT hash FROM blob_access WHERE kind = 'story' AND story_user = ?`),
+        UNION SELECT hash FROM blob_access WHERE kind = 'story' AND story_user = ?
+        UNION SELECT avatar_ref FROM user_profiles WHERE user_id = ? AND avatar_ref <> ''
+        UNION SELECT wallpaper_ref FROM user_chat_settings WHERE user_id = ? AND wallpaper_ref <> ''`),
     allBlobHashes: blobDb.prepare('SELECT hash FROM blobs'),
-    referencedBlobHashes: db.prepare('SELECT DISTINCT hash FROM blob_access'),
+    /* Referencias de TODOS los blobs: los adjuntos y también las imágenes de
+       perfil, fondo y avatar de grupo (que no pasan por blob_access). */
+    referencedBlobHashes: db.prepare(`SELECT DISTINCT hash FROM blob_access
+        UNION SELECT avatar_ref FROM user_profiles WHERE avatar_ref <> ''
+        UNION SELECT wallpaper_ref FROM user_chat_settings WHERE wallpaper_ref <> ''
+        UNION SELECT avatar_ref FROM groups WHERE avatar_ref <> ''`),
     blobSize: blobDb.prepare('SELECT LENGTH(data) AS bytes FROM blobs WHERE hash = ?'),
     blobBytesGlobal: blobDb.prepare('SELECT COALESCE(SUM(LENGTH(data)), 0) AS bytes FROM blobs'),
     deleteBlobByHash: blobDb.prepare('DELETE FROM blobs WHERE hash = ?'),
@@ -174,10 +179,10 @@ const Stmt = {
     // Groups
     getGroup: db.prepare('SELECT * FROM groups WHERE id = ?'),
     insertGroup: db.prepare(`INSERT OR REPLACE INTO groups
-        (id, crypto_id, name, description, avatar, owner_id, visibility, join_policy, write_policy,
+        (id, crypto_id, name, description, avatar_ref, owner_id, visibility, join_policy, write_policy,
          add_policy, edit_policy, mention_all_policy, content_policy, invite_code, keys_cipher, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
-    updateGroup: db.prepare(`UPDATE groups SET crypto_id = ?, name = ?, description = ?, avatar = ?,
+    updateGroup: db.prepare(`UPDATE groups SET crypto_id = ?, name = ?, description = ?, avatar_ref = ?,
         owner_id = ?, visibility = ?, join_policy = ?, write_policy = ?, add_policy = ?, edit_policy = ?,
         mention_all_policy = ?, content_policy = ?, invite_code = ?, keys_cipher = ?, created_at = ? WHERE id = ?`),
     listPublicGroups: db.prepare(`SELECT id FROM groups WHERE visibility = 'public'`),
@@ -230,6 +235,10 @@ const Stmt = {
     // Calls
     insertCall: db.prepare('INSERT OR REPLACE INTO calls (id, owner, peer, ts, data) VALUES (?, ?, ?, ?, ?)'),
     updateCallData: db.prepare('UPDATE calls SET data = ? WHERE id = ? AND owner = ?'),
+    /* El par de una llamada va cifrado: las consultas por nombre de par (borrar
+       la cuenta, renombrar la cuenta) se resuelven descifrando y comparando. */
+    listCallsWithPeer: db.prepare('SELECT id, owner, peer FROM calls WHERE peer IS NOT NULL'),
+    updateCallPeer: db.prepare('UPDATE calls SET peer = ? WHERE id = ?'),
     listCalls: db.prepare('SELECT * FROM calls WHERE owner = ? ORDER BY ts DESC LIMIT ?'),
     trimCalls: db.prepare(`DELETE FROM calls WHERE owner = ? AND id NOT IN (
         SELECT id FROM calls WHERE owner = ? ORDER BY ts DESC LIMIT ?)`),
@@ -249,9 +258,14 @@ const Stmt = {
     // Push
     listPushSubs: db.prepare('SELECT user_id, endpoint, data FROM push_subs'),
     insertPushSub: db.prepare('INSERT OR REPLACE INTO push_subs (user_id, endpoint, data) VALUES (?, ?, ?)'),
-    deletePushSub: db.prepare('DELETE FROM push_subs WHERE user_id = ? AND endpoint = ?'),
-    trimPushSubs: db.prepare(`DELETE FROM push_subs WHERE user_id = ? AND endpoint NOT IN (
-        SELECT endpoint FROM push_subs WHERE user_id = ? ORDER BY rowid DESC LIMIT 5)`),
+    /* El endpoint (URL con el token del push) va cifrado: el borrado se hace
+       por rowid tras descifrar y comparar. */
+    listPushSubsByUser: db.prepare('SELECT rowid, endpoint, data FROM push_subs WHERE user_id = ?'),
+    deletePushSubByRowid: db.prepare('DELETE FROM push_subs WHERE rowid = ?'),
+    /* El recorte conserva las 5 más recientes por rowid: no se puede filtrar
+       por `endpoint` porque el cifrado no es determinista (IV aleatorio). */
+    trimPushSubs: db.prepare(`DELETE FROM push_subs WHERE user_id = ? AND rowid NOT IN (
+        SELECT rowid FROM push_subs WHERE user_id = ? ORDER BY rowid DESC LIMIT 5)`),
 
 
     // Meta

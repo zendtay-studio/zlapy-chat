@@ -68,125 +68,190 @@ Y **tres formatos de sobre** conviven en la base:
 Mapa de ficheros:
 
 ```
-src/crypto/master-key.js     → llave maestra, arranque fail-fast
+src/crypto/kdf.js            → scrypt (@noble/hashes) y bcryptjs: credencial → llave, contraseñas de cuenta
+src/crypto/owner-key.js      → credencial del propietario: sal/keycheck/meta, integridad
+src/crypto/master-key.js     → conexión con el arranque y vigilante del .env
 src/crypto/message-crypto.js → PCE1 / PCE2, firmas Ed25519
 src/crypto/mtproto.js        → PCE3: auth_key, msg_key, aes_key/aes_iv, cabecera, relleno
 src/crypto/user-auth-keys.js → auth_key por usuario, cifrado/descifrado por usuario, sal
+src/crypto/field-crypto.js   → cifrado por columna (AAD field:<tabla>.<columna>) + mapa del dominio de la maestra
 src/crypto/setup.js          → instancia única y re-exportaciones
 ```
 
 ---
 
-## 2. Llave maestra
+## 2. La credencial del propietario y la llave maestra
 
-### 2.1 De dónde sale
+### 2.1 De dónde sale la llave
 
-`src/crypto/master-key.js:19-43` — función `getMasterKeyBytes()`:
+La llave maestra **no se guarda**: se deriva de la credencial del propietario
+(`DB_USER` + `DB_PASSWORD` del `.env`) con scrypt.
 
 ```
-  ┌─ CONFIG.chatMasterKey no vacío?  ── sí ──►  base64 → debe decodificar EXACTAMENTE 32 bytes
-  │                                                     si no → throw
-  ↓ no
-  ├─ ¿la base de datos tiene cuentas?  ── sí ──►  THROW  ← fail-fast
-  │
-  ↓ no (instalación nueva)
-  └─ genera 32 bytes aleatorios (crypto.randomBytes, CSPRNG) y los escribe en
-     el propio `.env` (línea CHAT_MASTER_KEY=) con escritura atómica
-     (temporal 0600 + rename, con verificación post-escritura: si otro
-     arrancador compitió y escribió el suyo antes, se ADOPTA la del ganador).
-     [`src/crypto/master-key.js`, `ops/generate-master-key.js`]
+  ┌─ ¿hay credencial en el .env?  ── no ──►  THROW  (el servidor sale con
+  │                                            código 78: EX_CONFIG)
+  ↓ sí
+  ├─ ¿la base tiene credencial (meta.kdf_salt)?
+  │     ├─ sí ──►  deriva la llave y comprueba el keycheck
+  │     │           ├─ descifra ──►  listo
+  │     │           └─ NO ────────►  THROW (credencial incorrecta)
+  │     └─ no ──►  ¿la base tiene cuentas?
+  │                  ├─ sí ──►  THROW  (no se deriva una llave nueva sobre
+  │                  │              datos: quedarían ilegibles para siempre)
+  │                  └─ no ──►  instalación nueva: genera sal, deriva la llave,
+  │                             escribe meta (sal, parámetros, keycheck, key_id)
+  │                             y sigue
 ```
 
-- **Única ubicación de la llave**: `CHAT_MASTER_KEY` en el `.env` (permisos
-  `600`, escritura atómica). **No hay fichero aparte** (el viejo
-  `.zlapymasterkey` quedó eliminado): un solo lugar del que el respaldo copia la clave.
-- **Formato de la variable de entorno**: `CHAT_MASTER_KEY` es **base64** de
-  32 bytes (`src/config.js`). El parseo directo del `.env` usa `[ \t]*`
-  (nunca `\s*`: en JS ese `\s` cruza saltos de línea).
-- `npm run key` mantiene/reescribe la misma línea con las mismas garantías.
-- **Rotación con datos** (`npm run key -- --force` sobre una base con
-  cuentas): ya no es destructiva. El motor
-  [`ops/reencrypt-master.js`](../ops/reencrypt-master.js) verifica que la
-  llave del `.env` descifra TODOS los sobres dependientes de la maestra
-  (`user_auth_keys.auth_key`, `groups.keys_cipher`, `meta` VAPID y los
-  adjuntos de `blob.db`), guarda una copia del `.env` en
-  `.env.master-bak` [†], entra la llave nueva y re-cifra cada base en una
-  transacción SQLite. Falla el paso cualquiera → reversión compensada con
-  los valores originales, estado intacto. Las claves de usuario y el
-  contenido de los mensajes NO dependen de la maestra: no se re-cifran y no
-  hace falta.
-  [†] ventana residual: un SIGKILL/corte de luz A MITAD de los pocos
-  milisegundos de trabajo deja un estado mixto; la copia `.env.master-bak`
-  permite restaurar el arranque previo (y las bases, del backup).
+- **Derivación**: `scrypt(DB_USER + "\0" + DB_PASSWORD, sal, N=32768, r=8,
+  p=1, dkLen=32)` — [`src/crypto/kdf.js`](../src/crypto/kdf.js) (scrypt de
+  `@noble/hashes`, JS puro: funciona también en Termux sin compilar nada).
+- **Única credencial**: `DB_USER` + `DB_PASSWORD` en el `.env` (permisos `600`,
+  escritura atómica). Como alternativa, `DB_PASSWORD_FILE` apunta a un fichero
+  `0600` con la contraseña (manda sobre `DB_PASSWORD`).
+- **El usuario participa** en la derivación: cambiar el usuario es la misma
+  operación que cambiar la contraseña (migración completa).
+- **La base es la que verifica**: `meta.keycheck` guarda un texto conocido
+  cifrado con la llave. Si no descifra, la credencial no es la de esta base.
+- **La sal vive en la base** (`meta.kdf_salt`, 16 bytes) y los parámetros en
+  `meta.kdf_params`: la derivación es reproducible y auditable.
+- **`meta.key_id`**: huella HMAC de la llave (24 hex). Identifica la
+  instalación sin revelar nada.
+- **`meta.integrity_manifest`**: digest HMAC del material que ata la
+  credencial a esta base (sal, parámetros, keycheck, usuario, key_id).
+  Detecta que alguien reescribiera ese enlace; el material que cambia con el
+  uso (auth_keys, grupos, VAPID) lo comprueba la auditoría en profundidad.
 
-### 2.2 La regla de arranque abortado
+### 2.2 Cambiar la credencial (migración)
 
-`src/crypto/master-key.js`:
+`npm run owner -- credential --user USUARIO --password NUEVA` — la operación
+que antes era "girar la llave", con una diferencia importante: **la credencial
+es lo único que hay que guardar**.
 
-```js
-if (baseDeDatosConDatos())
-    throw new Error(`No hay CHAT_MASTER_KEY en el .env y la base de datos ya contiene datos. ` +
-        'Restaura la llave maestra desde tu respaldo antes de arrancar: una llave nueva haría ' +
-        'ilegibles todos los mensajes, historias y adjuntos cifrados con la anterior.');
+```
+  1. Verificación (sólo lectura): la credencial vigente deriva una llave que
+     debe descifrar TODOS los sobres dependientes. Si algo no descifra, se
+     ABORTA sin escribir nada.
+  2. Se deriva la llave nueva (sal nueva) de la credencial nueva.
+  3. Re-cifrado transaccional de zlapy.db: user_auth_keys.auth_key,
+     groups.keys_cipher, meta (VAPID) y los campos sueltos por columna.
+  4. Re-cifrado transaccional de blob.db: el contenido de los adjuntos.
+  5. Se escriben los metadatos nuevos (sal, parámetros, keycheck, key_id,
+     manifiesto).
+  6. Se escribe el .env con la credencial nueva — AL FINAL.
+  7. Verificación con la llave nueva (keycheck + manifiesto + auditoría).
 ```
 
-**Por qué**: regenerar la llave en silencio haría **irreversibles** todos los
-mensajes, historias y adjuntos cifrados con la llave anterior. Es una decisión
-de "fail loud": el operador tiene que restaurar la llave desde `backups/`, no
-inventarse una nueva.
+- **El servidor tiene que estar parado**: un proceso vivo seguiría cifrando
+  con la llave anterior y dejaría filas que la nueva no descifra (la
+  desincronización que costó una cuenta en esta instalación).
+- **El `.env` se escribe al final**: si el proceso muere a mitad, el `.env`
+  conserva la credencial anterior y el arranque falla de forma explícita
+  (keycheck inválido) en vez de dejar datos a medias.
+- **Reversión compensada**: si `blob.db` falla después de haber confirmado
+  `zlapy.db`, se reescriben los valores originales en transacciones
+  compensadoras y el estado queda exactamente como estaba.
+- **Lo que NO se re-cifra**: los mensajes, notas, historias y resúmenes van con
+  la `auth_key` de su usuario (PCE3, extremo a extremo) y no dependen de la
+  maestra. La VAPID **sí** se re-cifra, pero conserva su par de claves: las
+  suscripciones push siguen siendo válidas.
+- **Subida de seguridad**: los valores que estuvieran en claro (legacy) se
+  cifran durante la migración.
 
-Nota: esta comprobación mira `DB_PATH` y `BLOB_DB_PATH` (`src/config.js:88`
-para `BLOB_DB_PATH`), es decir, la **existencia de los ficheros**, no si
-contienen filas.
+### 2.3 Dominio de la llave maestra
 
-Hay un segundo control de arranque, independiente del anterior, en
-`server.js:39-46` y `src/db/database.js:51-59`: la base declara en la tabla
-`meta` la clave `crypto_version`; si no es `'2'` y hay mensajes o el valor
-existe, el proceso aborta con *"Database crypto version is incompatible"*.
+| Dónde | Qué |
+| --- | --- |
+| `user_auth_keys.auth_key` | la `auth_key` de cada usuario (envuelta) |
+| `groups.keys_cipher` | material E2E del grupo |
+| `meta.value` | VAPID, keycheck, manifiesto (los que van cifrados) |
+| `user_chat_settings.wall/sender/receiver/sender_text/receiver_text` | colores de la apariencia |
+| `user_stickers.sticker` | stickers de la cuenta |
+| `user_privacy_users.target_name` | nombres de las listas de privacidad |
+| `user_muted_peers.peer_name` | nombres de los pares silenciados |
+| `group_join_requests.username` | nombres de las solicitudes de entrada |
+| `groups.name/description/content_policy/invite_code` | datos del grupo |
+| `calls.peer` | nombre del par en el historial de llamadas |
+| `push_subs.endpoint` | URL del push (lleva un token dentro) |
+| `blob.db → blobs.data` | contenido de los adjuntos |
 
-### 2.3 Qué cifra y qué no
+Los campos sueltos van cifrados con **AAD propio de la columna**
+(`field:<tabla>.<columna>`, [`src/crypto/field-crypto.js`](../src/crypto/field-crypto.js)):
+un texto cifrado de `groups.name` no descifra como `groups.description`.
 
-| Dato | Cifrado con | Dónde |
+La foto de perfil, el fondo del chat y el avatar de grupo **no están aquí**:
+viven en el almacén de blobs (cifrados en reposo) y las filas guardan solo su
+hash (`avatar_ref`, `wallpaper_ref`).
+
+### 2.4 Desincronización de llaves: las cinco guardas
+
+La jerarquía (contenido → `auth_key` → maestra) es correcta **siempre que
+las dos capas giren a la vez**. El modo de fallo real no es criptográfico:
+es que la llave de la capa 1 se cambia mientras un proceso con la llave
+VIEJA sigue vivo y escribiendo. Ese proceso envuelve filas nuevas con la
+llave anterior, y la base acaba con material de dos llaves mezcladas: las
+filas viejas no las descifra la llave nueva, y las nuevas no las descifra
+ninguna (la anterior ya no está en el `.env`).
+
+Caso real de esta instalación (2026-10-25): la maestra se giró a las
+02:48 con el servidor en marcha; a las 03:25 una cuenta nueva registró su
+`auth_key` con el proceso viejo (llave anterior) y quedó ilegible para
+siempre. La fila existe, pero no la descifra la credencial vigente.
+
+Cinco guardas evitan que esto vuelva a pasar:
+
+| Guarda | Dónde | Qué hace |
 | --- | --- | --- |
-| Adjuntos / medios (`blob.db`) | llave maestra (`PCE1`) | `src/chat/media.js:28` (escribe), `:35` (lee) |
-| Material E2E de grupos (`cryptoId` + keyboxes) | llave maestra (`PCE1`) | `src/groups/store.js:112` |
-| Clave privada VAPID (push) | llave maestra (`PCE1`) | `src/push/vapid.js:31,34` |
-| La propia `auth_key` de cada usuario (en hex) | llave maestra (`PCE1`) | `src/crypto/user-auth-keys.js:54`, `src/users/store.js:206` |
-| **Mensajes** | `auth_key` del autor (`PCE3`) | `src/chat/messages.js:52-56` |
-| **Resúmenes de chat** | `auth_key` del dueño (`PCE3`) | `src/chat/summaries.js:48` |
-| **Notas, perfil (nombre/bio/nota)** | `auth_key` del dueño (`PCE3`) | `src/users/store.js:397-405,445` |
-| **Registro de llamadas** | `auth_key` del dueño (`PCE3`) | `src/calls/store.js:28,41` |
-| **Suscripciones push** | `auth_key` del usuario (`PCE3`) | `src/push/routes.js:27` |
-| **Historias** | `auth_key` del autor (`PCE3`) | `src/stories/routes.js:61,106,121,139` |
-| Contraseñas de cuenta | no: hash **scrypt** + salt (N=16384, r=8, p=1) | `src/auth/sessions.js:119-123` (hash), `src/users/store.js:305-307` (columnas) |
-| Claves privadas de los grupos (keyboxes) | no: las gestiona el cliente; solo el sobre va cifrado en reposo | `src/groups/store.js:100-116` |
+| **El servidor vigila el `.env`** | `src/crypto/master-key.js` → `watchCredentialFile()`, llamado desde `server.js` | Cada 15 s relee SOLO la credencial (usuario + contraseña) del `.env` y compara su huella. Si cambia con el proceso vivo, avisa y sale con código **75** (`EX_TEMPFAIL`): el supervisor lo reinicia ya con la credencial nueva. Editar cualquier otra variable del `.env` no dispara nada. |
+| **Auditoría al arrancar** | `src/crypto/setup.js` → `auditAuthKeys()`, llamado desde `server.js` | Comprueba, con la llave del proceso, si cada `auth_key` se descifra. Si **ninguna** se descifra, la credencial no es la de estos datos: el servidor **no arranca** (escribir con ella dejaría material que no descifra nadie). Si **alguna** falla, arranca pero avisa por el nombre de las cuentas afectadas y dice qué reparar. |
+| **La migración exige el servidor parado** | `ops/reencrypt-master.js` → `serverIsRunning()` | Antes de re-cifrar, comprueba el fichero de PID **de esa instalación** (`SUPERVISOR_PID_FILE`, por defecto `.zlapy.pid` junto al `.env`). Si el proceso sigue vivo, aborta: *"Hay un servidor de Zlapy en marcha… Deténlo antes de migrar la credencial"*. |
+| **La fila ilegible se distingue de la ausente** | `src/crypto/user-auth-keys.js` → `authKeyState()` | `ensureAuthKey()` ya no intenta un `INSERT` a ciegas sobre una fila que existe: lanza `AuthKeyUnreadableError` (`AUTH_KEY_UNREADABLE`), que explica la causa. El router lo traduce a **503** con un texto legible, no a un 500 genérico. |
+| **Auditoría de solo lectura** | `npm run owner -- check` (`ops/reencrypt-master.js` → `auditMasterKey()`) | Enumera TODO el material que no descifra con la credencial actual (auth_keys, material de grupos, meta, campos, adjuntos) y el contenido que depende de cada auth_key rota (mensajes, campos de perfil, notas). No escribe nada; sale con código 1 si hay material ilegible. |
 
-### 2.4 La llave maestra ya no es la clave de firma por defecto
+Reparación de una fila rota: `npm run repair` (simulación) y
+`npm run repair -- --apply` (`ops/repair-unreadable-auth-keys.js`). El
+script hace una copia de `data/zlapy.db`, borra la fila de `user_auth_keys`
+ilegible y limpia los campos de perfil cifrados con esa clave (nombre, bio,
+nota). El contenido cifrado con la clave perdida (mensajes, notas, el
+nombre anterior) **no se puede recuperar** con la credencial actual: haría
+falta la anterior del respaldo.
 
-Antiguamente la firma Ed25519 de cada mensaje se derivaba de la llave maestra
-(hallazgo `zlapy.masterkey.global-derivation`, ya corregido). Ahora la semilla
-**por defecto** es la `auth_key` del propio usuario:
+### 2.5 La regla de arranque abortado
 
-`src/crypto/setup.js:18-27`:
+`src/crypto/owner-key.js` → `ensureOwnerCredential()` y `server.js`:
 
 ```js
-const messageCrypto = createMessageCrypto(masterKey.export(), {
-    signingKeyFor: userId => {
-        const rec = authKeyRecord(userId);
-        return rec ? rec.key : masterKey.export();
-    }
-});
+try {
+    ({ masterKey, auditAuthKeys, ownerCredential } = require('./src/crypto/setup.js'));
+} catch (error) {
+    console.error('[crypto] No se pudo desbloquear la base con la credencial del propietario:', ...);
+    process.exit(78);   // EX_CONFIG: no es un fallo transitorio
+}
 ```
 
-La llave maestra se conserva como **segunda** semilla candidata, para que los
-mensajes firmados antes del cambio sigan siendo verificables
-(`src/crypto/message-crypto.js:122-138`).
+**Por qué**: derivar una llave nueva sobre datos existentes haría
+**irreversibles** todos los mensajes, historias y adjuntos cifrados con la
+llave anterior. Es una decisión de "fail loud": el operador tiene que
+restaurar la credencial del kit de recuperación, no inventarse una nueva.
 
-**Consecuencia**: la llave maestra, por sí sola, **no descifra** el contenido de
-los mensajes de nadie. Haría falta además la base de datos con las
-`auth_key`. Está verificado en `test/mtproto-server.test.js:36-54`.
+El supervisor trata el 78 aparte: **no reintenta** (sería el mismo error) y
+para con un mensaje que dice qué hacer.
 
----
+### 2.6 Qué queda en claro (y por qué)
+
+| Dato | Por qué |
+| --- | --- |
+| `users.username` | es el identificador de acceso (login) |
+| identificadores y claves ajenas | hacen falta para el grafo social y las consultas |
+| `messages.chat`, `kind`, `ts`, `flags` | estructura, no contenido |
+| `hash`, `signature`, `signing_public_key` | el hash es el SHA-256 del adjunto; la firma es pública |
+| `sessions.token_hash` | ya es un SHA-256 del token |
+
+Todo lo demás (nombres visibles, biografías, notas, mensajes, fotos, fondos,
+nombres de grupos, códigos de invitación, listas de privacidad, silenciados,
+stickers, apariencia, historiales de llamada, endpoints de push) está cifrado
+en reposo. Lo comprueba `test/plaintext.test.js`, que lee los bytes crudos de
+las dos bases y falla si aparece cualquiera de esos textos.
 
 ## 3. Cifrado en reposo: los tres formatos PCE
 
@@ -1145,7 +1210,8 @@ Dado el proceso del servidor, un atacante con:
 
 - la `auth_key` en memoria o en la base (esta última, cifrada con la llave
   maestra) **y**
-- la llave maestra (`CHAT_MASTER_KEY` del `.env`)
+- la llave maestra (derivada de la credencial del propietario: `DB_USER` +
+  `DB_PASSWORD` del `.env`)
 
 …descifra **todos** los mensajes, resúmenes, notas, perfiles, llamadas,
 historias y suscripciones push. Y con la llave maestra sola también puede
@@ -1195,8 +1261,9 @@ Script: `ops/migrate-to-mtproto.js`.
        · chmod 0600 de los ficheros copiados
 
   2. Cargar la llave maestra (misma lógica que el servidor)  [:47-58]
-       · CHAT_MASTER_KEY (base64) del .env
-       · si falta → throw: "sin la llave maestra no se puede leer el contenido antiguo"
+       · la credencial del propietario (DB_USER + DB_PASSWORD del .env), de la
+         que se deriva la llave maestra (sal de meta.kdf_salt)
+       · si falta → throw: "sin la credencial no se puede leer el contenido antiguo"
 
   3. Crear messageCrypto y userAuthKeys con la MISMA implementación
      que el servidor                                        [:85-103]
@@ -1314,13 +1381,15 @@ Motivos operativos de que sea manual:
 | **Firma Ed25519 sobre contenido + contexto** | Alteración del texto plano en la base; mensaje movido de chat | `src/crypto/message-crypto.js:166-197`, `src/chat/messages.js:120-128` |
 | **Derivación de la firma desde la `auth_key` del usuario** | Que la llave maestra permita suplantar a cualquier usuario | `src/crypto/setup.js:18-27` |
 | **PCE1 (AES-256-GCM) para adjuntos, grupos y VAPID** | Lectura del contenido sensible por quien tenga sólo la base | `src/chat/media.js:28`, `src/groups/store.js:112`, `src/push/vapid.js:31` |
-| **Fail-fast de la llave maestra** | Arrancar con una llave nueva que dejaría ilegible todo el histórico | `src/crypto/master-key.js:29-32` |
-| **`.env` con la llave en modo 0600** | Lectura de la llave por otros usuarios del sistema | `ops/generate-master-key.js` (escritura atómica + chmod) |
+| **Cifrado por columna con AAD propio** | Pegar un texto cifrado de una columna en otra | `src/crypto/field-crypto.js` |
+| **Fail-fast de la credencial (exit 78)** | Arrancar con una llave nueva que dejaría ilegible todo el histórico | `src/crypto/owner-key.js` → `ensureOwnerCredential()`, `server.js` |
+| **`.env` con la credencial en modo 0600** | Lectura de la credencial por otros usuarios del sistema | `ops/env-writer.js` (escritura atómica + chmod) |
 | **Compatibilidad de lectura (`decryptAtRest` devuelve el texto tal cual)** | Perder contenido legacy al migrar | `src/crypto/message-crypto.js:35` |
 | **Regeneración de clave con re-cifrado** | Perder el historial al rotar la clave del usuario | `src/users/store.js:194-297` |
 | **Verificación de ida y vuelta en la migración** | Escribir un mensaje que luego no se puede releer | `ops/migrate-to-mtproto.js:134-136` |
 | **Respaldo previo a la migración** | Migración fallida irreversible | `ops/migrate-to-mtproto.js:60-77` |
-| **Contraseñas con hash scrypt + salt** | Recuperación de la contraseña a partir de la base | `src/auth/sessions.js:119-123` |
+| **Contraseñas de cuenta con bcrypt (coste 10, pre-hash SHA-256)** | Recuperación de la contraseña a partir de la base; truncado a 72 bytes | `src/crypto/kdf.js` → `hashPassword`/`bcryptInput`, `src/auth/password-core.js` |
+| **bcrypt en un worker aparte** | Que un login bloquee el servidor entero ~100 ms | `src/auth/password.js` + `src/auth/password-worker.js` |
 
 ### 9.2 Qué NO protege
 
@@ -1756,7 +1825,13 @@ Otras notas:
 | `src/users/store.js:194` | `regenerateAuthKey()` | Regenera y re-cifra |
 | `src/profile/routes.js:187` | `postAccountRegenerateKey()` | Ruta `POST /account/regenerate-key` |
 | `ops/migrate-to-mtproto.js` | (script) | Migración manual PCE2 → PCE3 |
-| `ops/generate-master-key.js:32` | `generateMasterKey()` | Genera/vacía `CHAT_MASTER_KEY` en `.env` |
+| `ops/owner-credentials.js` | (CLI `npm run owner`) | Credencial del propietario: `init`, `credential`, `rotate`, `check`, `show`, `unlock-check`, `export-kit`, `reset` |
+| `src/crypto/master-key.js` → `watchCredentialFile()` | (vigilante) | Si la credencial del `.env` cambia con el servidor vivo, sale con código 75 para reiniciar |
+| `src/crypto/user-auth-keys.js` → `authKeyState()` | (estado) | Distingue `ok` / `ausente` / `ilegible`; `ensureAuthKey()` lanza `AuthKeyUnreadableError` |
+| `src/crypto/setup.js` → `auditAuthKeys()` | (auditoría de arranque) | Si ninguna auth_key descifra, el servidor no arranca; si falla alguna, avisa por nombre |
+| `ops/reencrypt-master.js` → `serverIsRunning()` | (guarda) | La rotación aborta si hay un servidor vivo de esta instalación |
+| `ops/reencrypt-master.js` → `auditMasterKey()` | (auditoría) | Enumera el material ilegible con la llave actual (solo lectura) |
+| `ops/repair-unreadable-auth-keys.js` | (script) | `npm run repair [-- --apply]`: repara las auth_keys ilegibles |
 
 Tests relacionados:
 
@@ -1766,4 +1841,11 @@ Tests relacionados:
 | `test/mtproto-server.test.js` | Clave por usuario, la maestra no descifra sola, `encryptionKeyId`, regeneración sin perder historial, `key_id` del autor en cada sobre |
 | `test/message-crypto.test.js` | `PCE2` con contexto ligado, firma válida/inválida, lectura de `PCE1` legacy |
 | `test/migrate-to-mtproto.test.js` | Simulación, migración real, conservación del contenido, script eliminable |
-| `test/generate-master-key.test.js` | Generación de la llave maestra en `.env` |
+| `test/owner-credential.test.js` | CLI de la credencial: init, credential, rotate, check, unlock-check, export-kit, reset |
+| `test/first-install.test.js` | Instalación nueva: el .env se crea, la credencial inicializa la base vacía, la base con datos NO se inicializa |
+| `test/kdf.test.js` | Derivación determinista, sal y usuario cambian la llave, pre-hash de bcrypt, detección de contraseñas débiles |
+| `test/field-crypto.test.js` | Cifrado por columna con AAD propio, valores vacíos, texto legacy |
+| `test/plaintext.test.js` | Los BYTES CRUDOS de las bases no contienen nada de lo sensible en claro |
+| `test/password.test.js` | bcrypt en worker, verificación del formato antiguo (scrypt), basura no revienta |
+| `test/master-rotation.test.js` | Migración con re-cifrado (auth_keys, grupos, meta, campos, adjuntos), reversión compensada, valores heredados en claro |
+| `test/master-key-guards.test.js` | Guardas de desincronización: fila ilegible ≠ ausente, auditoría, rotación con servidor vivo, vigilante del `.env`, script de reparación |

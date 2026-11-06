@@ -50,8 +50,10 @@
 
     body {
       margin: 0;
-      background: #111b21;
-      color: #e9edef;
+      background-color: var(--page);
+      background-image: radial-gradient(circle at 1px 1px, #ffffff08 1px, transparent 1px);
+      background-size: 26px 26px;
+      color: var(--text);
       font-family: 'Segoe UI', Helvetica, Arial, sans-serif;
       min-height: 100vh
     }
@@ -68,10 +70,9 @@
     }
 
     .page {
-      width: min(760px, 100%);
+      width: 100%;
       min-height: 100vh;
-      margin: auto;
-      background: #111b21
+      background: transparent
     }
 
     header {
@@ -83,7 +84,8 @@
       align-items: center;
       gap: 14px;
       padding: 0 20px;
-      background: #202c33
+      background: var(--surface);
+      border-bottom: 1px solid var(--line)
     }
 
     header .back {
@@ -109,15 +111,17 @@
     }
 
     main {
+      width: min(100%, 860px);
+      margin-inline: auto;
       padding: 18px;
       display: grid;
       gap: 16px
     }
 
     .manager {
-      border: 1px solid #ffffff12;
+      border: 1px solid var(--line);
       border-radius: 16px;
-      background: #202c33
+      background: var(--surface)
     }
 
     .primary,
@@ -1213,10 +1217,9 @@
     }
 
     body.page-stories .page {
-      width: min(720px, 100%);
+      width: 100%;
       min-height: 100vh;
       min-height: 100dvh;
-      border-inline: 1px solid var(--line);
       background: transparent
     }
 
@@ -2385,7 +2388,7 @@
     async function editTextStory(ts) { try { const { stories = [] } = await requestJson('/stories', { cache: 'no-store' }), story = stories.find(item => item.from === me.username && item.ts === ts); if (!story) throw new Error('La historia ya no está disponible.'); const text = prompt('Editar el texto de la historia:', story.text || ''); if (text === null) return; if (Array.from(text).length > storyTextMaxCharacters) throw new Error(`Las historias admiten hasta ${storyTextMaxCharacters} caracteres.`); const bg = story.bg || randomBackgroundColor(); await requestJson('/story/edit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ts, text, bg }) }); await loadStories(); } catch (error) { console.error('[stories] No se pudo editar la historia:', error); notify(error.message); } }
     initialize();
   </script>
-  <script src="/js/popmenu.js?v=1"></script>
+  <script src="/js/popmenu.js?v=2"></script>
   <script src="/js/appearance.js" defer></script>
 </body>
 

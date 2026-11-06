@@ -8,7 +8,8 @@
 'use strict';
 
 const crypto = require('crypto');
-const { accountCookieName, clearCookie, clearSessionCookie, createSession, passwordDigest, safeEqualHex } = require('../auth/sessions.js');
+const { accountCookieName, clearCookie, clearSessionCookie, createSession } = require('../auth/sessions.js');
+const { hashPassword, verifyPassword } = require('../auth/password.js');
 const { propagateUsernameChange } = require('../chat/mentions.js');
 const { decryptForUser, messageCrypto } = require('../crypto/setup.js');
 const { Stmt } = require('../db/statements.js');
@@ -27,7 +28,10 @@ const { accountsBlocked, isBlockedBy, isContact, normPriv, permite, permiteDescr
 const { accountByName, purgeUserFromMemory, regenerateAuthKey, saveChatSettings, saveUserToDb } = require('../users/store.js');
 
 function getAccountChatSettings(req, res, url, data, actor) {
-    return json(res, 200, { settings: profiles[req.authUser.username]?.chatAppearance || null });
+    return json(res, 200, {
+        settings: profiles[req.authUser.username]?.chatAppearance || null,
+        keepArchived: profiles[req.authUser.username]?.keepArchived === true
+    });
 }
 
 function getProfile(req, res, url, data, actor) {
@@ -97,25 +101,25 @@ function getNotes(req, res, url, data, actor) {
 }
 
 async function postAccountProfile(req, res, url, data, actor) {
-    // Cada intento ejecuta un scrypt completo (~64 ms de CPU): sin cota, una
-    // sesión válida martilleando el endpoint era un DoS de proceso barato.
+    // Cada intento ejecuta un hash de contraseña (bcrypt, ~100 ms de CPU, en
+    // un worker aparte): sin cota, una sesión válida martilleando el
+    // endpoint era un DoS de proceso barato.
     // La contraseña actual se exige SIEMPRE para cambiar identidad o
     // contraseña: una sesión viva —dispositivo prestado o pestaña abierta—
     // no basta para renombrar la cuenta.
     if (rejectRateLimited(res, passwordCheckLimiter, req.authUser.id, 5, 'verificaciones de contraseña por minuto')) return;
     if (typeof data.currentPassword !== 'string' || data.currentPassword.length > 128)
         return json(res, 400, { error: 'Contraseña actual requerida.' });
-    if (!safeEqualHex(req.authUser.passwordHash, await passwordDigest(data.currentPassword, req.authUser.passwordSalt)))
+    if (!await verifyPassword(data.currentPassword, req.authUser.passwordHash, req.authUser.passwordSalt))
         return json(res, 403, { error: 'Contraseña incorrecta.' });
     if (typeof data.username === 'string' && data.username !== actor && !validUsername(data.username))
         return json(res, 400, { error: 'Usuario inválido.' });
     if (typeof data.password === 'string' && (data.password.length < 8 || data.password.length > 128))
         return json(res, 400, { error: 'Contraseña 8-128.' });
+    /* bcrypt lleva la sal dentro del hash: la columna de sal queda vacía. */
     let nextPasswordSalt = '', nextPasswordHash = '';
-    if (typeof data.password === 'string') {
-        nextPasswordSalt = crypto.randomBytes(16).toString('hex');
-        nextPasswordHash = await passwordDigest(data.password, nextPasswordSalt);
-    }
+    if (typeof data.password === 'string')
+        nextPasswordHash = await hashPassword(data.password);
     if (typeof data.username === 'string' && data.username !== actor) {
         const existing = byName(data.username);
         if ((existing && existing.id !== req.authUser.id) || usernameTakenInDb(data.username, req.authUser.id))
@@ -180,9 +184,17 @@ function postAccountChatSettings(req, res, url, data, actor) {
     /* Defensiva (BUG-011): si el perfil no está en RAM (purga o desincronía),
        profiles[actor].chatAppearance estallaba con TypeError → 500. */
     const profile = profiles[actor] || (profiles[actor] = { username: actor });
-    const appearance = normalizeChatAppearanceSettings(data.settings, profile.chatAppearance || {});
-    if (!appearance) return json(res, 400, { error: 'Ajustes inválidos o foto de fondo no válida.' });
-    profile.chatAppearance = appearance;
+    const hasAppearance = Object.prototype.hasOwnProperty.call(data, 'settings');
+    const hasKeepArchived = Object.prototype.hasOwnProperty.call(data, 'keepArchived');
+    if (!hasAppearance && !hasKeepArchived) return json(res, 400, { error: 'Ajustes inválidos.' });
+    if (hasKeepArchived && typeof data.keepArchived !== 'boolean')
+        return json(res, 400, { error: 'Ajuste inválido.' });
+    if (hasAppearance) {
+        const appearance = normalizeChatAppearanceSettings(data.settings, profile.chatAppearance || {});
+        if (!appearance) return json(res, 400, { error: 'Ajustes inválidos o foto de fondo no válida.' });
+        profile.chatAppearance = appearance;
+    }
+    if (hasKeepArchived) profile.keepArchived = data.keepArchived;
     try {
         saveChatSettings(req.authUser);
     } catch (error) {
@@ -206,7 +218,7 @@ async function postAccountRegenerateKey(req, res, url, data, actor) {
     if (typeof data.password !== 'string' || !data.password || data.password.length > 128)
         return json(res, 400, { error: 'Confirma tu contraseña para regenerar la clave.' });
     const account = accountByName(req.authUser.username);
-    if (!account || !safeEqualHex(account.passwordHash, await passwordDigest(data.password, account.passwordSalt)))
+    if (!account || !await verifyPassword(data.password, account.passwordHash, account.passwordSalt))
         return json(res, 401, { error: 'Contraseña incorrecta.' });
     let result;
     try {
@@ -222,7 +234,7 @@ async function postAccountDelete(req, res, url, data, actor) {
     const who = req.authUser.username;
     const deletedId = req.authUser.id;
     if (!who) return json(res, 400, { error: 'Cuenta no valida.' });
-    // Cada verificación ejecuta un scrypt completo: mismo freno que el
+    // Cada verificación ejecuta un hash de contraseña: mismo freno que el
     // resto de operaciones que exigen contraseña.
     if (rejectRateLimited(res, passwordCheckLimiter, req.authUser.id, 5, 'verificaciones de contraseña por minuto')) return;
     // Borrar la cuenta es IRREVERSIBLE (mensajes, grupos e
@@ -232,17 +244,14 @@ async function postAccountDelete(req, res, url, data, actor) {
     if (typeof data.password !== 'string' || !data.password || data.password.length > 128)
         return json(res, 400, { error: 'Indica tu contraseña para confirmar.' });
     const account = accountByName(who);
-    if (!account || !safeEqualHex(account.passwordHash, await passwordDigest(data.password, account.passwordSalt)))
+    if (!account || !await verifyPassword(data.password, account.passwordHash, account.passwordSalt))
         return json(res, 401, { error: 'Contraseña incorrecta.' });
     // 1) Sesiones y cookies: la cuenta deja de estar disponible al instante.
     for (const sk of [...req.authUser.sockets]) { try { sk.destroy(); } catch { } }
     for (const [h, s] of sessionCache) if (s.userId === deletedId) sessionCache.delete(h);
     clearSessionCookie(res, req);
     clearCookie(res, req, accountCookieName(deletedId));
-    // 2) Grupos donde estaba (para reconstruirlos y avisar al resto).
-    const touchedGroups = [...groupCache.values()]
-        .filter(g => (g.memberIds || []).includes(deletedId) || (g.members || []).includes(who))
-        .map(g => g.id);
+    // 2) La pertenencia a grupos se resuelve en la transacción (removed).
     // 3) Borrado en cascada: una sola transacción, todo o nada.
     const removed = tx.deleteAccount(deletedId, who);
     pruneBlobHashes(removed.hashes || []);

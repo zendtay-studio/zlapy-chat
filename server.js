@@ -36,7 +36,56 @@ const { DATA, DB_PATH, BLOB_DB_PATH, ROOT } = require('./src/config.js');
 
 const { Stmt } = require('./src/db/statements.js');
 const { db } = require('./src/db/database.js');
+
+/* Fail-fast de la credencial del propietario.
+ *
+ * La llave maestra se DERIVA de la credencial (DB_USER + DB_PASSWORD): sin
+ * ella, o con una credencial que no abre esta base, no hay llave y no hay
+ * servidor. Se comprueba ANTES de cargar nada para no dejar ni un solo
+ * byte escrito con una llave que no corresponde a los datos.
+ *
+ * Código de salida 78 (EX_CONFIG): no es un fallo de ejecución, es una
+ * configuración inválida. El supervisor lo trata como "no arranques en
+ * bucle": hace falta intervención del operador. */
+let masterKey = null;
+let auditAuthKeys = null;
+let ownerCredential = null;
+try {
+    ({ masterKey, auditAuthKeys, ownerCredential } = require('./src/crypto/setup.js'));
+} catch (error) {
+    console.error('');
+    console.error('[crypto] No se pudo desbloquear la base con la credencial del propietario:');
+    console.error(`  ${error && error.message ? error.message : error}`);
+    console.error('');
+    console.error('  Qué hacer:');
+    console.error('    · Base nueva:  npm run owner -- init --user NOMBRE');
+    console.error('    · Base con datos: la credencial es la que hay en el .env (DB_USER + DB_PASSWORD).');
+    console.error('    · Credencial perdida: sin ella los datos son ilegibles (restáurala del kit de recuperación).');
+    console.error('');
+    process.exit(78);
+}
+
 const { loadFromDb } = require('./src/users/store.js');
+
+/* El manifiesto de integridad del ENLACE credencial ↔ base (sal, keycheck,
+   usuario, key_id): si alguien manipuló esas filas con el servidor parado,
+   el keycheck puede seguir pasando pero el manifiesto no cuadra. Es la
+   barrera contra re-vincular la base a otra credencial. */
+const { checkIntegrityManifest } = require('./src/crypto/owner-key.js');
+const manifiestoArranque = checkIntegrityManifest(masterKey.export());
+if (!manifiestoArranque.ok) {
+    console.error('');
+    console.error('[crypto] El manifiesto de integridad no cuadra: el enlace entre la credencial y esta base');
+    console.error('  (meta: sal, keycheck, usuario, key_id) fue modificado o corrompido.');
+    console.error('  Comprueba con `npm run owner -- check` y, si no abre, restaura la base y el .env');
+    console.error('  del kit de recuperación.');
+    console.error('');
+    process.exit(78);
+}
+
+if (ownerCredential && ownerCredential.nuevo)
+    console.log(`[crypto] Instalación nueva: credencial de propietario inicializada a partir del .env ` +
+        `(${ownerCredential.credential.user}). Sin ella esta base es inservible.`);
 
 /* Permisos del almacenamiento: sin este endurecimiento, la carpeta de datos
    nacía 0755 y las bases SQLite 0644 (la auditoría SECOA-D-001/E-001 las
@@ -82,6 +131,39 @@ if (incompatibleRow)
 
 // Carga las cuentas, los grupos y las historias en memoria.
 loadFromDb();
+
+/* Auditoría de arranque: ¿la llave maestra de este proceso descifra las
+   auth_key que hay en la base? Si NO descifra NINGUNA, la llave del `.env`
+   no es la que cifró los datos: el servidor no debe ni servir ni escribir
+   (cada escritura dejaría material que ni la nueva ni la vieja llave
+   pueden leer). Si solo fallan algunas, es una desincronización parcial
+   (p. ej. una cuenta creada por un proceso con la llave anterior): el
+   servicio sigue, pero avisando por el nombre de las cuentas afectadas. */
+const informeLlaves = auditAuthKeys();
+if (informeLlaves.total > 0 && informeLlaves.ilegibles.length === informeLlaves.total) {
+    throw new Error(`Ninguna de las ${informeLlaves.total} auth_key de la base se descifra con la llave maestra de este proceso: ` +
+        'el .env no tiene la llave que cifró los datos. Restaura la llave del respaldo (o repárala con `npm run repair -- --apply`).');
+}
+if (informeLlaves.ilegibles.length > 0) {
+    const cuentas = informeLlaves.ilegibles.map(fila => fila.username).join(', ');
+    console.warn(`[crypto] ATENCIÓN: ${informeLlaves.ilegibles.length} de ${informeLlaves.total} auth_key no se descifran con la llave actual ` +
+        `(${cuentas}). Sus perfiles no se pueden guardar y su contenido no se puede leer. ` +
+        'Repáralas con `npm run repair -- --apply` (la llave anterior del respaldo es lo único que recupera su contenido).');
+}
+
+/* La credencial se cargó al arrancar. Si alguien la cambia con el servidor
+   en marcha (la migración re-cifra las bases, pero el proceso vivo sigue
+   escribiendo con la llave que tiene en memoria), el resultado es una base
+   con dos llaves: las filas viejas quedan ilegibles y las nuevas se cifran
+   con la que ya no está en el `.env`. Es exactamente la desincronización que
+   costó una auth_key en esta instalación.
+   El vigilante relee el `.env`; si la credencial cambia, el proceso sale con
+   código 75 (EX_TEMPFAIL) y el supervisor lo reinicia ya con la credencial
+   nueva. */
+const { watchCredentialFile } = require('./src/crypto/master-key.js');
+/* La referencia del vigilante es la del FICHERO al arrancar (no la del
+   entorno): véase src/crypto/master-key.js. */
+watchCredentialFile();
 
 // Al cargarlo, `src/http/servers.js` crea los servidores y empieza a escuchar.
 require('./src/http/servers.js');

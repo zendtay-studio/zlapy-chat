@@ -24,6 +24,7 @@
 
 body.page-privacy,
 body.page-profile,
+body.page-group-details,
 body.page-stories,
 body.page-view {
   background-color: var(--page);
@@ -34,6 +35,7 @@ body.page-view {
 
 body.page-privacy > header,
 body.page-profile > header,
+body.page-group-details > header,
 body.page-view > header,
 body.page-stories .page > header {
   animation: public-page-enter .28s ease-out both
@@ -41,6 +43,7 @@ body.page-stories .page > header {
 
 body.page-privacy > main,
 body.page-profile > main,
+body.page-group-details > main,
 body.page-view > main,
 body.page-stories .page > main {
   animation: public-page-enter .34s ease-out both
@@ -50,6 +53,7 @@ body.page-privacy #main > .row,
 body.page-privacy #main > .quickBar,
 body.page-privacy #main > .quickHint,
 body.page-profile main > *,
+body.page-group-details main > *,
 body.page-view main > *,
 body.page-stories .cards > .card {
   animation: public-item-enter .24s ease-out both
@@ -79,6 +83,7 @@ body.page-stories a {
 
 .page-privacy header,
 .page-profile header,
+.page-group-details header,
 .page-stories header,
 .page-view header {
   background: var(--surface);
@@ -88,6 +93,7 @@ body.page-stories a {
 
 .page-privacy header a,
 .page-profile header a,
+.page-group-details header a,
 .page-stories header a,
 .page-view header a {
   color: var(--text)
@@ -100,6 +106,7 @@ body.page-stories a {
 .page-privacy .quickHint,
 .page-profile label,
 .page-profile .sub,
+.page-group-details .sub,
 .page-view .sub,
 .page-stories .sub,
 .page-stories .card .sub {

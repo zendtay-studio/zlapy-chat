@@ -43,7 +43,9 @@ function blobBytesOfUser(userId) {
     // El total puede ser 0: `cached === undefined` distingue el hueco del cero.
     if (cached !== undefined) return cached;
     let bytes = 0;
-    for (const { hash } of Stmt.userBlobHashes.all(userId, userId, userId, userId)) {
+    /* La cuenta usa: adjuntos de chat, adjuntos de grupo, historias y sus
+       propias imágenes (avatar y fondo), que también consumen cuota. */
+    for (const { hash } of Stmt.userBlobHashes.all(userId, userId, userId, userId, userId, userId)) {
         const row = Stmt.blobSize.get(hash);
         if (row) bytes += Number(row.bytes || 0);
     }
@@ -71,11 +73,7 @@ function blobBytesGlobalTrack(deltaBytes) {
     if (deltaBytes === 0 || blobBytesCache.bytes === null) return;
     blobBytesCache.bytes += deltaBytes;
 }
-/* Invalida el contador: recalcula con SUM en la siguiente lectura. Es la
-   red de seguridad del barrido de huérfanos y del arranque. */
-function blobBytesGlobalReset() { blobBytesCache.bytes = null; }
-
-/* ¿Qepa este adjunto dentro de la cuota? Se comprueba antes de escribir: es
+/* ¿Quepa este adjunto dentro de la cuota? Se comprueba antes de escribir: es
    la última barrera antes de tocar disco. */
 function blobQuotaOk(userId, extraBytes) {
     if (!userId || !(extraBytes > 0)) return true;
@@ -134,7 +132,6 @@ module.exports = {
     blobBytesOfUser,
     blobBytesGlobal,
     blobBytesGlobalTrack,
-    blobBytesGlobalReset,
     invalidateBlobQuota,
     BLOB_QUOTA_PER_USER_BYTES,
     BLOB_QUOTA_GLOBAL_BYTES,

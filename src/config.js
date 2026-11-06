@@ -55,6 +55,10 @@ function integerSetting(env, name, min, max) {
 }
 
 function loadConfig(env = process.env) {
+    /* Nombre de la base principal: se calcula primero porque el de los
+       adjuntos deriva de él cuando no se fija a mano. */
+    const dbName = typeof env.DB_NAME === 'string' && env.DB_NAME.trim()
+        ? env.DB_NAME.trim() : 'zlapy';
     const settings = {
         port: integerSetting(env, 'PORT', 1, 65535),
         directMessageCharacters: integerSetting(env, 'MESSAGE_DIRECT_CHAR_LIMIT', 1, 1_000_000),
@@ -81,7 +85,14 @@ function loadConfig(env = process.env) {
         chatPageCacheMaxBytes: integerSetting(env, 'CHAT_PAGE_CACHE_MAX_BYTES', 1024, 1_073_741_824),
         maxSessionsPerUser: integerSetting(env, 'MAX_SESSIONS_PER_USER', 1, 1_000),
         dataDir: typeof env.DATA_DIR === 'string' && env.DATA_DIR.trim() ? env.DATA_DIR.trim() : '',
-        chatMasterKey: typeof env.CHAT_MASTER_KEY === 'string' ? env.CHAT_MASTER_KEY.trim() : '',
+        /* Nombre (o ruta) de la base principal. La extensión ".db" se añade
+           sola; un valor con separadores de ruta se toma como ruta. */
+        dbName,
+        /* Base de adjuntos: si no se fija, sale del nombre de la principal
+           (zlapy → zlapy-blob), así dos instalaciones que compartan carpeta
+           no pisan sus adjuntos. */
+        blobDbName: typeof env.BLOB_DB_NAME === 'string' && env.BLOB_DB_NAME.trim()
+            ? env.BLOB_DB_NAME.trim() : `${dbName}-blob`,
         // Forzar TLS: toda petición en claro se redirige a HTTPS y la cookie
         // de sesión se marca como Secure. Solo se apaga a propósito (FORCE_TLS=false),
         // por ejemplo para un uso exclusivo por HTTP en la red local sin
@@ -122,11 +133,13 @@ const ROOT = path.join(__dirname, '..');
  * secretos, así que se deja con permisos de solo para el propietario. */
 const ENV_PATH = path.join(ROOT, '.env');
 const ENV_EXAMPLE_PATH = path.join(ROOT, '.env.example');
-function ensureEnvFile() {
-    if (fs.existsSync(ENV_PATH)) return false;
-    if (!fs.existsSync(ENV_EXAMPLE_PATH)) return false;
-    fs.writeFileSync(ENV_PATH, fs.readFileSync(ENV_EXAMPLE_PATH));
-    try { fs.chmodSync(ENV_PATH, 0o600); } catch (error) { /* best-effort */ }
+function ensureEnvFile(envPath = ENV_PATH, examplePath = ENV_EXAMPLE_PATH) {
+    if (fs.existsSync(envPath)) return false;
+    if (!fs.existsSync(examplePath))
+        throw new Error(`No existe ${path.basename(envPath)} ni ${path.basename(examplePath)}: ` +
+            'no se puede crear la configuración. Copia el .env.example a .env y define DB_USER y DB_PASSWORD.');
+    fs.writeFileSync(envPath, fs.readFileSync(examplePath));
+    try { fs.chmodSync(envPath, 0o600); } catch (error) { /* best-effort */ }
     return true;
 }
 const envCreated = ensureEnvFile();
@@ -134,7 +147,7 @@ const envCreated = ensureEnvFile();
 // Carga el `.env` de la raiz del proyecto: el servidor y los scripts de
 // operacion parten de la misma configuracion. Las variables ya presentes en el
 // entorno mandan sobre el fichero.
-require('dotenv').config({ path: ENV_PATH });
+require('dotenv').config({ path: ENV_PATH, quiet: true });
 if (envCreated) {
     console.log(`[config] se creó ${path.relative(ROOT, ENV_PATH)} a partir de .env.example (instalación nueva).`);
 }
@@ -144,8 +157,36 @@ const GIPHY_API_KEY = String(process.env.GIPHY_API_KEY || '').trim();
 const PORT = CONFIG.port;
 const PUBLIC = path.join(ROOT, 'public');
 const DATA = CONFIG.dataDir ? path.resolve(CONFIG.dataDir) : path.join(ROOT, 'data');
-const DB_PATH = path.join(DATA, 'zlapy.db');
-const BLOB_DB_PATH = path.join(DATA, 'blob.db');
+
+/**
+ * Resuelve la ruta de un fichero de base a partir de su nombre.
+ *
+ * El nombre puede ser un nombre simple ("zlapy" → data/zlapy.db) o una ruta
+ * ("/srv/zlapy/chat" → /srv/zlapy/chat.db). La extensión ".db" se añade sola
+ * si no está, salvo que el valor ya termine en otra extensión (".sqlite3"),
+ * que se respeta tal cual.
+ */
+function resolveDbFile(name, fallback) {
+    const raw = typeof name === 'string' && name.trim() ? name.trim() : fallback;
+    const conExtension = /\.[A-Za-z0-9]+$/.test(raw) ? raw : `${raw}.db`;
+    if (path.isAbsolute(conExtension) || conExtension.includes('/') || conExtension.includes(path.sep))
+        return path.resolve(conExtension);
+    return path.join(DATA, conExtension);
+}
+
+const DB_PATH = resolveDbFile(CONFIG.dbName, 'zlapy');
+
+/* Nombre FINAL de la base de adjuntos. Si BLOB_DB_NAME no se fijó y ya
+   existe un `blob.db` de una versión anterior (que llamaba así, sin más, a
+   la base de adjuntos), se conserva: renombrarlo de oficio dejaría huérfanos
+   todos los adjuntos de esa instalación. En el resto de casos vale el
+   derivado (<DB_NAME>-blob). */
+const blobNameExplicito = typeof process.env.BLOB_DB_NAME === 'string' && process.env.BLOB_DB_NAME.trim();
+let blobDbName = CONFIG.blobDbName;
+if (!blobNameExplicito && !fs.existsSync(resolveDbFile(CONFIG.blobDbName, CONFIG.blobDbName)) &&
+    fs.existsSync(path.join(DATA, 'blob.db')))
+    blobDbName = 'blob';
+const BLOB_DB_PATH = resolveDbFile(blobDbName, 'blob');
 
 /* Valor EFECTIVO de FORCE_TLS. CONFIG está congelada a propósito (los ajustes
  * no se recalculan en caliente), pero el repliegue sin certificados necesita
@@ -175,5 +216,8 @@ module.exports = {
     PUBLIC,
     DATA,
     DB_PATH,
-    BLOB_DB_PATH
+    BLOB_DB_PATH,
+    ENV_PATH,
+    ENV_EXAMPLE_PATH,
+    ensureEnvFile
 };

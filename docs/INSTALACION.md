@@ -235,10 +235,11 @@ npm start
 > trae los binarios precompilados dentro del tarball (funciona en Linux,
 > macOS y Windows); en Android no existe ninguno y hay que compilar.
 
-El `.env` y la llave maestra **se crean solos** en la primera ejecución
-(el `.env` a partir de `.env.example`, y la llave maestra escrita en su
-línea `CHAT_MASTER_KEY`), así que no hace falta ningún paso de configuración
-manual.
+El `.env` **se crea solo** en la primera ejecución (a partir de
+`.env.example`), pero la credencial del propietario (`DB_USER` +
+`DB_PASSWORD`) hay que definirla: de ella se deriva la llave maestra que
+cifra todos los datos. Ponla en el `.env` antes del primer arranque
+(§ 3.2).
 
 Compilar `better-sqlite3` en un móvil ARM tarda varios minutos: no cierres la
 terminal y deja el teléfono enchufado (evita que Android mate el proceso).
@@ -358,7 +359,7 @@ prioridad sobre el fichero, por eso `PORT=3001 npm start` manda sobre el
 
 ```bash
 cp .env.example .env
-chmod 600 .env          # contiene la llave maestra: solo tú debes leerlo
+chmod 600 .env          # contiene la credencial del propietario: solo tú debes leerlo
 ```
 
 Los valores se **validan al arrancar** (`src/config.js`): un valor fuera de
@@ -372,7 +373,9 @@ reiniciar el servidor.**
 | --- | ---: | --- | --- |
 | `PORT` | `3000` | Puerto TCP donde escucha el servidor (http **y** https en el mismo puerto) | 1–65535 |
 | `DATA_DIR` | `data` | Carpeta de `zlapy.db` y `blob.db`. Vacío = `data/` dentro del proyecto | Ruta (relativa al CWD) |
-| `CHAT_MASTER_KEY` | *(vacío)* | Clave maestra Base64 de exactamente 32 bytes. Vacía = el servidor la genera en el primer arranque (base sin datos) y la guarda en esta línea | Base64 de 32 bytes |
+| `DB_USER` | *(vacío)* | Usuario del propietario: con `DB_PASSWORD` forma la credencial de la que se deriva la llave maestra | Texto |
+| `DB_PASSWORD` | *(vacío)* | Contraseña del propietario (o usa `DB_PASSWORD_FILE` con la contraseña en un fichero `0600`) | Texto |
+| `DB_NAME` / `BLOB_DB_NAME` | `zlapy` / `zlapy-blob` | Nombre (o ruta) de las bases; el de adjuntos se deriva del principal (`<DB_NAME>-blob`) si no se fija | Texto/ruta |
 | `MESSAGE_DIRECT_CHAR_LIMIT` | `10000` | Máx. caracteres por mensaje directo | 1–1 000 000 |
 | `MESSAGE_GROUP_CHAR_LIMIT` | `15000` | Máx. caracteres por mensaje de grupo | 1–1 000 000 |
 | `STORY_TEXT_CHAR_LIMIT` | `140` | Máx. caracteres del texto de una historia | 1–100 000 |
@@ -413,49 +416,67 @@ Solo tienen efecto sobre `npm start` (el supervisor), no sobre `node server.js`.
 | `SUPERVISOR_HOT_CRASH_THRESHOLD` | `5` | Caídas en caliente seguidas a partir de las cuales se avisa del crash-loop (el servicio **no** se apaga) |
 | `SUPERVISOR_STABLE_MS` | `60000` | Tiempo sano necesario para olvidar la racha de fallos anteriores |
 
-### 3.2 La llave maestra
+### 3.2 La credencial del propietario y la llave maestra
 
-El servidor cifra los datos en reposo (mensajes, historias, adjuntos, claves de
-push, clave VAPID) con una llave maestra de 32 bytes. Hay dos formas de
-tenerla:
+El servidor cifra los datos en reposo (mensajes, historias, adjuntos, fotos,
+nombres de grupos, claves de push, clave VAPID) con una llave maestra de
+32 bytes que **no se guarda en ningún sitio**: se deriva de la credencial
+del propietario con scrypt (N=32768, r=8, p=1).
 
-| Forma | Dónde vive | Cuándo usarla |
-| --- | --- | --- |
-| `CHAT_MASTER_KEY` en `.env` | Línea del `.env`, base64 de 32 bytes, modo `600` | Única ubicación. **Se genera sola** en el primer arranque si la base no tiene cuentas. Para gestores de agentes externos: exporta la variable o inyecta el `.env` |
+| Pieza | Dónde vive |
+| --- | --- |
+| Credencial (`DB_USER` + `DB_PASSWORD`) | El `.env` (modo `600`), o la contraseña en un fichero aparte con `DB_PASSWORD_FILE` |
+| Sal de derivación (`kdf_salt`) + parámetros | La propia base de datos (`meta`) |
+| Comprobación (`keycheck`) | La propia base de datos: un texto conocido cifrado con la llave |
+| Huella (`key_id`) y manifiesto de integridad | La propia base de datos (`meta`) |
 
-Generar la llave en el `.env` (no se muestra por pantalla):
+Instalación nueva: pon la credencial en el `.env` y arranca.
 
 ```bash
-npm run key                 # genera una clave nueva (falla si ya hay una)
-npm run key -- --force      # gírala: re-cifra el almacenamiento si la base ya tiene datos (o -f)
-npm run key -- --null       # vacía CHAT_MASTER_KEY en el .env (o -n)
+cp .env.example .env
+# edita .env: define DB_USER y DB_PASSWORD (mínimo 12 caracteres variados)
+npm start
+```
+
+El servidor inicializa la base con esa credencial la primera vez. Sin ella
+el servidor **no arranca** (sale con código 78): sin la credencial no hay
+llave, y sin llave los datos no se pueden ni leer ni escribir.
+
+Gestión de la credencial (todo con el servidor **parado**):
+
+```bash
+npm run owner -- show                                   # metadatos de la instalación
+npm run owner -- check                                  # auditoría de integridad
+npm run owner -- credential --user NUEVO --password NUEVA   # cambia la credencial: re-cifra TODO
+npm run owner -- rotate                                 # re-deriva con sal nueva (misma credencial)
+npm run owner -- export-kit --out /ruta/segura          # kit de recuperación (credencial + bases)
+npm run owner -- reset --yes                            # borra las bases (empezar de cero)
 ```
 
 Notas verificadas:
 
-- `npm run key` **crea el `.env`** si no existe (a partir de `.env.example`) y
-  necesita que tenga **exactamente una** línea `CHAT_MASTER_KEY=`. Si hay cero
-  o dos, falla con `Expected exactly one CHAT_MASTER_KEY assignment in ...`.
-- En la **primera instalación** no hace falta ejecutar `npm run key`: el
-  servidor crea el `.env` (a partir de `.env.example`, modo `600`) y genera la
-  llave maestra en la línea `CHAT_MASTER_KEY` del `.env` (modo `600`) si la
-  base de datos está vacía.
-- Con `--force` se **gira** la clave. Si la base ya tiene material que
-  depende de la maestra (`ops/reencrypt-master.js`), el comando **verifica**
-  que la clave vigente descifra todo (auth_key de usuarios, material E2E de
-  grupos, VAPID y adjuntos), copia el `.env` en `.env.master-bak` y
-  **re-cifra cada dependencia con la nueva** en transacciones SQLite:
-  no se pierde nada. Si algo falla, la reversión compensada devuelve todo
-  al estado previo. El único hueco: un corte de luz/SIGKILL justo a mitad
-  depende del respaldo `.env.master-bak` (dura milisegundos; no interrumpas
-  el proceso a mano).
-- Si `CHAT_MASTER_KEY` **falta y ya hay una base con datos**, el arranque
-  **aborta** con un error claro en vez de regenerarla en silencio
-  (`src/crypto/master-key.js`). Es a propósito: una llave nueva haría
-  ilegibles todos los mensajes, historias y adjuntos.
-- Si defines `CHAT_MASTER_KEY`, el valor debe codificar **exactamente 32 bytes**
-  en base64; si no, el arranque falla con
-  `CHAT_MASTER_KEY must encode exactly 32 bytes`.
+- **La credencial es la raíz de confianza**: quien la tenga descifra la base
+  entera. Guárdala también fuera de la máquina (`export-kit` o `npm run
+  backup`, que ya copia el `.env` como `credencial.env`). Sin ella, los
+  respaldos son bytes inservibles.
+- **Cambiar `DB_USER` o `DB_PASSWORD` a mano en el `.env` no sirve**: la base
+  seguirá cifrada con la llave vieja y el servidor se negará a arrancar
+  (keycheck inválido). Hay que migrar con `npm run owner -- credential`,
+  que re-cifra todo lo que dependía de la llave anterior (auth_keys, material
+  de grupos, VAPID, campos sueltos y adjuntos) y escribe el `.env` **al
+  final**: si algo falla a mitad, la credencial anterior sigue en pie y el
+  arranque falla de forma explícita, nunca con datos a medias.
+- **La migración exige el servidor parado**: un proceso vivo seguiría
+  cifrando con la llave anterior (la desincronización que costó una cuenta en
+  esta instalación). El vigilante del `.env` también lo detecta: si la
+  credencial cambia con el servidor en marcha, el proceso sale con código 75
+  y el supervisor lo reinicia con la nueva.
+- Si la base **ya tiene datos** y la credencial no abre (o falta), el arranque
+  **aborta** con el código 78 en vez de derivar una llave nueva en silencio.
+  Es a propósito: una llave nueva haría ilegibles todos los mensajes,
+  historias y adjuntos. Restaura la credencial del kit de recuperación.
+- Las **contraseñas de las cuentas** de los usuarios no tienen nada que ver
+  con esta credencial: van con bcrypt (coste 10) en la propia base.
 
 ### 3.3 Permisos recomendados
 
@@ -716,7 +737,7 @@ curl http://localhost:3000/healthz
 Respuesta esperada (200):
 
 ```json
-{"ok":true,"schema":3,"uptime":42}
+{"ok":true,"schema":4,"uptime":42}
 ```
 
 - `ok: true` → el servidor responde **y ambas bases** (`zlapy.db` y `blob.db`)
@@ -841,12 +862,12 @@ Qué hace (`ops/backup.js`):
 | --- | --- |
 | Copia `zlapy.db` | Con la API `backup()` de SQLite: **consistente aunque el servidor esté corriendo y con WAL activo** |
 | Copia `blob.db` | Igual (adjuntos deduplicados por hash) |
-| Llave maestra | Vive en el `.env` (`CHAT_MASTER_KEY`): el respaldo avisa de que **copies tú ese fichero** (o al menos esa línea) |
+| Credencial | Copia el `.env` como `credencial.env`: sin `DB_USER` + `DB_PASSWORD` el respaldo es inservible |
 | Permisos | Directorio `0700`, ficheros `0600` (contienen usuarios, sesiones, hashes y mensajes cifrados) |
 | Destino ocupado | Si la carpeta existe y **no está vacía**, aborta: no sobrescribe nada |
 
-La llave maestra y las bases **siempre van juntas**: sin `CHAT_MASTER_KEY`
-(la línea del `.env`), los mensajes, historias y adjuntos del respaldo son
+La credencial y las bases **siempre van juntas**: sin `DB_USER` +
+`DB_PASSWORD`, los mensajes, historias y adjuntos del respaldo son
 **irrecuperables**. Guarda el respaldo **fuera** del disco de la aplicación
 (por ejemplo, en `/sdcard`, en un disco externo o en otro equipo).
 
@@ -872,18 +893,18 @@ La llave maestra y las bases **siempre van juntas**: sin `CHAT_MASTER_KEY`
    ```bash
    rm -f data/zlapy.db-wal data/zlapy.db-shm data/blob.db-wal data/blob.db-shm
    ```
-3. **Restaura la llave maestra** en el `.env` (única ubicación):
+3. **Restaura la credencial** (el `.env` del respaldo):
    ```bash
-   # edita .env y pon en CHAT_MASTER_KEY= la clave que guardaste con el respaldo
+   cp <respaldo>/credencial.env .env
    chmod 600 .env
    ```
 4. **Arranca y comprueba**:
    ```bash
    npm start
-   curl http://localhost:3000/healthz     # → {"ok":true,"schema":3,...}
+   curl http://localhost:3000/healthz     # → {"ok":true,"schema":4,...}
    ```
-   Si el arranque falla con `No hay CHAT_MASTER_KEY en el .env y la base de
-   datos ya contiene datos`, es que el paso 3 no se hizo bien.
+   Si el arranque falla con *"La credencial no corresponde a esta base de
+   datos: el keycheck no descifra"*, es que el paso 3 no se hizo bien.
 
 ---
 
@@ -945,14 +966,14 @@ registro antes de tocarlo.
 | `CAÍDA EN CALIENTE (code=…, uptime=…) … El servicio no se queda apagado.` | El servidor ya servía y se ha caído. El supervisor reinicia **siempre** con el backoff topado y avisa a partir de 5 caídas | Mira el error del hijo (el supervisor reenvía su stdout/stderr tal cual). Suele ser un `uncaughtException` o una base inaccesible |
 | `salud fallida x3 (el health check no responde); reiniciando pid …` | El proceso está **vivo pero colgado**: no devuelve un 2xx en `/healthz` | Comprueba a mano `curl http://localhost:3000/healthz`; si el puerto del `.env` no es el real, ajusta `SUPERVISOR_HEALTH_PORT` (el supervisor lo corrige solo con el banner, pero solo si el hijo llega a imprimirlo) |
 | `Cannot open database because the directory does not exist` | La carpeta de datos no existe: SQLite **no crea directorios** | `mkdir -p data` (o `mkdir -p "$DATA_DIR"`); el directorio debe existir **antes** de arrancar |
-| `No hay CHAT_MASTER_KEY en el .env y la base de datos ya contiene datos.` | La llave maestra no está en el `.env`, pero la base sí tiene datos (`src/crypto/master-key.js`) | **Pega la clave del respaldo en el `.env` (CHAT_MASTER_KEY=...)** (no generes una nueva: dejaría ilegibles todos los datos cifrados) |
+| `No se pudo desbloquear la base con la credencial del propietario` (salida 78) | `DB_USER`/`DB_PASSWORD` faltan en el `.env` o no son los de esta base (`src/crypto/owner-key.js`) | **Restaura la credencial del kit de recuperación en el `.env`** (no inventes una nueva: dejaría ilegibles todos los datos cifrados) |
 | `Formato de cifrado de la base no compatible (crypto_version=N)` / `Database crypto version is incompatible with this server.` | La base es de una versión anterior del formato de cifrado. **No hay migraciones** | Restaura la base desde `backups/` o arranca con una base nueva (mueve `data/` a otra parte) |
 | `Database schema is incompatible: messages.<columna> is missing.` | La base no tiene el esquema v3 | Igual que arriba: restaurar o empezar de cero |
 | `No se encuentra el binario nativo de better-sqlite3 para android-arm64` (o `linux-x64`, …) | El `postinstall` del proyecto comprueba que exista el binario nativo y no lo encuentra | En Linux/macOS/Windows con arquitectura soportada: `npm install` descarga el prebuild; si falla, instala el toolchain (python3, make, g++) y compila (ver §2.1). **En Termux hay que compilar** (ver §2.2) |
 | `npm rebuild better-sqlite3` dice «rebuilt dependencies successfully» pero no compila nada (tampoco con `--build-from-source`) | `better-sqlite3@13.0.3` **no tiene script `install`** y declara `"gypfile": false`: no hay nada que `npm rebuild` pueda ejecutar | Compila explícitamente: `cd node_modules/better-sqlite3 && npm exec -- node-gyp rebuild --release --force_build=1` |
 | Error de `node-gyp` al instalar (`Python executable not found`, `g++ not found`, `make: command not found`) | Falta el toolchain de compilación | Debian/Ubuntu: `sudo apt install python3 make g++ build-essential`; Fedora: `sudo dnf install python3 make gcc-c++`; Arch: `sudo pacman -S base-devel python`; Termux: `pkg install python make clang sqlite` |
-| `La clave maestra ya está configurada. Para generar otra, ejecuta: npm run key -- --force` | `npm run key` no sobrescribe una clave existente a propósito | `npm run key -- --force` (o `-f`) **solo si quieres reemplazarla**: los datos cifrados con la anterior quedan ilegibles |
-| `Expected exactly one CHAT_MASTER_KEY assignment in …/.env` | El `.env` no existe o tiene la variable duplicada | `cp .env.example .env` y deja **una sola** línea `CHAT_MASTER_KEY=` |
+| `Esta base de datos ya tiene datos` (al hacer `npm run owner -- init`) | `init` es sólo para bases nuevas | Para cambiar la credencial de una base con datos: `npm run owner -- credential`. Para empezar de cero: `npm run owner -- reset --yes` |
+| `Hay un servidor de Zlapy en marcha (pid …)` | La migración de credencial re-cifra las bases y el proceso vivo seguiría cifrando con la llave anterior | Para el servidor (`Ctrl+C`) y vuelve a ejecutar el comando |
 | `No se encontró 'cloudflared' en el PATH.` | `cloudflared` no está instalado | Instálalo: <https://developers.cloudflare.com/cloudflared/install/> |
 | `Falta CLOUDFLARE_TUNNEL_TOKEN en .env` | El token del túnel no está en el `.env` | `CLOUDFLARE_TUNNEL_TOKEN=eyJ...` en el `.env` (panel de Cloudflare → Zero Trust → Networks → Tunnels) |
 | `No existe zty.yml. Cópialo desde el ejemplo:` | Falta la configuración del túnel | `cp zty.yml.example zty.yml` y edita tu dominio en `ingress` |
@@ -1043,7 +1064,7 @@ Riesgos y precauciones:
 | La instancia queda accesible desde internet | Restringe el acceso en el panel de Cloudflare (`Access` / WAF / reglas de IP) |
 | Sin E2E, quien entre ve los mensajes | No lo publiques en una red no confiable; activa HTTPS con un certificado válido (no autofirmado) |
 | Fuerza bruta de contraseñas | El servidor ya bloquea por cuenta e IP, pero no publiques a ciegas: pon HTTPS y reglas de acceso |
-| El túnel **no** protege los datos en reposo | Sigue haciendo falta `npm run backup` y guardar una copia del `.env` (o de su línea `CHAT_MASTER_KEY`) fuera del servidor |
+| El túnel **no** protege los datos en reposo | Sigue haciendo falta `npm run backup` y guardar una copia del `.env` (la credencial del propietario) fuera del servidor |
 
 ---
 
@@ -1057,7 +1078,7 @@ Riesgos y precauciones:
 | `node server.js` | Arranca el servidor **sin supervisor** (depuración) |
 | `npm test` | Suite completa (`node --test test/*.test.js`) |
 | `npm run backup [-- dir]` | Respaldo consistente de `zlapy.db` y `blob.db` (la llave va en el `.env`: cópialo aparte) |
-| `npm run key [-- --force\|--null]` | Genera o vacía `CHAT_MASTER_KEY` en el `.env` |
+| `npm run owner -- <comando>` | Credencial del propietario: `init`, `credential`, `rotate`, `check`, `show`, `unlock-check`, `export-kit`, `reset` |
 | `npm run tunnel` | Túnel de Cloudflare (`cloudflared` + `zty.yml` + token en el `.env`) |
 | `npm run termux` | Actualiza paquetes, instala el toolchain y arranca (en Termux) |
 | `npm run migrate:mtproto [-- --apply]` | Migración manual del cifrado de los mensajes (no del esquema) |

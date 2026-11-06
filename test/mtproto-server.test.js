@@ -61,7 +61,7 @@ test('el perfil publica el identificador de la clave de cifrado', async () => {
         await api(srv.base, 'POST', '/send', { to: 'ana', kind: 'text', data: 'a mi mismo' }, ana.cookie);
         await new Promise(r => setTimeout(r, 200));
         const profile = await api(srv.base, 'GET', '/profile?username=ana', null, ana.cookie);
-        assert.match(profile.json.encryptionKeyId || '', /^[0-9a-f]{32}$/, 'debe ser el key_id (SHA-256 truncado a 128 bits)');
+        assert.match(profile.json.encryptionKeyId || '', /^[0-9a-f]{16}$/, 'debe ser el key_id (SHA-1 bajos de la auth_key, 64 bits, MTProto 2.0)');
     } finally { await stop(srv); }
 });
 
@@ -118,8 +118,8 @@ test('cada autor cifra con su propia clave y las claves entre autores difieren',
         // no lleva el key_id incrustado: la autenticidad la da la firma.
         const anaProfile = await api(srv.base, 'GET', '/profile?username=ana', null, ana.cookie);
         const betoProfile = await api(srv.base, 'GET', '/profile?username=beto', null, beto.cookie);
-        assert.match(anaProfile.json.encryptionKeyId || '', /^[0-9a-f]{32}$/);
-        assert.match(betoProfile.json.encryptionKeyId || '', /^[0-9a-f]{32}$/);
+        assert.match(anaProfile.json.encryptionKeyId || '', /^[0-9a-f]{16}$/);
+        assert.match(betoProfile.json.encryptionKeyId || '', /^[0-9a-f]{16}$/);
         assert.notEqual(anaProfile.json.encryptionKeyId, betoProfile.json.encryptionKeyId,
             'claves de cifrado distintas por usuario');
 
@@ -130,7 +130,7 @@ test('cada autor cifra con su propia clave y las claves entre autores difieren',
         // El contenido cifrado de cada autor es distinto aunque ambos usaran
         // el mismo pivote AES-GCM (claves sale-cifradas distintas).
         assert.ok(sobres.every(s => s.data.startsWith('PCE3:')));
-        assert.notEqual(sobres[0].data.split(':')[2], sobres[1].data.split(':')[2],
+        assert.notEqual(sobres[0].data.slice('PCE3:'.length), sobres[1].data.slice('PCE3:'.length),
             'los sobres no pueden repetir cifrado');
     } finally { await stop(srv); }
 });

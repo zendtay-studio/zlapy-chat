@@ -13,16 +13,24 @@ const { Stmt } = require('./statements.js');
 // PERF-P02: contador global de bytes de blobs en RAM. media.js no importa
 // este módulo, así que el require no forma ciclo.
 const { blobBytesGlobalTrack } = require('../chat/media.js');
+const { decField, encField } = require('../crypto/field-crypto.js');
 const { makeCache } = require('../shared/cache.js');
 
 const stmtBlobHasReference = db.prepare('SELECT 1 FROM blob_access WHERE hash = ? LIMIT 1');
+/* Referencias fuera de blob_access: imágenes de perfil, fondo y avatar de
+   grupo. Sin esta comprobación, el barrido de huérfanos borraría la foto de
+   un usuario vivo. */
+const stmtBlobHasImageReference = db.prepare(`SELECT 1 FROM user_profiles WHERE avatar_ref = ?
+    UNION SELECT 1 FROM user_chat_settings WHERE wallpaper_ref = ?
+    UNION SELECT 1 FROM groups WHERE avatar_ref = ?
+    LIMIT 1`);
 const stmtBlobRemove = blobDb.prepare('DELETE FROM blobs WHERE hash = ?');
 function pruneBlobHashes(hashes) {
     // Sentencias preparadas una vez: better-sqlite3 no cachea db.prepare, así
     // que recompilarlas en cada borrado de mensaje o historia costaría una
     // compilación por operación.
     for (const hash of new Set(hashes))
-        if (!stmtBlobHasReference.get(hash)) {
+        if (!stmtBlobHasReference.get(hash) && !stmtBlobHasImageReference.get(hash, hash, hash)) {
             // PERF-P02: el contador global de blobs en RAM se mantiene al día
             // con la longitud REAL del blob borrado; primera lectura carga de
             // la base, así que si aún no hay contador no toca nada.
@@ -147,7 +155,10 @@ const tx = {
         return hashes;
     }),
     deleteGroup: db.transaction(gid => deleteGroupRows(db, gid)),
-    deleteAccount: db.transaction((userId, username) => deleteAccountRows(db, userId, username)),
+    deleteAccount: db.transaction((userId, username) => deleteAccountRows(db, userId, username, {
+        // El par de una llamada va cifrado: se descifra y se compara.
+        peerMatches: peer => decField('calls.peer', peer) === username
+    })),
     // Vaciar un chat para los dos: se borran sus mensajes de verdad.
     clearChatMessages: db.transaction(chatKey => {
         const { deleteMessageRowsWhere } = require('../db/schema.js');
@@ -184,8 +195,16 @@ const tx = {
                 else Stmt.upsertChatPref.run(userId, update.key, pinnedAt, unread, archived, now);
             }
             if (typeof update.muted === 'boolean') {
-                if (update.muted) Stmt.insertMutedPeer.run(userId, update.peerId || null, update.peerName);
-                else Stmt.deleteMutedPeer.run(userId, update.peerName);
+                if (update.muted) Stmt.insertMutedPeer.run(userId, update.peerId || null,
+                    encField('user_muted_peers.peer_name', update.peerName));
+                else {
+                    /* El nombre del par silenciado va cifrado: no se puede
+                       borrar con un WHERE sobre el texto, así que se busca
+                       descifrando y se borra por rowid. */
+                    for (const row of Stmt.listMutedPeers.all(userId))
+                        if (decField('user_muted_peers.peer_name', row.peer_name) === update.peerName)
+                            Stmt.deleteMutedPeerByRowid.run(row.rowid);
+                }
             }
         }
     }),

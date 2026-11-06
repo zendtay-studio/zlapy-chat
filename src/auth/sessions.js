@@ -9,9 +9,6 @@
 
 const crypto = require('crypto');
 const { CONFIG, tlsState } = require('../config.js');
-const { promisify } = require('util');
-
-const scryptAsync = promisify(crypto.scrypt);
 const https = require('https');
 const { Stmt } = require('../db/statements.js');
 const { push } = require('../realtime/notify.js');
@@ -168,19 +165,9 @@ function originAllowed(req) {
     if (!origin) return true;
     try { return new URL(origin).host === req.headers.host; } catch { return false; }
 }
-/* scrypt con N=16384, r=8 y p=1: coste suficiente para frenar la fuerza bruta
-   sin latencias notables; el límite de memoria evita que una llamada con
-   parámetros desmedidos deje la máquina sin recursos. */
-async function passwordDigest(password, salt) {
-    return (await scryptAsync(password, salt, 64, { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 })).toString('hex');
-}
-/* Comparación en tiempo constante: el hash se compara byte a byte sin que el
-   tiempo que tarda dependa de dónde difieren, para no abrir la puerta a un
-   ataque por temporización. */
-const safeEqualHex = (a, b) => {
-    if (typeof a !== 'string' || typeof b !== 'string' || !/^[a-f0-9]+$/i.test(a) || !/^[a-f0-9]+$/i.test(b) || a.length !== b.length) return false;
-    return crypto.timingSafeEqual(Buffer.from(a, 'hex'), Buffer.from(b, 'hex'));
-};
+/* El hash de las contraseñas de cuenta vive en `src/auth/password.js`
+   (bcrypt en un worker aparte). Aquí ya no se derivan contraseñas: sólo se
+   managean las sesiones y sus cookies. */
 
 
 module.exports = {
@@ -201,7 +188,5 @@ module.exports = {
     originAllowed,
     isLoopbackPeer,
     requestEncrypted,
-    cookieSecure,
-    passwordDigest,
-    safeEqualHex
+    cookieSecure
 };

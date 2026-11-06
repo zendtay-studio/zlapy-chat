@@ -8,13 +8,16 @@
 
 const crypto = require('crypto');
 
-const { getMasterKeyBytes } = require('./master-key.js');
+const { ensureOwnerCredential } = require('./owner-key.js');
 const { createMessageCrypto } = require('./message-crypto.js');
-const { createUserAuthKeys } = require('./user-auth-keys.js');
+const { createUserAuthKeys, AuthKeyUnreadableError } = require('./user-auth-keys.js');
 const { db } = require('../db/database.js');
 const { Stmt } = require('../db/statements.js');
 
-const masterKey = crypto.createSecretKey(getMasterKeyBytes());
+/* Abre la base con la credencial del propietario. En una instalación nueva
+   la inicializa (sal + keycheck) con esa credencial. */
+const ownerCredential = ensureOwnerCredential();
+const masterKey = crypto.createSecretKey(ownerCredential.key);
 const messageCrypto = createMessageCrypto(masterKey.export(), {
     // La semilla de firma sale de la auth_key del usuario cuando ya existe.
     // MODELO REAL: la auth_key se guarda CIFRADA con la llave maestra
@@ -38,19 +41,48 @@ const { encryptAtRest, decryptAtRest } = messageCrypto;
 const authKeys = createUserAuthKeys({ db, Stmt, encryptAtRest, decryptAtRest, onAuthKeyCreated: userId => messageCrypto.forgetSigningKey(userId) });
 
 const {
-    authKeyRecord, ensureAuthKey,
+    authKeyRecord, authKeyState, ensureAuthKey,
     encryptForUser, decryptForUser, messageContextBytes
 } = authKeys;
 
+/**
+ * Auditoría de las auth_key al arrancar (SOLO LECTURA).
+ *
+ * Comprueba, con la llave maestra que tiene el proceso, si cada
+ * `user_auth_keys.auth_key` se descifra. Es el diagnóstico temprano de una
+ * desincronización: si la llave del `.env` no es la que cifró las filas,
+ * la cuenta que la tiene no puede guardar su perfil ni leer su contenido,
+ * y eso (hasta ahora) solo se manifestaba como un 500 más tarde.
+ *
+ * @returns {{total: number, ok: number, ilegibles: Array<{user_id: string, username: string}>}}
+ */
+function auditAuthKeys() {
+    const filas = db.prepare('SELECT user_id, auth_key FROM user_auth_keys').all();
+    const nombres = new Map(db.prepare('SELECT id, username FROM users').all().map(fila => [fila.id, fila.username]));
+    const ilegibles = [];
+    let ok = 0;
+    for (const fila of filas) {
+        let plain = null;
+        try { plain = decryptAtRest(fila.auth_key); } catch { }
+        if (typeof plain === 'string' && plain.length > 0) { ok++; continue; }
+        ilegibles.push({ user_id: fila.user_id, username: nombres.get(fila.user_id) || '(desconocido)' });
+    }
+    return { total: filas.length, ok, ilegibles };
+}
+
 module.exports = {
     masterKey,
+    ownerCredential,
     messageCrypto,
     encryptAtRest,
     decryptAtRest,
     authKeys,
     authKeyRecord,
+    authKeyState,
     ensureAuthKey,
     encryptForUser,
     decryptForUser,
-    messageContextBytes
+    messageContextBytes,
+    auditAuthKeys,
+    AuthKeyUnreadableError
 };

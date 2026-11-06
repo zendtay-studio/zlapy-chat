@@ -12,6 +12,14 @@ const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
 
+/* Credencial del propietario que usan los servidores de prueba: la llave
+   maestra se deriva de ella, así que los tests que necesiten derivarla (o
+   descifrar material en reposo) usan estas mismas credenciales. */
+const TEST_CREDENTIAL = Object.freeze({
+    user: 'propietario-prueba',
+    password: 'clave-de-prueba-2026'
+});
+
 function freePort() {
     return new Promise((resolve, reject) => {
         const srv = net.createServer();
@@ -38,6 +46,16 @@ async function startServer(options = {}) {
             DATA_DIR: dataDir,
             FORCE_TLS: 'false',
             BIND_HOST: 'auto',
+            /* La llave maestra se DERIVA de la credencial del propietario: el
+               servidor de prueba necesita una. En una base nueva la inicializa
+               con ella (como haría la instalación real con su .env). */
+            DB_USER: TEST_CREDENTIAL.user,
+            DB_PASSWORD: TEST_CREDENTIAL.password,
+            /* Nombres de base FIJOS en las pruebas: el .env de la
+               instalación real podría llevar otros y los tests leen la base
+               por su ruta (dataDir/zlapy.db). */
+            DB_NAME: 'zlapy',
+            BLOB_DB_NAME: 'blob',
             ...(options.env || {})
         },
         stdio: ['ignore', 'pipe', 'pipe']
@@ -253,4 +271,4 @@ class WsClient {
     destroy() { try { this.socket.destroy(); } catch { } }
 }
 
-module.exports = { startServer, stop, api, register, sessionCookieFrom, rawRequest, WsClient, freePort };
+module.exports = { startServer, stop, api, register, sessionCookieFrom, rawRequest, WsClient, freePort, TEST_CREDENTIAL };

@@ -13,17 +13,20 @@
     }
 
     body {
-      background: #111b21;
-      color: #e9edef;
+      background-color: var(--page);
+      background-image: radial-gradient(circle at 1px 1px, #ffffff08 1px, transparent 1px);
+      background-size: 26px 26px;
+      color: var(--text);
       min-height: 100vh;
+      min-height: 100dvh;
       display: flex;
       flex-direction: column;
-      max-width: 520px;
-      margin: 0 auto
+      width: 100%
     }
 
     header {
-      background: #202c33;
+      background: var(--surface);
+      border-bottom: 1px solid var(--line);
       padding: 16px 20px;
       font-size: 18px;
       font-weight: 600;
@@ -33,12 +36,14 @@
     }
 
     header a {
-      color: #e9edef;
+      color: var(--text);
       text-decoration: none;
       font-size: 22px
     }
 
     main {
+      width: min(100%, 640px);
+      margin-inline: auto;
       padding: 24px;
       display: flex;
       flex-direction: column;
@@ -136,8 +141,8 @@
     }
 
     .mSheet {
-      background: #202c33;
-      color: #e9edef;
+      background: var(--surface-raised);
+      color: var(--text);
       border-radius: 14px;
       width: min(420px, 94vw);
       padding: 20px;
@@ -328,7 +333,7 @@
       document.getElementById('viewName').textContent = p.name || target;
       document.getElementById('viewUsername').textContent = '@' + (p.username || target);
       const presence = document.getElementById('viewPresence');
-      presence.textContent = p.online === true ? 'En línea' : p.online === false && p.lastSeen ? `Últ. vez ${new Date(p.lastSeen).toLocaleString()}` : 'Presencia no disponible';
+      presence.textContent = p.online === true ? 'en línea' : p.online === false && p.lastSeen ? `Últ. vez ${new Date(p.lastSeen).toLocaleString()}` : 'Presencia no disponible';
       if (p.online === true) presence.style.color = 'var(--accent)';
       const av = document.getElementById('viewAvatar');
       if (p.permisos && p.permisos.verFoto === false) {

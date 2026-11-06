@@ -9,21 +9,26 @@ const test = require('node:test');
 const fs = require('node:fs');
 const path = require('node:path');
 const Database = require('better-sqlite3');
-const { startServer, stop, api, register } = require('./helpers.js');
+const { startServer, stop, api, register, TEST_CREDENTIAL } = require('./helpers.js');
 
 const ROOT = path.join(__dirname, '..');
 
 /* Firma + clave pública de firma del último mensaje enviado, junto con el par
    esperado derivado de la auth_key de su autor. */
 function lastMessageSigning(dataDir) {
-    // La llave maestra vive en el .env (CHAT_MASTER_KEY): los servidores de
-    // prueba arrancan en dataDirs temporales, pero el proceso guarda ahí su
-    // configuración (helpers arrancan con el .env del proyecto).
-    const env = fs.readFileSync(path.join(ROOT, '.env'), 'utf8');
-    const match = env.match(/^\s*CHAT_MASTER_KEY\s*=\s*(.*)$/m);
-    assert.ok(match, 'el .env debe definir CHAT_MASTER_KEY');
-    const master = Buffer.from(match[1].trim().replace(/^["']|["']$/g, ''), 'base64');
-    assert.equal(master.length, 32, 'CHAT_MASTER_KEY debe codificar 32 bytes');
+    /* La llave maestra se DERIVA de la credencial del propietario: la sal
+       está en la propia base de datos del servidor de prueba (meta.kdf_salt)
+       y la credencial es la que usa el helper. */
+    const { readKdfMaterial, deriveFromCredential } = require('../src/crypto/owner-key.js');
+    const { SCRYPT_PARAMS } = require('../src/crypto/kdf.js');
+    const dbPath = path.join(dataDir, 'zlapy.db');
+    const db0 = new Database(dbPath, { readonly: true });
+    const saltRow = db0.prepare("SELECT value FROM meta WHERE key = 'kdf_salt'").get();
+    db0.close();
+    assert.ok(saltRow, 'la base debe tener la sal de derivación');
+    const salt = Buffer.from(saltRow.value, 'base64');
+    const master = deriveFromCredential(TEST_CREDENTIAL, { salt, params: SCRYPT_PARAMS });
+    assert.equal(master.length, 32, 'la llave maestra debe tener 32 bytes');
     const { createMessageCrypto } = require('../src/crypto/message-crypto.js');
     const mc = createMessageCrypto(master);
     const db = new Database(path.join(dataDir, 'zlapy.db'), { readonly: true });

@@ -59,7 +59,7 @@ function createMessageCrypto(masterKey, options = {}) {
         return `${AT_REST_ENVELOPE}${iv.toString('base64')}:${Buffer.concat([ciphertext, cipher.getAuthTag()]).toString('base64')}`;
     }
 
-    function decryptAtRest(blob) {
+    function decryptAtRest(blob, extraAad = null) {
         if (typeof blob !== 'string' || blob === '') return blob;
         const isV2 = blob.startsWith(AT_REST_ENVELOPE);
         // v1 (legado, AES directo con la maestra) sigue siendo legible.
@@ -71,7 +71,7 @@ function createMessageCrypto(masterKey, options = {}) {
             const combined = Buffer.from(parts[2], 'base64');
             if (iv.length !== 12 || combined.length < 16) return null;
             const decipher = crypto.createDecipheriv('aes-256-gcm', isV2 ? atRestKey : masterKey, iv);
-            if (isV2) decipher.setAAD(Buffer.from(AT_REST_DOMAIN, 'utf8'));
+            if (isV2) decipher.setAAD(extraAad ? Buffer.concat([Buffer.from(AT_REST_DOMAIN, 'utf8'), extraAad]) : Buffer.from(AT_REST_DOMAIN, 'utf8'));
             decipher.setAuthTag(combined.subarray(-16));
             return Buffer.concat([
                 decipher.update(combined.subarray(0, -16)),

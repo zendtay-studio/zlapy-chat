@@ -52,19 +52,9 @@ const setStories = list => {
     stories.length = 0;
     for (const item of list) stories.push(item);
 };
-const setNotesMap = map => {
-    for (const key of Object.keys(notesMap)) delete notesMap[key];
-    Object.assign(notesMap, map);
-};
-const setCallFiles = map => {
-    callFiles.clear();
-    for (const [key, value] of map) callFiles.set(key, value);
-};
 
 module.exports = {
     setStories,
-    setNotesMap,
-    setCallFiles,
     users,
     usernameIndex,
     profiles,

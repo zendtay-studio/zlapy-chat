@@ -11,7 +11,6 @@ const http = require('http');
 const https = require('https');
 const net = require('net');
 const fs = require('fs');
-const path = require('path');
 
 const { CONFIG, PORT, ROOT, TLS_CERT_FILE, TLS_KEY_FILE, tlsState } = require('../config.js');
 const { db, blobDb } = require('../db/database.js');

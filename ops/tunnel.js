@@ -26,7 +26,7 @@ const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 
-require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
+require('dotenv').config({ path: path.join(__dirname, '..', '.env'), quiet: true });
 
 const token = String(process.env.CLOUDFLARE_TUNNEL_TOKEN || '').trim();
 if (!token) {

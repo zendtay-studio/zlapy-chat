@@ -246,3 +246,61 @@ test('al borrar un mensaje el contador de no leidos baja', async () => {
         assert.equal(chat.unread, 2, 'el mensaje borrado ya no cuenta como no leido');
     } finally { await stop(srv); }
 });
+
+test('el ajuste de mantener archivados se guarda en la cuenta', async () => {
+    const srv = await startServer();
+    try {
+        const ana = await register(srv.base, 'ana');
+        const initial = await api(srv.base, 'GET', '/account/chat-settings', null, ana.cookie);
+        assert.equal(initial.status, 200);
+        assert.equal(initial.json.keepArchived, false, 'apagado por defecto');
+
+        const on = await api(srv.base, 'POST', '/account/chat-settings', { keepArchived: true }, ana.cookie);
+        assert.equal(on.status, 200);
+        const read = await api(srv.base, 'GET', '/account/chat-settings', null, ana.cookie);
+        assert.equal(read.json.keepArchived, true, 'el ajuste persiste en la cuenta');
+
+        const bad = await api(srv.base, 'POST', '/account/chat-settings', { keepArchived: 'sí' }, ana.cookie);
+        assert.equal(bad.status, 400);
+    } finally { await stop(srv); }
+});
+
+test('un mensaje nuevo desarchiva el chat salvo con mantener archivados', async () => {
+    const srv = await startServer();
+    try {
+        const { ana, beto } = await contactPair(srv.base);
+        await api(srv.base, 'POST', '/chat/preferences', { targets: ['dm:beto'], archived: true }, ana.cookie);
+
+        await api(srv.base, 'POST', '/send', { to: 'ana', kind: 'text', data: 'hola' }, beto.cookie);
+        let prefs = await api(srv.base, 'GET', '/chat/preferences', null, ana.cookie);
+        assert.equal(prefs.json.prefs['dm:beto'], undefined, 'el mensaje devuelve el chat a la lista');
+
+        await api(srv.base, 'POST', '/account/chat-settings', { keepArchived: true }, ana.cookie);
+        await api(srv.base, 'POST', '/chat/preferences', { targets: ['dm:beto'], archived: true }, ana.cookie);
+        await api(srv.base, 'POST', '/send', { to: 'ana', kind: 'text', data: 'otra vez' }, beto.cookie);
+        prefs = await api(srv.base, 'GET', '/chat/preferences', null, ana.cookie);
+        assert.equal(prefs.json.prefs['dm:beto'].archived, true, 'con el ajuste activo sigue archivado');
+    } finally { await stop(srv); }
+});
+
+test('en grupos, el mensaje nuevo respeta el ajuste de mantener archivados', async () => {
+    const srv = await startServer();
+    try {
+        const { ana, beto } = await contactPair(srv.base);
+        const created = await api(srv.base, 'POST', '/groups', { name: 'Equipo', members: ['beto'] }, ana.cookie);
+        assert.equal(created.status, 200);
+        const gid = created.json.id;
+        const send = () => api(srv.base, 'POST', '/groups/' + gid, { message: { kind: 'text', data: 'hola' } }, beto.cookie);
+
+        await api(srv.base, 'POST', '/chat/preferences', { targets: ['group:' + gid], archived: true }, ana.cookie);
+        await send();
+        let prefs = await api(srv.base, 'GET', '/chat/preferences', null, ana.cookie);
+        assert.equal(prefs.json.prefs['group:' + gid], undefined, 'el mensaje devuelve el grupo a la lista');
+
+        await api(srv.base, 'POST', '/account/chat-settings', { keepArchived: true }, ana.cookie);
+        await api(srv.base, 'POST', '/chat/preferences', { targets: ['group:' + gid], archived: true }, ana.cookie);
+        await send();
+        prefs = await api(srv.base, 'GET', '/chat/preferences', null, ana.cookie);
+        assert.equal(prefs.json.prefs['group:' + gid].archived, true, 'con el ajuste activo sigue archivado');
+    } finally { await stop(srv); }
+});

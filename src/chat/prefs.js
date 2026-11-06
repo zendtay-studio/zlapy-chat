@@ -16,6 +16,7 @@
 
 const { Stmt } = require('../db/statements.js');
 const { tx } = require('../db/transactions.js');
+const { decField } = require('../crypto/field-crypto.js');
 const { profiles } = require('../state.js');
 const { isContact } = require('../users/privacy.js');
 const { byName } = require('../users/helpers.js');
@@ -85,7 +86,9 @@ function readChatPrefs(userId) {
     }
     for (const row of Stmt.listMutedPeers.all(userId)) {
         if (!row.peer_name) continue;
-        const key = row.peer_name.startsWith(GROUP_PREFIX) ? row.peer_name : dmKey(row.peer_name);
+        const nombre = decField('user_muted_peers.peer_name', row.peer_name);
+        if (!nombre) continue;
+        const key = nombre.startsWith(GROUP_PREFIX) ? nombre : dmKey(nombre);
         const entry = prefs[key] || (prefs[key] = emptyPref());
         entry.muted = true;
     }
@@ -141,6 +144,20 @@ function setUnreadFlag(userId, peerKey, unread) {
     tx.applyChatPrefs(userId, [{ key: peerKey, unread: !!unread }]);
 }
 
+/** ¿La cuenta pidió conservar archivados sus chats al recibir mensajes? */
+function keepsArchived(username) {
+    return !!(profiles[username] && profiles[username].keepArchived);
+}
+
+/** Desarchiva la conversación al entrar un mensaje nuevo, salvo que la
+ *  cuenta haya activado «Mantener los chats archivados». */
+function unarchiveForIncoming(username, userId, peerKey) {
+    if (keepsArchived(username)) return;
+    const row = Stmt.getChatPref.get(userId, peerKey);
+    if (!row || !row.archived) return;
+    tx.applyChatPrefs(userId, [{ key: peerKey, archived: false }]);
+}
+
 module.exports = {
     DM_PREFIX,
     GROUP_PREFIX,
@@ -152,5 +169,7 @@ module.exports = {
     resolveTarget,
     readChatPrefs,
     applyChatPrefs,
-    setUnreadFlag
+    setUnreadFlag,
+    keepsArchived,
+    unarchiveForIncoming
 };

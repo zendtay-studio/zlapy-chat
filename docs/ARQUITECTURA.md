@@ -437,7 +437,7 @@ Definidas en `src/http/responses.js:17-39` y aplicadas a **toda** respuesta:
 | `src/push/` | Suscripciones push, VAPID y envío de notificaciones. | `routes.js`, `vapid.js` |
 | `src/meta/` | `/healthz` y volcado de configuración. | `routes.js` |
 | `src/shared/` | Utilidades puras sin estado: validación, límites, tipos, galería, apariencia, ruta estática, avatar. | `validation.js`, `limits.js`, `types.js`, `gallery.js`, `appearance.js`, `message-data.js`, `static-path.js`, `avatar.js` |
-| `ops/` | Scripts de operación (no forman parte del servidor). | `supervisor.js`, `tunnel.js`, `backup.js`, `generate-master-key.js` |
+| `ops/` | Scripts de operación (no forman parte del servidor). | `supervisor.js`, `tunnel.js`, `backup.js`, `owner-credentials.js`, `reencrypt-master.js`, `repair-unreadable-auth-keys.js` |
 
 ### 4.2 Ficheros clave
 
@@ -448,9 +448,9 @@ Definidas en `src/http/responses.js:17-39` y aplicadas a **toda** respuesta:
 | `src/db/schema.js` | `SCHEMA_SQL` (20 bloques de tablas), `SCHEMA_VERSION = 3`, `ensureSchema()`, y las reglas de borrado en cascada que SQL no expresa (`deleteAccountRows`, `deleteGroupRows`, `deleteMessageRowsWhere`). |
 | `src/db/statements.js` | Compila ~120 sentencias preparadas una sola vez en `Stmt`. |
 | `src/db/transactions.js` | `tx.sendMessage`, `tx.deleteMessage`, `tx.markSeenMessage`, `tx.deleteGroup`, `tx.deleteAccount`, `tx.saveUser` (transacciones `better-sqlite3`), `removeBlobAccess()` y `pruneBlobHashes()`. |
-| `src/crypto/master-key.js` | Lee `CHAT_MASTER_KEY` del `.env` (base64, exactamente 32 bytes). Si falta la llave **y ya hay datos**, aborta. La genera él mismo (y la escribe en el `.env`) si la base no tiene cuentas. |
+| `src/crypto/master-key.js` | Deriva la llave maestra de la credencial del propietario (`DB_USER` + `DB_PASSWORD` del `.env`) vía `owner-key.js` (scrypt, N=32768). En una base nueva inicializa la credencial (sal + keycheck en `meta`); en una base con datos y credencial que no abre, aborta (exit 78). Vigila el `.env`: si la credencial cambia con el servidor vivo, sale con código 75 para que el supervisor lo reinicie. |
 | `src/crypto/message-crypto.js` | Cifrado en reposo `PCE1v2:` (AES-256-GCM con subclave HKDF de la llave maestra y AAD de dominio; el legado `PCE1:` sigue legible) y firmas Ed25519 derivadas por HKDF de la `auth_key` del usuario. |
-| `src/crypto/mtproto.js` | `auth_key` de 2048 bits por usuario (`key_id` = SHA-256 truncado a 128 bits), AES-256-GCM directo (subclave HKDF + AAD de contexto del mensaje), sobre `PCE3:<iv>:<ct+tag>`. El armazón cosmético de MTProto (sal, sesión, msg_id, msg_key, relleno) quedó eliminado. |
+| `src/crypto/mtproto.js` | Esquema **MTProto 2.0 completo** (spec de Telegram, core.telegram.org/mtproto/description) sobre la `auth_key` de 2048 bits por usuario: `key_id` = 64 bits bajos del SHA-1 (sobre externo de 24 bytes: `auth_key_id` + `msg_key`), paquete interno (salt + session_id HKDF, `msg_id` ≈ unixtime·2³² con paridad impar, `seq_no` = 2n+1 porque todo aquí es content-related, `length` %4, padding aleatorio 12..1024 con total %16), `msg_key` = bits 8..24 de SHA-256(`auth_key[96..128]‖plaintext`), derivación `sha256_a/b → aes_key/aes_iv` con x=8 (rol servidor→cliente) y **AES-256-IGE**. El descifrado aplica todos los checks de la especificación (enrutado por `key_id`, `msg_key` recalculada, sesiones, paridad, `%4`, padding en rango); el contexto del mensaje (id/chat/ts/autor/tipo) va dentro de `message_data` y se compara byte a byte: tocar el contexto ⇒ sobre desechado. Formato: `PCE3:<base64(auth_key_id ‖ msg_key ‖ encrypted_data)>`. |
 | `src/crypto/user-auth-keys.js` | `auth_key` por usuario (caché LRU de 500), `ensureAuthKey` (+ callback `onAuthKeyCreated` que invalida la caché de firma), `encryptForUser`/`decryptForUser`, `messageContextBytes` (contexto ligado). |
 | `src/http/router.js` | El enrutador completo (649 líneas): orden de comprobaciones, normalizaciones, rutas GET/POST y acciones de grupo. |
 | `src/http/servers.js` | Dispatcher, arranque, cierre ordenado con `wal_checkpoint(TRUNCATE)`. |
@@ -1083,14 +1083,14 @@ Dos niveles de cifrado:
 
 | Nivel | Clave | Formato | Uso |
 | --- | --- | --- | --- |
-| **En reposo, global** | Llave maestra (`CHAT_MASTER_KEY` en el `.env`) | `PCE1:`/`PCE1v2:` | Datos de infraestructura que no pertenecen a un usuario concreto. `PCE1v2` usa subclave HKDF + AAD de dominio; `PCE1` (AES directo) sigue legible como heredado. |
+| **En reposo, global** | Llave maestra (derivada de la credencial del propietario: `DB_USER` + `DB_PASSWORD` del `.env`) | `PCE1:`/`PCE1v2:` | Datos de infraestructura que no pertenecen a un usuario concreto. `PCE1v2` usa subclave HKDF + AAD de dominio; `PCE1` (AES directo) sigue legible como heredado. Los campos sueltos (nombres de grupos, invitaciones, silenciados, colores…) usan AAD `field:<tabla>.<columna>` y las fotos van al almacén de blobs (la fila guarda solo su hash). |
 | **Por usuario** | `auth_key` del usuario (2048 bits, MTProto 2.0) | `PCE3:` | Todo el contenido sensible de una cuenta. |
 
 #### Contenido cifrado **con la `auth_key` del usuario**
 
 | Dato | Tabla / columna | Cifrado en |
 | --- | --- | --- |
-| Mensajes | `messages.data` | `PCE3:` con clave por mensaje (MTProto 2.0) |
+| Mensajes | `messages.data` | `PCE3:` MTProto 2.0 (`msg_key` derivado del plaintext completo por mensaje, AES-256-IGE) |
 | Nombre visible | `user_profiles.display_name` | `encryptForUser` |
 | Biografía | `user_profiles.bio` | `encryptForUser` |
 | Nota del perfil | `user_profiles.note` | `encryptForUser` |
@@ -1455,9 +1455,10 @@ rechazada no debe tumbar el servidor).
 | Script | Qué hace | Notas |
 | --- | --- | --- |
 | `supervisor.js` | Vigila y relanza el servidor (ver §9.1). | `npm start`. |
-| `backup.js` | Copia `zlapy.db` y `blob.db` con la **API de backup de SQLite** (`db.backup()`, segura con el servidor corriendo y WAL activo) y | `backup.js` (cont.) | (la llave reside como `CHAT_MASTER_KEY` en el `.env`: hay que copiar ese fichero a parte). | `npm run backup [dir]`. El destino se crea con 0700 y los ficheros con 0600. |
-| `generate-master-key.js` | Genera `CHAT_MASTER_KEY` (32 bytes en base64) en el `.env`, modo 0600. Con `--force` y la base con datos, gira la llave y RE-CIFRA todo el material dependiente (`reencrypt-master.js`). | `npm run key [-- --force \| --null]`. No muestra la clave; no gira una clave existente sin `--force`. |
-| `reencrypt-master.js` | Motor de rotación con re-cifrado: verifica TODOS los sobres dependientes de la maestra con la llave vigente, copia el `.env` a `.env.master-bak`, re-cifra `user_auth_keys`, `groups.keys_cipher`, `meta` (VAPID) y `blobs.data` en transacciones con reversión compensada. | Lo invoca `npm run key -- --force` cuando la base ya tiene datos. |
+| `backup.js` | Copia las dos bases con la **API de backup de SQLite** (`db.backup()`, segura con el servidor corriendo y WAL activo) y el `.env` como `credencial.env`: sin la credencial, el respaldo es inservible. | `npm run backup [dir]`. El destino se crea con 0700 y los ficheros con 0600. |
+| `owner-credentials.js` | CLI de la credencial del propietario (`npm run owner`): `init` (base nueva), `credential` (cambia la credencial y re-cifra TODO), `rotate` (sal nueva), `check` (auditoría de solo lectura), `show`, `unlock-check`, `export-kit` (kit de recuperación con credencial + bases) y `reset`. No muestra la contraseña por pantalla. | `npm run owner -- <comando>`. |
+| `reencrypt-master.js` | Motor de re-cifrado del dominio de la llave maestra: verifica TODOS los sobres dependientes con la llave vigente, re-cifra `user_auth_keys`, `groups.keys_cipher`, `meta` (VAPID), los campos sueltos por columna (`FIELD_TABLES`) y `blobs.data` en transacciones con reversión compensada. **Aborta si hay un servidor vivo de esa instalación** (seguiría escribiendo con la llave vieja). No toca el `.env`: lo escribe el CLI, al final. `auditMasterKey()` hace la auditoría de solo lectura. | Lo invoca `npm run owner -- credential/rotate`. |
+| `repair-unreadable-auth-keys.js` | Repara las `auth_key` ilegibles con la llave actual (giro de llave con el servidor en marcha): respaldo, borra la fila y limpia el perfil cifrado con ella. | `npm run repair [-- --apply]`. Sin `--apply` simula. |
 | `env-writer.js` | Escritura atómica de secretos (temporal 0600 + fsync + rename), `setEnvValue` y lectura directa del `.env`. | Compartido por el generador y el motor de re-cifrado. |
 | `tunnel.js` | Levanta `cloudflared` con la configuración `zty.yml` y el token de `CLOUDFLARE_TUNNEL_TOKEN`. | `npm run tunnel`. El token **no viaja en `argv`** (se entrega por `--token-file` en un fichero 0600 dentro de un directorio 0700, o por `TUNNEL_TOKEN` en el entorno si el binario es antiguo), y la salida del proceso se **redacta** para que no pueda aparecer en los logs. |
 | `migrate-to-mtproto.js` | Convierte de golpe el contenido antiguo al esquema nuevo: mensajes `PCE2` → `PCE3` y el resto (resúmenes, notas, perfiles, llamadas, push, historias) a cifrado con la `auth_key` del usuario. | `npm run migrate:mtproto [-- --apply]`. Sin `--apply` es simulación. Hace un respaldo automático antes de escribir, es idempotente y **verifica cada registro ida y vuelta antes de tocarlo**. |

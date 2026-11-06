@@ -9,6 +9,7 @@
 'use strict';
 
 const { renamePeerInSummaries } = require('./summaries.js');
+const { decField, encField } = require('../crypto/field-crypto.js');
 const { db } = require('../db/database.js');
 const { Stmt } = require('../db/statements.js');
 const { readGroup, writeGroupMeta } = require('../groups/store.js');
@@ -60,9 +61,12 @@ function propagateUsernameChange(previous, next) {
     for (const story of stories) {
         if (story.from === previous) story.from = next;
     }
-    // El historial de llamadas guarda el NOMBRE del par: hay que mantenerlo
-    // al día para que el borrado por cuenta lo encuentre tras un renombre.
-    Stmt.renameCallsPeer.run(next, previous);
+    // El historial de llamadas guarda el NOMBRE del par (cifrado): hay que
+    // mantenerlo al día para que el borrado por cuenta lo encuentre tras un
+    // renombre. Al ir cifrado, se recorre, se descifra y se re-cifra.
+    for (const row of Stmt.listCallsWithPeer.all())
+        if (decField('calls.peer', row.peer) === previous)
+            Stmt.updateCallPeer.run(encField('calls.peer', next), row.id);
 
     if (callFiles.has(previous)) {
         const calls = callFiles.get(previous);

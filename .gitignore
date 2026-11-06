@@ -14,6 +14,7 @@
 *.csr
 *.p12
 *.pfx
+*.log
 
 # ── Datos persistentes y privados del usuario ───────────────
 # Bases SQLite y todo su volcado (WAL, journals, sobrantes de vistas).
@@ -22,6 +23,7 @@
 *.db-journal
 *.db-wal
 *.db-shm
+logs/
 data/
 # Copias de recuperación: se crean al mover "data/" durante un wipe
 # manual (data → data2, data3…). Nunca committearlas.

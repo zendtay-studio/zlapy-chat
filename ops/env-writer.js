@@ -2,10 +2,9 @@
  * Escritura de secretos y variables de entorno.
  *
  * Módulo diminuto e independiente (sólo `node:` core): lo usan tanto el
- * generador de llave (`ops/generate-master-key.js`) como el motor de
- * re-cifrado (`ops/reencrypt-master.js`), de modo que ambos compartan
- * EXACTAMENTE las mismas garantías de escritura atómica sin dependencias
- * circulares.
+ * CLI de la credencial (`ops/owner-credentials.js`) como los scripts de
+ * operación que escriben secretos, de modo que todos compartan EXACTAMENTE
+ * las mismas garantías de escritura atómica sin dependencias circulares.
  */
 
 const crypto = require('node:crypto');
@@ -50,6 +49,14 @@ function writeSecretFile(filePath, contents) {
     // existía con otro modo (o el FS no respeta openSync con modo), se
     // reafirman los 0600.
     try { fs.chmodSync(filePath, SECRET_FILE_MODE); } catch (e) { /* best-effort */ }
+    // El rename también tiene que llegar a disco: sin fsync del directorio,
+    // un corte de luz justo después podría perder el fichero renombrado
+    // (y dejar el temporal huérfano con el secreto dentro).
+    try {
+        const dfd = fs.openSync(dir, 'r');
+        fs.fsyncSync(dfd);
+        fs.closeSync(dfd);
+    } catch (e) { /* best-effort: no todos los FS lo permiten */ }
 }
 
 /**

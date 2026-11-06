@@ -3,10 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-    <meta name="theme-color" content="#111b21">
+    <meta name="theme-color" content="#090c0f">
     <title>Crear grupo — Zlapy</title>
     <link rel="stylesheet" href="/css/theme.css">
-    <link rel="stylesheet" href="/css/group-create.css?v=3">
+    <link rel="stylesheet" href="/css/group-create.css?v=9">
     <link rel="stylesheet" href="/css/avatar-editor.css?v=1">
     <script>
         /* Aplica el acento cacheado del usuario antes de pintar para que no parpadee */
@@ -73,7 +73,7 @@
                         <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
                     </button>
                     <div class="appbar-copy">
-                        <h1>Nuevo grupo</h1>
+                        <h1 id="pageTitle">Nuevo grupo</h1>
                         <p id="appbarSub">Añade un nombre y participantes</p>
                     </div>
                     <button class="create-btn" id="createBtn" type="button">Crear</button>
@@ -105,10 +105,14 @@
                                 <textarea id="groupDesc" maxlength="500" rows="2" placeholder="¿De qué trata el grupo? (opcional)" aria-label="Descripción del grupo"></textarea>
                                 <span class="char-count" id="descCount">0/500</span>
                             </div>
+                            <button class="text-action photo-remove" id="removeAvatarBtn" type="button" hidden>
+                                <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
+                                <span>Quitar foto</span>
+                            </button>
                         </div>
                     </section>
 
-                    <section class="participants" aria-labelledby="participantsTitle">
+                    <section class="participants" id="participantsSection" aria-labelledby="participantsTitle">
                         <div class="section-head">
                             <div>
                                 <h2 id="participantsTitle">Participantes</h2>
@@ -219,11 +223,16 @@
                                     <button type="button" data-value="admins" aria-pressed="false">Solo admins</button>
                                 </div>
                             </div>
-                            <p class="adv-note">Podrás cambiar estos permisos después desde la información del grupo.</p>
+                            <div class="adv-subhead" id="contentPolicyHead" hidden>
+                                <b>Contenido permitido</b>
+                                <span>Quién puede enviar cada tipo de contenido</span>
+                            </div>
+                            <div id="contentPolicyRows" hidden></div>
+                            <p class="adv-note" id="advNote">Podrás cambiar estos permisos después desde la información del grupo.</p>
                         </div>
                     </details>
 
-                    <p class="footnote">
+                    <p class="footnote" id="footnote">
                         <svg class="icon" aria-hidden="true"><use href="#i-info"></use></svg>
                         <span>Los participantes recibirán una invitación. Podrás cambiar más ajustes después de crear el grupo.</span>
                     </p>
@@ -237,6 +246,6 @@
     <script src="/js/transport.js"></script>
     <script src="/js/avatar-editor.js?v=1"></script>
     <script src="/js/autogrow.js?v=1"></script>
-    <script src="/js/group-create.js?v=4"></script>
+    <script src="/js/group-create.js?v=6"></script>
 </body>
 </html>

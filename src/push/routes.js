@@ -7,10 +7,11 @@
 'use strict';
 
 const { decryptForUser, encryptForUser } = require('../crypto/setup.js');
+const { encField } = require('../crypto/field-crypto.js');
 const { db } = require('../db/database.js');
 const { Stmt } = require('../db/statements.js');
 const { json } = require('../http/responses.js');
-const { notifyUser } = require('./vapid.js');
+const { findPushSubRow, notifyUser } = require('./vapid.js');
 const { push } = require('../realtime/notify.js');
 const { validPushEndpoint } = require('../shared/validation.js');
 const { pushSubs } = require('../state.js');
@@ -44,8 +45,15 @@ function postPushSubscribe(req, res, url, data, actor) {
     if (data.sub && data.sub.endpoint) {
         const sub = normalizePushSub(data.sub);
         if (!sub) return json(res, 400, { error: 'Suscripción de push inválida.' });
-        // Las claves de push (p256dh/auth) se guardan cifradas en reposo.
-        Stmt.insertPushSub.run(id, sub.endpoint, encryptForUser(id, JSON.stringify(sub)));
+        // Las claves de push (p256dh/auth) se guardan cifradas en reposo, y
+        // el endpoint también (es una URL con un token dentro).
+        // El endpoint va cifrado de forma no determinista, así que una
+        // re-suscripción del MISMO endpoint no reemplaza la fila anterior:
+        // se borra primero la que hubiera con ese endpoint.
+        const previa = findPushSubRow(id, sub.endpoint);
+        if (previa) Stmt.deletePushSubByRowid.run(previa.rowid);
+        Stmt.insertPushSub.run(id, encField('push_subs.endpoint', sub.endpoint),
+            encryptForUser(id, JSON.stringify(sub)));
         Stmt.trimPushSubs.run(id, id);
         const rows = db.prepare('SELECT data FROM push_subs WHERE user_id = ?').all(id);
         pushSubs.set(id, rows.map(r => parseJsonSafe(decryptForUser(id, r.data) || '')).filter(Boolean));
@@ -54,7 +62,8 @@ function postPushSubscribe(req, res, url, data, actor) {
 }
 
 function postPushUnsubscribe(req, res, url, data, actor) {
-    Stmt.deletePushSub.run(req.authUser.id, data.endpoint);
+    const fila = findPushSubRow(req.authUser.id, data.endpoint);
+    if (fila) Stmt.deletePushSubByRowid.run(fila.rowid);
     const rows = db.prepare('SELECT data FROM push_subs WHERE user_id = ?').all(req.authUser.id);
     pushSubs.set(req.authUser.id, rows.map(r => parseJsonSafe(decryptForUser(req.authUser.id, r.data) || '')).filter(Boolean));
     return json(res, 200, { ok: true });

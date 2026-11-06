@@ -12,8 +12,11 @@ const crypto = require('crypto');
 const { rowToMessage } = require('../chat/messages.js');
 const { decorateForClient, resolveName } = require('../chat/summaries.js');
 const { decryptAtRest, encryptAtRest, encryptForUser } = require('../crypto/setup.js');
+const { decField, decFieldOrNull, encField } = require('../crypto/field-crypto.js');
 const { Stmt, deleteGroupSummary } = require('../db/statements.js');
 const { db } = require('../db/database.js');
+const { pruneBlobHashes } = require('../db/transactions.js');
+const { readImage, storeImage } = require('../profile/images.js');
 const { push } = require('../realtime/notify.js');
 const { groupCache, groupPubCache, users } = require('../state.js');
 const { byName, parseJsonSafe } = require('../users/helpers.js');
@@ -52,7 +55,11 @@ function normalizeGroup(g) {
     g.keyboxes = Array.isArray(g.keyboxes) ? g.keyboxes : [];
     g.ownerId = typeof g.ownerId === 'string' ? g.ownerId : '';
     g.createdAt = Number.isFinite(g.createdAt) ? g.createdAt : Date.now();
-    g.inviteCode = typeof g.inviteCode === 'string' ? g.inviteCode : crypto.randomBytes(18).toString('base64url');
+    /* El código de invitación es una credencial: si la fila existente no se
+       puede descifrar NO se inventa otro (sería cambiar la puerta sin
+       avisar). El grupo queda sin código hasta que se repare. */
+    if (!g.inviteCode && !g.keepInviteCode)
+        g.inviteCode = crypto.randomBytes(18).toString('base64url');
     return g;
 }
 
@@ -78,12 +85,13 @@ function readGroup(gid) {
     const row = Stmt.getGroup.get(gid);
     if (!row) { groupNegMiss(gid, ahora); return null; }
     const keys = decryptGroupKeys(row.keys_cipher);
+    const inviteCode = decFieldOrNull('groups.invite_code', row.invite_code);
     const g = normalizeGroup({
         id: row.id,
         cryptoId: keys.cryptoId || row.crypto_id,
-        name: row.name,
-        description: row.description,
-        avatar: row.avatar,
+        name: decField('groups.name', row.name),
+        description: decField('groups.description', row.description),
+        avatar: readImage(row.avatar_ref),
         ownerId: row.owner_id || '',
         visibility: row.visibility,
         joinPolicy: row.join_policy,
@@ -91,8 +99,9 @@ function readGroup(gid) {
         addPolicy: row.add_policy,
         editPolicy: row.edit_policy,
         mentionAllPolicy: row.mention_all_policy,
-        contentPolicy: parseJsonSafe(row.content_policy, {}),
-        inviteCode: row.invite_code,
+        contentPolicy: parseJsonSafe(decField('groups.content_policy', row.content_policy), {}),
+        inviteCode: inviteCode === null ? '' : inviteCode,
+        keepInviteCode: inviteCode === null,
         createdAt: row.created_at,
         keyboxes: keys.keyboxes || [],
         members: [], memberIds: [], admins: [], joinRequests: []
@@ -109,7 +118,11 @@ function readGroup(gid) {
     }
     // Un grupo vivo siempre tiene al menos un administrador.
     if (!g.admins.length && g.members.length) g.admins.push(g.members[0]);
-    g.joinRequests = Stmt.listJoinRequests.all(gid).map(r => ({ userId: r.user_id, username: r.username, ts: r.ts }));
+    g.joinRequests = Stmt.listJoinRequests.all(gid).map(r => ({
+        userId: r.user_id,
+        username: decField('group_join_requests.username', r.username),
+        ts: r.ts
+    }));
     groupCache.set(gid, g);
     return g;
 }
@@ -131,11 +144,16 @@ function writeGroupMeta(g) {
         keyboxes: Array.isArray(normalized.keyboxes) ? normalized.keyboxes : []
     }));
     const ownerId = users.has(normalized.ownerId) ? normalized.ownerId : null;
+    /* El avatar del grupo va al almacén de blobs (cifrado en reposo); en la
+       fila solo queda su hash. */
+    const prevRow = Stmt.getGroup.get(normalized.id);
+    const avatarRef = storeImage(typeof normalized.avatar === 'string' ? normalized.avatar : '')
+        || (prevRow ? prevRow.avatar_ref : '');
     const columns = [
         normalized.cryptoId,
-        normalized.name || normalized.id,
-        normalized.description || '',
-        normalized.avatar || '',
+        encField('groups.name', normalized.name || normalized.id),
+        encField('groups.description', normalized.description || ''),
+        avatarRef,
         ownerId,
         normalized.visibility === 'public' ? 'public' : 'private',
         ['open', 'request', 'closed'].includes(normalized.joinPolicy) ? normalized.joinPolicy : 'request',
@@ -143,13 +161,15 @@ function writeGroupMeta(g) {
         normalized.addPolicy === 'all' ? 'all' : 'admins',
         normalized.editPolicy === 'all' ? 'all' : 'admins',
         normalized.mentionAllPolicy === 'all' ? 'all' : 'admins',
-        JSON.stringify(normalized.contentPolicy || {}),
-        normalized.inviteCode,
+        encField('groups.content_policy', JSON.stringify(normalized.contentPolicy || {})),
+        encField('groups.invite_code', normalized.inviteCode),
         keysCipher,
         Number.isFinite(normalized.createdAt) ? normalized.createdAt : Date.now()
     ];
     if (Stmt.getGroup.get(normalized.id)) Stmt.updateGroup.run(...columns, normalized.id);
     else Stmt.insertGroup.run(normalized.id, ...columns);
+    if (prevRow && prevRow.avatar_ref && prevRow.avatar_ref !== avatarRef)
+        pruneBlobHashes([prevRow.avatar_ref]);
 
     const admins = new Set(normalized.admins || []);
     const memberIds = new Set((normalized.memberIds || []).filter(id => users.has(id)));
@@ -168,7 +188,8 @@ function writeGroupMeta(g) {
         // El nombre se resuelve SIEMPRE al actual (BUG-010): r.username era
         // el snapshot de la fila original y el renombrado de la cuenta no
         // se propagaba a la lista de solicitudes.
-        Stmt.insertJoinRequest.run(normalized.id, r.userId, users.get(r.userId).username, r.ts || Date.now());
+        Stmt.insertJoinRequest.run(normalized.id, r.userId,
+            encField('group_join_requests.username', users.get(r.userId).username), r.ts || Date.now());
     }
     normalized.ownerId = ownerId || '';
     normalized.members = [...memberIds].map(id => users.get(id).username);
@@ -195,10 +216,13 @@ const pub = (g, viewerId = '') => {
         addPolicy: g.addPolicy, editPolicy: g.editPolicy, contentPolicy: g.contentPolicy,
         mentionAllPolicy: g.mentionAllPolicy,
         joinRequests: viewerId && g.admins.some(name => byName(name)?.id === viewerId) ? g.joinRequests : [],
-        // El código de invitación es una credencial de acceso: con joinPolicy
-        // 'open' permite entrar directamente en un grupo privado. Solo se
-        // entrega a los administradores.
-        inviteCode: viewerId && g.admins.some(name => byName(name)?.id === viewerId) ? g.inviteCode : undefined,
+        /* El código de invitación se entrega a TODO miembro del grupo: la
+           opción «Compartir» de los detalles está disponible para cualquiera
+           que esté dentro, no solo para los administradores. Sigue siendo una
+           credencial de acceso (con joinPolicy 'open' permite entrar
+           directamente en un grupo privado), así que fuera del grupo no viaja
+           nunca: la lista /groups la borra y pub(g) sin visor no lo lleva. */
+        inviteCode: viewerId && g.memberIds.includes(viewerId) ? g.inviteCode : undefined,
         keybox: (viewerId && (g.keyboxes || []).find(b => byName(b.recipient)?.id === viewerId)) || null
     };
     groupPubCache.set(key, out);

@@ -48,7 +48,7 @@ const fs = require('fs');
 // mismos valores que el supervisor. Si dotenv no estuviera instalado, se
 // sigue con el entorno del proceso (aviso, no caída).
 try {
-    require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
+    require('dotenv').config({ path: path.join(__dirname, '..', '.env'), quiet: true });
 } catch (e) {
     console.warn('[supervisor] no se pudo cargar dotenv:', e.message);
 }
@@ -289,6 +289,21 @@ function handleChildLine(line, pid) {
 // Programación del reinicio tras una caída, con la clasificación correcta.
 function handleChildExit(code, signal) {
     const uptimeSec = Math.round((Date.now() - childStartedAt) / 1000);
+
+    /* CÓDIGO 78 (EX_CONFIG): la credencial del propietario no abre la base
+       (falta, es la equivocada o la base no está inicializada). No es un
+       fallo transitorio: reintentar sólo repetiría el mismo error. Se para
+       el supervisor y se espera a que el operador corrija el `.env` (o
+       ejecute `npm run owner -- init`). */
+    if (code === 78) {
+        console.error(
+            `[supervisor] el servidor salió con código 78 (EX_CONFIG): la credencial del propietario ` +
+            'no abre esta base. No se reintenta (sería el mismo error): corrige DB_USER/DB_PASSWORD en el .env ' +
+            'o ejecuta `npm run owner -- init` si la base es nueva, y vuelve a arrancar.'
+        );
+        writePid(null);
+        process.exit(78);
+    }
 
     if (childHealthy) {
         // CAÍDA EN CALIENTE: el servicio estaba sirviendo y se ha caído.

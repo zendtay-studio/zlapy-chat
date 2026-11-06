@@ -1,56 +1,35 @@
 /**
  * Llave maestra del servidor.
  *
- * Obtiene la llave de 32 bytes que cifra los datos en reposo. Vive SIEMPRE
- * en el `.env` (`CHAT_MASTER_KEY`, base64): el servidor la genera él mismo
- * en el primer arranque de una instalación nueva (base sin datos) y la
- * guarda ahí. No hay fichero de llave aparte: un único lugar del que se
- * copia el respaldo.
+ * La llave maestra ya NO es un valor aleatorio guardado en el `.env`: es el
+ * resultado de derivar la credencial del propietario (DB_USER + DB_PASSWORD)
+ * con scrypt. `src/crypto/owner-key.js` explica el modelo; aquí solo se
+ * conecta con el arranque y con el vigilante.
  *
- * Fail-fast: si la base ya contiene datos y la llave no está, se niega a
- * arrancar — regenerarla en silencio haría ilegibles todos los mensajes,
- * historias y adjuntos cifrados con la llave anterior.
+ * Fail-fast: sin credencial, con la base sin inicializar o con una credencial
+ * que no descifra el keycheck, el arranque falla con un mensaje accionable.
+ * En ningún caso se genera una llave nueva: una llave nueva sobre datos
+ * existentes los volvería ilegibles para siempre (el incidente que motivó
+ * todo este rediseño).
  */
 'use strict';
 
-const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { BLOB_DB_PATH, CONFIG, DB_PATH, ROOT } = require('../config.js');
-const { ensureEnvFile, setEnvValue } = require('../../ops/generate-master-key.js');
+const { credentialFingerprint, ensureOwnerCredential, readCredential } = require('./owner-key.js');
 
 const ENV_PATH = path.join(ROOT, '.env');
-
-/** Lee y decodifica el valor de `CHAT_MASTER_KEY` directamente del `.env`
- * (sin depender de la caché de CONFIG, que se cargó al arrancar el proceso
- * y no ve la clave que acabamos de escribir). Devuelve Buffer de 32 bytes o
- * null si la asignación está vacía. Un valor malformado lanza: sin llave
- * mejor no seguir. */
-function readKeyFromEnvFile(envPath = ENV_PATH) {
-    if (!fs.existsSync(envPath)) return null;
-    // `[ \t]*`, no `\s*`: en JS el `\s` cruza saltos de línea y el valor de
-    // una línea puede "engullir" el comentario siguiente como si fuera suyo.
-    const match = fs.readFileSync(envPath, 'utf8').match(/^[ \t]*CHAT_MASTER_KEY[ \t]*=[ \t]*(.*)$/m);
-    if (match === null) return null;
-    const value = match[1].trim().replace(/^["']|["']$/g, '').trim();
-    if (!value) return null;
-    const key = Buffer.from(value, 'base64');
-    if (key.length !== 32)
-        throw new Error('CHAT_MASTER_KEY must encode exactly 32 bytes.');
-    return key;
-}
 
 /**
  * ¿La base de datos ya contiene datos de verdad?
  *
  * No basta con que exista el fichero: una base recién creada (sólo con el
- * esquema, sin cuentas) es tan inofensiva como no tener base, y en ese caso
- * se puede generar la llave maestra sin riesgo. Se cuentan las filas de
- * `users` porque toda instalación con contenido tiene al menos una cuenta.
+ * esquema, sin cuentas) es tan inofensiva como no tener base. Se cuentan las
+ * filas de `users` porque toda instalación con contenido tiene al menos una
+ * cuenta.
  *
- * Si la base no se puede leer (por ejemplo, `better-sqlite3` sin compilar en
- * Android) se asumen datos: es el camino seguro, porque generar una llave
- * nueva con datos cifrados los volvería ilegibles.
+ * Si la base no se puede leer se asumen datos: es el camino seguro.
  *
  * @param {{dbPath?: string, blobPath?: string}} options rutas alternativas
  *        (sólo para las pruebas).
@@ -63,8 +42,6 @@ function baseDeDatosConDatos(options = {}) {
     let db = null;
     let abiertaAqui = false;
     try {
-        // Si el módulo de datos ya está cargado, se usa su conexión (es la que
-        // tiene el esquema aplicado). Si no, se abre en sólo lectura.
         if (usaRutasPorDefecto) {
             try { db = require('../db/database.js').db; } catch (error) { db = null; }
         }
@@ -82,59 +59,123 @@ function baseDeDatosConDatos(options = {}) {
     }
 }
 
-const getMasterKeyBytes = () => {
-    // 1) La llave del entorno (.env) manda.
-    if (CONFIG.chatMasterKey) {
-        const key = Buffer.from(CONFIG.chatMasterKey, 'base64');
-        if (key.length !== 32) throw new Error('CHAT_MASTER_KEY must encode exactly 32 bytes.');
-        return key;
-    }
+/**
+ * La llave maestra de este proceso.
+ *
+ * Se deriva de la credencial del `.env` y se comprueba contra el keycheck de
+ * la base. En una instalación NUEVA (base sin credencial y sin datos) la
+ * inicializa con esa credencial. Lanza con un mensaje accionable si algo no
+ * cuadra.
+ *
+ * @returns {Buffer} 32 bytes
+ */
+const getMasterKeyBytes = () => ensureOwnerCredential().key;
 
-    // 2) Sin llave y con datos: no se genera nada, se pide la llave del
-    //    respaldo. Un `npm run key -- --force` aquí haría irreversible la
-    //    pérdida de TODOS los datos, así que este error es el único camino
-    //    disponible.
-    if (baseDeDatosConDatos())
-        throw new Error(`No hay CHAT_MASTER_KEY en ${path.relative(ROOT, ENV_PATH)} y la base de datos ya contiene datos. ` +
-            'Restaura la clave maestra desde tu respaldo y pégala en el .env (CHAT_MASTER_KEY=...) antes de arrancar: ' +
-            'una clave nueva haría ilegibles todos los mensajes, historias y adjuntos cifrados con la anterior. ' +
-            'Si es una instalación nueva, borra la carpeta "data" (o el fichero data/zlapy.db) y vuelve a arrancar.');
-
-    // 3) Instalación nueva (base vacía o inexistente): se genera la llave y
-    //    se guarda en el .env. Reconstruir el arranque con una sola lectura:
-    //    el supervisor o varios servidores de prueba pueden arrancar a la
-    //    vez, y la llave es un SECRETO COMPARTIDO, no un valor por proceso:
-    //    si otro proceso escribió la suya primero, se ADOPTA la del
-    //    ganador (todos los que arranquen después leerán la misma).
-    ensureEnvFile(ENV_PATH);
-    for (let intento = 0; intento < 20; intento++) {
-        // Otro proceso acaso ganó la carrera entre la carga de CONFIG y
-        // aquí: releer el fichero antes de generar.
-        const adoptada = readKeyFromEnvFile();
-        if (adoptada) {
-            console.log('[crypto] llave maestra leída de CHAT_MASTER_KEY (.env).');
-            return adoptada;
-        }
-        const key = crypto.randomBytes(32);
-        const encoded = key.toString('base64');
-        setEnvValue(ENV_PATH, 'CHAT_MASTER_KEY', encoded);
-        // Verificación post-escritura: si otra instalación escribió nuestra
-        // entrada casi al mismo tiempo, adoptamos la SUYA (la que quedó
-        // en disco, que es la que usará el siguiente arranque).
-        let ganadora = null;
-        try { ganadora = readKeyFromEnvFile(); } catch { }
-        if (ganadora && !ganadora.equals(key)) continue;        // Coherencia interna del proceso: dotenv cargó el `.env` antes de
-        // que la clave existiera.
-        process.env.CHAT_MASTER_KEY = encoded;
-        console.log(`[crypto] llave maestra generada y guardada en CHAT_MASTER_KEY (${path.relative(ROOT, ENV_PATH)}) — primera instalación.`);
-        console.log('[crypto] Respaldo sugerido: guarda una copia del .env junto a tus respaldos de base (npm run backup).');
-        return key;
+/**
+ * Lee la credencial del `.env` (fichero, no entorno del proceso).
+ *
+ * El vigilante necesita leer el FICHERO: el entorno del proceso no cambia
+ * cuando alguien edita el `.env`, y lo que hay que detectar es exactamente
+ * ese cambio.
+ *
+ * @param {string} [envPath]
+ * @returns {{user: string, password: string, source: string}|null}
+ */
+function readCredentialFromEnvFile(envPath = ENV_PATH) {
+    if (!fs.existsSync(envPath)) return null;
+    const texto = fs.readFileSync(envPath, 'utf8');
+    const valor = nombre => {
+        const match = texto.match(new RegExp(`^[ \\t]*${nombre}[ \\t]*=[ \\t]*(.*)$`, 'm'));
+        if (!match) return '';
+        return match[1].trim().replace(/^["']|["']$/g, '').trim();
+    };
+    const user = valor('DB_USER');
+    if (!user) return null;
+    const archivo = valor('DB_PASSWORD_FILE');
+    if (archivo) {
+        const ruta = path.isAbsolute(archivo) ? archivo : path.join(ROOT, archivo);
+        try {
+            const password = fs.readFileSync(ruta, 'utf8').replace(/\r?\n$/, '');
+            if (!password) return null;
+            return { user, password, source: ruta };
+        } catch { return null; }
     }
-    throw new Error('No se pudo fijar CHAT_MASTER_KEY en el .env de forma segura (varios arrancadores compitiendo).');
-};
+    const password = valor('DB_PASSWORD');
+    if (!password) return null;
+    return { user, password, source: 'DB_PASSWORD' };
+}
+
+/**
+ * Vigila la credencial del `.env` mientras el servidor está vivo.
+ *
+ * Por qué: la llave maestra se carga UNA vez, al arrancar. Si alguien cambia
+ * la credencial con el servidor en marcha (la migración re-cifra las bases,
+ * pero el proceso vivo sigue escribiendo con la llave que tiene en memoria),
+ * el resultado es una base con dos llaves: las filas viejas quedan ilegibles
+ * y las nuevas se cifran con la que ya no está en el `.env`. Es exactamente
+ * la desincronización que sufrió esta instalación.
+ *
+ * Qué hace: relee la credencial del `.env` cada `intervalMs` y compara su
+ * huella. Si cambia, avisa y llama a `onChange` (por defecto: salir con
+ * código 75 = EX_TEMPFAIL, para que el supervisor lo reinicie ya con la
+ * credencial nueva).
+ *
+ * @param {object} options
+ * @param {object} options.credential  credencial con la que arrancó el proceso
+ * @param {string} [options.envPath]   ruta del `.env` que se vigila
+ * @param {number} [options.intervalMs] cada cuánto se comprueba
+ * @param {Function} [options.onChange] qué hacer si la credencial cambia
+ * @returns {{stop: Function, check: Function}}
+ */
+function watchCredentialFile({ credential, envPath = ENV_PATH, intervalMs = 15000, onChange } = {}) {
+    /* La huella de REFERENCIA es la del FICHERO al arrancar, no la del
+       entorno del proceso: un servidor puede recibir la credencial por
+       variables de entorno (pruebas, contenedores) con un `.env` que diga
+       otra cosa, y eso NO es un cambio de credencial — es un arranque
+       distinto. Lo que hay que detectar es que el FICHERO cambió respecto
+       a lo que él mismo decía cuando este proceso arrancó.
+       Sin credencial en el fichero (arranque sólo por entorno) la huella
+       es null y el vigilante nunca dispara: no hay nada que vigilar. */
+    const huellaInicial = credentialFingerprint(credential || readCredentialFromEnvFile(envPath));
+    const avisar = typeof onChange === 'function' ? onChange : () => { process.exit(75); };
+    /* El aviso se emite UNA vez: si el proceso no sale (porque `onChange` no
+       lo mata), no tiene sentido seguir diciendo lo mismo cada 15 s. */
+    let avisada = false;
+
+    const check = () => {
+        if (avisada) return false;
+        if (!huellaInicial) return false;
+        let actual = null;
+        let legible = true;
+        try { actual = credentialFingerprint(readCredentialFromEnvFile(envPath)); }
+        catch { legible = false; }
+        /* Un error de lectura (escritura atómica a medias, FS raro) no es
+           alarma: se reintenta en el siguiente ciclo. Pero una credencial
+           que YA NO ESTÁ (fichero legible, credencial ausente) sí: sin
+           ella el arranque siguiente no abriría, y este proceso tiene que
+           enterarse ahora, no al reiniciar. */
+        if (!legible) return false;
+        if (actual && actual === huellaInicial) return false;
+        console.error(actual
+            ? '[crypto] La credencial del .env cambió con el servidor en marcha: este proceso seguiría cifrando con la llave anterior. '
+              + 'Se sale para reiniciar con la credencial nueva (código 75).'
+            : '[crypto] La credencial del .env desapareció con el servidor en marcha. '
+              + 'Se sale para que el arranque siguiente falle de forma explícita (código 75).');
+        avisada = true;
+        try { avisar(); } catch { process.exit(75); }
+        return true;
+    };
+
+    const timer = setInterval(check, intervalMs);
+    if (typeof timer.unref === 'function') timer.unref();
+    return { stop: () => clearInterval(timer), check };
+}
 
 module.exports = {
     getMasterKeyBytes,
     baseDeDatosConDatos,
-    readKeyFromEnvFile
+    readCredential,
+    readCredentialFromEnvFile,
+    watchCredentialFile,
+    CONFIG
 };

@@ -19,6 +19,7 @@ const { blobAvailableTo, blobHashOk, blobQuotaOk, invalidateBlobQuota, storeBlob
 const { rejectRateLimited } = require('../http/helpers.js');
 const { groupCreateLimiter } = require('../http/rate-limit.js');
 const { withMentions } = require('../chat/mentions.js');
+const { unarchiveForIncoming } = require('../chat/prefs.js');
 const { deleteMessageById, filterForViewer, readMessagePage, resolveReply, rowToMessage, updateStoredMessage } = require('../chat/messages.js');
 const { getChatsSummary, getChatPreferences, getHave, getRoute2197, postChatDelete, postChatPreferences, postMessages, postMsgDelete, postMsgEdit, postPollVote, postReceipt, postSeen, postSend } = require('../chat/routes.js');
 const { decorateForClient } = require('../chat/summaries.js');
@@ -27,12 +28,13 @@ const { getContactsRequests, getContactsRequestsSent, postBlock, postContacts, p
 const { Stmt } = require('../db/statements.js');
 const { pruneBlobHashes, removeBlobAccess, tx } = require('../db/transactions.js');
 const { getGroups, getGroupsDiscover, getGroupsRequests, postGroups } = require('../groups/routes.js');
+const { AuthKeyUnreadableError } = require('../crypto/user-auth-keys.js');
 const { deleteGroupSummary, groupBrief, groupLastEntry, groupPolicies, groupSummaryFor, initializeGroupSummary, invalidateGroupPubCache, lastGroupMessage, pub, readGroup, updateGroupMessageSummaries, writeGroupMeta, writeGroupSummary } = require('../groups/store.js');
 const { mimeMap, rejectRateLimitedMessage, safeDecodeSegment } = require('./helpers.js');
 const { cspFor, json, securityHeaders } = require('./responses.js');
 const { isEncrypted, openRequest, sealResponse } = require('./transport.js');
 const { getConfig, getHealthz } = require('../meta/routes.js');
-const { getNotes, getProfile, postAccountChatSettings, postAccountDelete, postAccountProfile, postAccountRegenerateKey, postNotes, postProfile } = require('../profile/routes.js');
+const { getAccountChatSettings, getNotes, getProfile, postAccountChatSettings, postAccountDelete, postAccountProfile, postAccountRegenerateKey, postNotes, postProfile } = require('../profile/routes.js');
 const { postPushSubscribe, postPushTest, postPushUnsubscribe } = require('../push/routes.js');
 const { VAPID, notifyUser } = require('../push/vapid.js');
 const { push, pushName, pushRawName, userList } = require('../realtime/notify.js');
@@ -188,7 +190,7 @@ const handleRequest = (req, res) => {
     if (req.method === 'GET' && url.pathname === '/chat/preferences')
         return getChatPreferences(req, res, url, data, actor);
     if (req.method === 'GET' && url.pathname === '/account/chat-settings')
-        return json(res, 200, { settings: profiles[req.authUser.username]?.chatAppearance || null });
+        return getAccountChatSettings(req, res, url, data, actor);
     if (req.method === 'GET' && url.pathname === '/profile') return getProfile(req, res, url, data, actor);
     if (req.method === 'GET' && url.pathname === '/notes') return getNotes(req, res, url, data, actor);
 
@@ -353,7 +355,11 @@ const handleRequest = (req, res) => {
                 const isMember = g.memberIds.includes(req.authUser.id);
                 const notifyGroup = type => { for (const username of g.members) pushName(username, { type, group: pub(g) }); };
 
-                if (data.join === true && !isMember) {
+                if (data.join === true) {
+                    /* Quien ya está dentro puede abrir el enlace de invitación
+                       sin recibir un error: el enlace es también la forma de
+                       volver al grupo desde fuera de la app. */
+                    if (isMember) return json(res, 200, { ...pub(g, req.authUser.id), alreadyMember: true });
                     const invited = typeof data.inviteCode === 'string' && data.inviteCode === g.inviteCode;
                     if (g.visibility !== 'public' && !invited) return json(res, 404, { error: 'No disponible.' });
                     if (g.joinPolicy === 'closed') return json(res, 403, { error: 'Cerrado.' });
@@ -506,6 +512,9 @@ const handleRequest = (req, res) => {
                         pushRawName(m, rawGroupMessage);
                         if (m !== actor) {
                             const memberAcc = byName(m);
+                            // Mensaje nuevo = el chat vuelve a la lista, salvo
+                            // que el miembro conserve archivados sus chats.
+                            if (memberAcc) unarchiveForIncoming(m, memberAcc.id, 'group:' + id);
                             if (memberAcc && !memberAcc.online)
                                 void notifyUser(m, { title: 'Nuevo mensaje · ' + g.name, body: kind === 'text' ? String(msg.data).slice(0, 120) : 'Mensaje nuevo', tag: 'grp-' + id, url: '/' });
                         }
@@ -753,6 +762,17 @@ const handleRequest = (req, res) => {
 
             json(res, 404, { error: 'Ruta no encontrada.' });
                     } catch (error) {
+                /* Una auth_key ilegible NO es un fallo del servidor: es una
+                 * desincronización de llaves (la fila existe pero no la
+                 * descifra la llave maestra actual). Se responde 503 con un
+                 * texto que lo dice, para que el cliente no muestre un
+                 * "error interno" y el operador entienda qué mirar. */
+                if (error instanceof AuthKeyUnreadableError) {
+                    console.error('[crypto] auth_key ilegible:', error.message);
+                    if (!res.headersSent) json(res, 503, { error: 'Cifrado de la cuenta no legible con la llave actual. El operador debe revisar la llave maestra.' });
+                    else res.end();
+                    return;
+                }
                 console.error('[http] Error no controlado:', error);
                 if (!res.headersSent) json(res, 500, { error: 'Error interno del servidor.' });
                 else res.end();

@@ -10,6 +10,7 @@
 
 const crypto = require('crypto');
 const { encryptForUser } = require('../crypto/setup.js');
+const { encField } = require('../crypto/field-crypto.js');
 const { Stmt } = require('../db/statements.js');
 const { push, pushName } = require('../realtime/notify.js');
 const { callFiles, pendingOffers } = require('../state.js');
@@ -22,8 +23,11 @@ function addCall(username, entry) {
     callFiles.set(username, list.slice(-100));
     const user = byName(username);
     if (user) {
-        // El registro de llamadas se guarda cifrado en reposo.
-        Stmt.insertCall.run(list[list.length - 1].id, user.id, entry.peer || null, list[list.length - 1].ts, encryptForUser(user.id, JSON.stringify(list[list.length - 1])));
+        // El registro de llamadas se guarda cifrado en reposo, y el nombre
+        // del par también (va en la columna "peer").
+        Stmt.insertCall.run(list[list.length - 1].id, user.id,
+            entry.peer ? encField('calls.peer', entry.peer) : null,
+            list[list.length - 1].ts, encryptForUser(user.id, JSON.stringify(list[list.length - 1])));
         Stmt.trimCalls.run(user.id, user.id, 100);
     }
     return list[list.length - 1];

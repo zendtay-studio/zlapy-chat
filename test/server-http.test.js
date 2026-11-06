@@ -26,7 +26,7 @@ test('/healthz responde ok con la versión de esquema', async () => {
     try {
         const health = await api(srv.base, 'GET', '/healthz');
         assert.equal(health.json.ok, true);
-        assert.equal(health.json.schema, 3);
+        assert.equal(health.json.schema, 4);
         assert.ok(health.json.uptime >= 0);
     } finally { await stop(srv); }
 });
