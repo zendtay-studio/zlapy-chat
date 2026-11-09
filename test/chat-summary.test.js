@@ -42,6 +42,29 @@ test('la lista viene ordenada por el ultimo mensaje de cada chat', async () => {
     } finally { await stop(srv); }
 });
 
+test('mensajes guardados usan su propio estado en el resumen y el orden', async () => {
+    const srv = await startServer();
+    try {
+        const ana = await register(srv.base, 'ordguardados');
+        const sent = await api(srv.base, 'POST', '/send', {
+            to: 'ordguardados', kind: 'text', data: 'nota personal'
+        }, ana.cookie);
+        assert.equal(sent.status, 200);
+
+        const pinned = await api(srv.base, 'POST', '/chat/preferences', {
+            targets: ['saved'], pinned: true, archived: true
+        }, ana.cookie);
+        assert.equal(pinned.status, 200);
+
+        const summary = await lista(srv.base, ana.cookie);
+        const saved = summary.find(chat => chat.peer === 'ordguardados');
+        assert.ok(saved, 'el chat propio permanece en el resumen');
+        assert.equal(saved.pinned, true);
+        assert.equal(saved.archived, true);
+        assert.equal(saved.last.text, 'nota personal');
+    } finally { await stop(srv); }
+});
+
 test('leer un chat NO cambia el orden de la lista', async () => {
     const srv = await startServer();
     try {

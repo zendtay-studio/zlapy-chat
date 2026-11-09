@@ -88,7 +88,7 @@ function readChatPrefs(userId) {
         if (!row.peer_name) continue;
         const nombre = decField('user_muted_peers.peer_name', row.peer_name);
         if (!nombre) continue;
-        const key = nombre.startsWith(GROUP_PREFIX) ? nombre : dmKey(nombre);
+        const key = nombre === SAVED_KEY ? SAVED_KEY : nombre.startsWith(GROUP_PREFIX) ? nombre : dmKey(nombre);
         const entry = prefs[key] || (prefs[key] = emptyPref());
         entry.muted = true;
     }

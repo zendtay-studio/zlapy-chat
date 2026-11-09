@@ -3,10 +3,11 @@
 
 const { CONFIG } = require('../config.js');
 const { TRANSPORT_ALGO, transportPublicKey } = require('../crypto/transport.js');
-const { blobDb, db } = require('../db/database.js');
+const { blobDb, db, DATABASE_CRYPTO_VERSION } = require('../db/database.js');
 const { SCHEMA_VERSION } = require('../db/schema.js');
 const { json } = require('../http/responses.js');
 const { MESSAGE_LIMITS } = require('../shared/limits.js');
+const { version: serverVersion } = require('../../package.json');
 
 // Límites de la aplicación y clave pública del cifrado de transporte. Es
 // pública a propósito: el cliente la usa para abrir una sesión cifrada.
@@ -23,7 +24,8 @@ function getConfig(req, res, url, data, actor) {
     maxGalleryItems: CONFIG.maxGalleryItems,
     maxGalleryEncodedChars: CONFIG.maxGalleryEncodedChars,
     transportAlgorithm: TRANSPORT_ALGO,
-    transportPublicKey: transportPublicKey()
+    transportPublicKey: transportPublicKey(),
+    serverVersion
     });
 }
 
@@ -36,6 +38,8 @@ function getHealthz(req, res, url, data, actor) {
     return json(res, 200, {
         ok: true,
         schema: SCHEMA_VERSION,
+        cryptoVersion: DATABASE_CRYPTO_VERSION,
+        serverVersion,
         uptime: Math.round(process.uptime()),
         transportAlgorithm: TRANSPORT_ALGO,
         transportPublicKey: transportPublicKey()

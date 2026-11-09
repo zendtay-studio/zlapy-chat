@@ -119,7 +119,7 @@ function hydrateUserFromDb(acc) {
         /* Una fila puede existir solo por el ajuste de archivados (sin
            apariencia guardada todavía): en ese caso no se inventa una
            apariencia por defecto que pise la copia local/heredada. */
-        if (chat.wall || chat.sender || chat.receiver || wallpaper) {
+        if (chat.wall || chat.sender || chat.receiver || chat.accent || wallpaper) {
             profile.chatAppearance = {
                 wall: decField('user_chat_settings.wall', chat.wall) || '',
                 opacity: chat.opacity, blur: chat.blur,
@@ -127,6 +127,7 @@ function hydrateUserFromDb(acc) {
                 receiver: decField('user_chat_settings.receiver', chat.receiver) || '',
                 senderText: decField('user_chat_settings.sender_text', chat.sender_text) || '',
                 receiverText: decField('user_chat_settings.receiver_text', chat.receiver_text) || '',
+                accent: decField('user_chat_settings.accent', chat.accent) || '',
                 fontSize: chat.font_size, autoText: !!chat.auto_text, image: wallpaper
             };
         }
@@ -478,6 +479,7 @@ function writeUserRows(user) {
             encField('user_chat_settings.receiver', chat.receiver || null),
             encField('user_chat_settings.sender_text', chat.senderText || null),
             encField('user_chat_settings.receiver_text', chat.receiverText || null),
+            encField('user_chat_settings.accent', chat.accent || null),
             Number.isFinite(chat.fontSize) ? chat.fontSize : 15,
             chat.autoText === false ? 0 : 1,
             wallpaperRef,
@@ -549,6 +551,7 @@ function saveChatSettings(user) {
         encField('user_chat_settings.receiver', appearance.receiver || null),
         encField('user_chat_settings.sender_text', appearance.senderText || null),
         encField('user_chat_settings.receiver_text', appearance.receiverText || null),
+        encField('user_chat_settings.accent', appearance.accent || null),
         Number.isFinite(appearance.fontSize) ? appearance.fontSize : 15,
         appearance.autoText === false ? 0 : 1,
         wallpaperRef,

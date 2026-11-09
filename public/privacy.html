@@ -364,21 +364,7 @@
   <link rel="stylesheet" href="/css/theme.css">
   <script src="/js/transport-crypto.js"></script>
   <script src="/js/transport.js"></script>
-  <script>
-    /* Aplica el acento cacheado del usuario antes de pintar para que no parpadee */
-    try {
-      var hint = JSON.parse(localStorage.getItem('chatlocal_appearance_hint') || 'null'), ok = function (c) { return /^#[0-9a-f]{6}$/i.test(c || ''); };
-      if (hint && ok(hint.sender)) {
-        var ink = ok(hint.senderText) ? hint.senderText : '#101318', other = ok(hint.receiver) ? hint.receiver : '#171b21', r = document.documentElement.style;
-        r.setProperty('--accent', hint.sender);
-        r.setProperty('--accent-ink', ink);
-        r.setProperty('--accent-secondary', other);
-        r.setProperty('--accent-hover', 'color-mix(in srgb, ' + hint.sender + ' 88%, ' + ink + ')');
-        r.setProperty('--accent-soft', 'color-mix(in srgb, ' + hint.sender + ' 18%, transparent)');
-      }
-    } catch (e) { }
-  </script>
-
+  <script src="/js/appearance.js"></script>
 </head>
 
 <body class="page-privacy">
@@ -615,7 +601,6 @@
     function goBack() { if (history.length > 1) { history.back(); return false; } return true; }
     window.addEventListener('pageshow', e => { if (e.persisted) init(); });
   </script>
-  <script src="/js/appearance.js" defer></script>
 </body>
 
 </html>

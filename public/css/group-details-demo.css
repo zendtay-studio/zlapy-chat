@@ -172,8 +172,7 @@ img {
     overflow-x: hidden;
     overflow-y: auto;
     overscroll-behavior: contain;
-    scrollbar-width: thin;
-    scrollbar-color: var(--line-strong) transparent;
+    scrollbar-width: none;
     padding-bottom: calc(92px + env(safe-area-inset-bottom, 0px));
     -webkit-overflow-scrolling: touch
 }
@@ -193,15 +192,6 @@ img {
         margin-inline: 0;
         padding-inline: max(20px, calc(50% - 380px))
     }
-}
-
-.scroll::-webkit-scrollbar {
-    width: 6px
-}
-
-.scroll::-webkit-scrollbar-thumb {
-    border-radius: 99px;
-    background: var(--line-strong)
 }
 
 /* ---------- Portada ---------- */

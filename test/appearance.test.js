@@ -1,6 +1,10 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { normalizeChatAppearanceSettings } = require('../src/shared/appearance.js');
+const { api, register, startServer, stop } = require('./helpers.js');
 
 const base = {
     wall: '#090c0f',
@@ -46,4 +50,34 @@ test('rejects invalid colors, fields, dimensions, and wallpaper payloads', () =>
     assert.equal(normalizeChatAppearanceSettings({ ...base, fontSize: 23 }), null);
     assert.equal(normalizeChatAppearanceSettings({ ...base, image: 'data:image/svg+xml;base64,PHN2Zz4=' }), null);
     assert.equal(normalizeChatAppearanceSettings({ ...base, image: `data:image/jpeg;base64,${'A'.repeat(8 * 1024 * 1024)}` }), null);
+});
+
+test('persists the app accent on the server across a restart', async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zlapy-appearance-restart-'));
+    let server = await startServer({ dataDir });
+    try {
+        const account = await register(server.base, 'appearance');
+        assert.equal(account.status, 201);
+        const settings = {
+            ...base,
+            accent: '#00a884',
+            senderText: '#4b2835',
+            receiverText: '#4b2835',
+            autoText: false,
+            image: ''
+        };
+        const saved = await api(server.base, 'POST', '/account/chat-settings', { settings }, account.cookie);
+        assert.equal(saved.status, 200);
+        await stop(server);
+
+        server = await startServer({ dataDir });
+        const loaded = await api(server.base, 'GET', '/account/chat-settings', null, account.cookie);
+        assert.equal(loaded.status, 200);
+        assert.equal(loaded.json.settings.accent, settings.accent);
+        assert.equal(loaded.json.settings.senderText, settings.senderText);
+        assert.equal(loaded.json.settings.receiverText, settings.receiverText);
+    } finally {
+        await stop(server);
+        fs.rmSync(dataDir, { recursive: true, force: true });
+    }
 });

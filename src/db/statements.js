@@ -53,9 +53,9 @@ const Stmt = {
     // Apariencia del chat
     getChatSettings: db.prepare('SELECT * FROM user_chat_settings WHERE user_id = ?'),
     upsertChatSettings: db.prepare(`INSERT OR REPLACE INTO user_chat_settings
-        (user_id, wall, opacity, blur, sender, receiver, sender_text, receiver_text,
+        (user_id, wall, opacity, blur, sender, receiver, sender_text, receiver_text, accent,
          font_size, auto_text, wallpaper_ref, keep_archived, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
 
     // Chats silenciados
     listMutedPeers: db.prepare('SELECT rowid, peer_id, peer_name FROM user_muted_peers WHERE user_id = ?'),
@@ -186,6 +186,21 @@ const Stmt = {
         owner_id = ?, visibility = ?, join_policy = ?, write_policy = ?, add_policy = ?, edit_policy = ?,
         mention_all_policy = ?, content_policy = ?, invite_code = ?, keys_cipher = ?, created_at = ? WHERE id = ?`),
     listPublicGroups: db.prepare(`SELECT id FROM groups WHERE visibility = 'public'`),
+    listPublicGroupsForDiscover: db.prepare(`SELECT id, name, description FROM groups g
+        WHERE g.visibility = 'public'
+          AND NOT EXISTS (SELECT 1 FROM group_members gm WHERE gm.gid = g.id AND gm.user_id = ?)
+        ORDER BY (SELECT COUNT(*) FROM group_members gm WHERE gm.gid = g.id) DESC, g.created_at DESC, g.id ASC`),
+    listRecommendedPublicGroups: db.prepare(`SELECT id FROM groups g
+        WHERE g.visibility = 'public'
+          AND NOT EXISTS (SELECT 1 FROM group_members gm WHERE gm.gid = g.id AND gm.user_id = ?)
+        ORDER BY (SELECT COUNT(*) FROM group_members gm WHERE gm.gid = g.id) DESC, g.created_at DESC, g.id ASC
+        LIMIT ? OFFSET ?`),
+    publicGroupDiscoverDetails: db.prepare(`SELECT g.id, g.name, g.description, g.avatar_ref, g.join_policy,
+        (SELECT COUNT(*) FROM group_members gm WHERE gm.gid = g.id) AS members,
+        EXISTS (SELECT 1 FROM group_join_requests jr WHERE jr.gid = g.id AND jr.user_id = ?) AS requested
+        FROM groups g
+        WHERE g.id = ? AND g.visibility = 'public'
+          AND NOT EXISTS (SELECT 1 FROM group_members gm WHERE gm.gid = g.id AND gm.user_id = ?)`),
 
     // Group members
     insertGroupMember: db.prepare(`INSERT INTO group_members (gid, user_id, role, joined_at) VALUES (?, ?, ?, ?)

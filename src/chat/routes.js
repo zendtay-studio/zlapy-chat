@@ -87,7 +87,7 @@ function getChatsSummary(req, res, url, data, actor) {
         last = healSummary(uuid, row.peer, row.unread);
     } catch { }
     const name = resolveName(row.peer);
-    const pref = prefs['dm:' + name] || {};
+    const pref = prefs[name === actor ? 'saved' : 'dm:' + name] || {};
     chats.push({
         peer: name, peerId: row.peer, unread: row.unread, last,
         pinned: pref.pinned === true, pinnedAt: pref.pinnedAt || 0, archived: pref.archived === true

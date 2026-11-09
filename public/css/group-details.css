@@ -171,19 +171,9 @@ img {
     overflow-x: hidden;
     overflow-y: auto;
     overscroll-behavior: contain;
-    scrollbar-width: thin;
-    scrollbar-color: var(--line-strong) transparent;
+    scrollbar-width: none;
     padding-bottom: calc(28px + env(safe-area-inset-bottom, 0px));
     -webkit-overflow-scrolling: touch
-}
-
-.scroll::-webkit-scrollbar {
-    width: 6px
-}
-
-.scroll::-webkit-scrollbar-thumb {
-    border-radius: 99px;
-    background: var(--line-strong)
 }
 
 /* ---------- Carga y error ---------- */
@@ -473,18 +463,21 @@ img {
 .quick-actions {
     display: flex;
     justify-content: center;
-    gap: 14px;
+    gap: 12px;
     max-width: 360px;
     margin: 22px auto 0
 }
 
+/* Mismo tamaño que las acciones de "Información de contacto" del índice
+   (.cpAction): botón de 64px con etiqueta de 10px, para que Silenciar,
+   Compartir y Añadir no se vean más grandes que en el resto de la app. */
 .quick {
     display: grid;
     justify-items: center;
     gap: 7px;
-    width: 72px;
+    width: 64px;
     color: var(--muted);
-    font-size: 11.5px;
+    font-size: 10px;
     font-weight: 600;
     line-height: 1.1
 }
@@ -494,9 +487,9 @@ img {
     place-items: center;
     width: 48px;
     height: 48px;
-    border: 1px solid var(--line-strong);
+    border: 1px solid var(--line);
     border-radius: 16px;
-    background: var(--panel-2);
+    background: var(--surface-hover);
     color: var(--text);
     transition: border-color .16s ease, background-color .16s ease, color .16s ease, transform .16s ease
 }
@@ -508,7 +501,7 @@ img {
 }
 
 .quick:hover .q-icon {
-    border-color: color-mix(in srgb, var(--accent) 45%, var(--line-strong));
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
     color: var(--text);
     transform: translateY(-1px)
 }
@@ -530,7 +523,7 @@ img {
 }
 
 .quick.on .q-icon {
-    border-color: color-mix(in srgb, var(--accent) 45%, var(--line-strong));
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
     background: color-mix(in srgb, var(--accent) 10%, transparent)
 }
 
@@ -1313,7 +1306,7 @@ button.contact:hover {
     .q-icon {
         width: 44px;
         height: 44px;
-        border-radius: 15px
+        border-radius: 16px
     }
 
     .stack {
@@ -1502,7 +1495,7 @@ body {
 }
 
 .quick-actions {
-    gap: 14px;
+    gap: 12px;
     margin-top: 18px
 }
 
@@ -1511,11 +1504,12 @@ body {
     gap: 7px
 }
 
+/* Mismo icono 48×48 que "Información de contacto" (.cpActionIcon). */
 .q-icon {
-    width: 54px;
-    height: 54px;
+    width: 48px;
+    height: 48px;
     border: 1px solid var(--line);
-    border-radius: 50%;
+    border-radius: 16px;
     background: var(--surface-hover)
 }
 

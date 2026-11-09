@@ -17,6 +17,7 @@ const T = globalThis.ZlapyTransport;
 const S = require('../src/crypto/transport.js');
 const E = require('../src/realtime/encrypted.js');
 const { WsClient, register, startServer, stop } = require('./helpers.js');
+const { version: serverVersion } = require('../package.json');
 
 // Primitivas
 
@@ -167,9 +168,11 @@ test('the server publishes its public key and answers encrypted requests', async
         const config = await (await fetch(server.base + '/config')).json();
         assert.equal(config.transportAlgorithm, S.TRANSPORT_ALGO);
         assert.equal(Buffer.from(config.transportPublicKey, 'base64').length, 32);
+        assert.equal(config.serverVersion, serverVersion);
 
         const health = await (await fetch(server.base + '/healthz')).json();
         assert.equal(health.transportPublicKey, config.transportPublicKey);
+        assert.equal(health.serverVersion, serverVersion);
 
         // Registro cifrado: la respuesta vuelve cifrada y con su cookie.
         const registration = await encryptedApi(server.base, config.transportPublicKey, 'POST', '/auth/register',

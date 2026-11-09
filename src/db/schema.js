@@ -86,6 +86,7 @@ CREATE TABLE IF NOT EXISTS user_chat_settings (
     receiver      TEXT,
     sender_text   TEXT,
     receiver_text TEXT,
+    accent        TEXT,
     font_size     REAL NOT NULL DEFAULT 15,
     auto_text     INTEGER NOT NULL DEFAULT 1 CHECK (auto_text IN (0,1)),
     wallpaper_ref TEXT NOT NULL DEFAULT '',
@@ -388,13 +389,13 @@ const tableColumns = (db, name) =>
 
 function applySchema(db) {
     db.exec(SCHEMA_SQL);
-    // Altas de columna idempotentes: CREATE TABLE IF NOT EXISTS no añade
-    // columnas a una tabla que ya existe, y esta tabla es nueva (no hay
-    // migraciones generales, pero esta columna sí se puede añadir después).
+    // Altas de columna idempotentes para instalaciones con tablas existentes.
     if (!tableColumns(db, 'user_chat_prefs').has('archived'))
         db.exec('ALTER TABLE user_chat_prefs ADD COLUMN archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0,1))');
     if (!tableColumns(db, 'user_chat_settings').has('keep_archived'))
         db.exec('ALTER TABLE user_chat_settings ADD COLUMN keep_archived INTEGER NOT NULL DEFAULT 0 CHECK (keep_archived IN (0,1))');
+    if (!tableColumns(db, 'user_chat_settings').has('accent'))
+        db.exec('ALTER TABLE user_chat_settings ADD COLUMN accent TEXT');
 }
 
 /* Aplica el esquema si falta algo (idempotente) y registra la versión.

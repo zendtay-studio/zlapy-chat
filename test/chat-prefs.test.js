@@ -55,6 +55,49 @@ test('silenciar y marcar como no leído también viven en el servidor', async ()
     } finally { await stop(srv); }
 });
 
+test('mensajes guardados aceptan y recuperan sus propias preferencias de chat', async () => {
+    const srv = await startServer();
+    try {
+        const ana = await register(srv.base, 'savedprefs');
+        const update = await api(srv.base, 'POST', '/chat/preferences', {
+            targets: ['saved'], pinned: true, muted: true, archived: true
+        }, ana.cookie);
+        assert.equal(update.status, 200);
+        assert.deepEqual(update.json.prefs.saved, {
+            pinned: true, pinnedAt: update.json.prefs.saved.pinnedAt,
+            unread: false, archived: true, muted: true
+        });
+        assert.ok(update.json.prefs.saved.pinnedAt > 0);
+        assert.ok(update.json.mutedPeers.includes('saved'));
+
+        const read = await api(srv.base, 'GET', '/chat/preferences', null, ana.cookie);
+        assert.equal(read.json.prefs.saved.pinned, true);
+        assert.equal(read.json.prefs.saved.archived, true);
+        assert.equal(read.json.prefs.saved.muted, true);
+        assert.equal(read.json.prefs['dm:saved'], undefined);
+    } finally { await stop(srv); }
+});
+
+test('borrar mensajes guardados vacía el historial propio', async () => {
+    const srv = await startServer();
+    try {
+        const ana = await register(srv.base, 'saveddelete');
+        const sent = await api(srv.base, 'POST', '/send', {
+            to: 'saveddelete', kind: 'text', data: 'nota privada'
+        }, ana.cookie);
+        assert.equal(sent.status, 200);
+
+        const deleted = await api(srv.base, 'POST', '/chat/delete', {
+            to: 'saveddelete', clearBoth: true
+        }, ana.cookie);
+        assert.equal(deleted.status, 200);
+
+        const history = await api(srv.base, 'POST', '/messages', { to: 'saveddelete' }, ana.cookie);
+        assert.equal(history.status, 200);
+        assert.deepEqual(history.json.messages, []);
+    } finally { await stop(srv); }
+});
+
 test('un destino inválido no aplica NADA del bloque (todo o nada)', async () => {
     const srv = await startServer();
     try {

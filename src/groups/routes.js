@@ -11,13 +11,18 @@
 const crypto = require('crypto');
 const { CONFIG } = require('../config.js');
 const { Stmt } = require('../db/statements.js');
+const { decField } = require('../crypto/field-crypto.js');
 const { groupPolicies, groupSummaryFor, normalizeGroup, pub, readGroup, writeGroupMeta, writeGroupSummary } = require('./store.js');
 const { json } = require('../http/responses.js');
+const { readImage } = require('../profile/images.js');
 const { push, pushName } = require('../realtime/notify.js');
 const { validAvatar } = require('../shared/validation.js');
 const { profiles } = require('../state.js');
 const { byName, uniq } = require('../users/helpers.js');
 const { isContact } = require('../users/privacy.js');
+
+const normalizeGroupSearch = value => String(value).normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase();
 
 function getGroupsRequests(req, res, url, data, actor) {
     const requests = [];
@@ -53,18 +58,55 @@ function getGroups(req, res, url, data, actor) {
 }
 
 function getGroupsDiscover(req, res, url, data, actor) {
-    const list = [];
-    for (const r of Stmt.listPublicGroups.all()) {
-    const g = readGroup(r.id);
-    if (!g || g.memberIds.includes(req.authUser.id)) continue;
-    list.push({
-    id: g.id, name: g.name, description: g.description,
-    avatar: g.avatar || '', members: g.members.length,
-    joinPolicy: g.joinPolicy,
-    requested: g.joinRequests.some(x => x.userId === req.authUser.id)
-    });
+    const rawQuery = url.searchParams.get('q');
+    const query = rawQuery === null ? '' : rawQuery.trim();
+    const rawLimit = url.searchParams.get('limit');
+    const limit = rawLimit === null ? 20 : Number(rawLimit);
+    const rawOffset = url.searchParams.get('offset');
+    const offset = rawOffset === null ? 0 : Number(rawOffset);
+    if (query.length > 100) return json(res, 400, { error: 'Búsqueda demasiado larga.' });
+    if (!Number.isInteger(limit) || limit < 1 || limit > 50)
+        return json(res, 400, { error: 'Límite inválido.' });
+    if (!Number.isInteger(offset) || offset < 0 || offset > 10000)
+        return json(res, 400, { error: 'Desplazamiento inválido.' });
+
+    let ids;
+    let more = false;
+    if (!query) {
+        const rows = Stmt.listRecommendedPublicGroups.all(req.authUser.id, limit + 1, offset);
+        more = rows.length > limit;
+        ids = rows.slice(0, limit).map(row => row.id);
+    } else {
+        const normalizedQuery = normalizeGroupSearch(query);
+        const matches = [];
+        let matchCount = 0;
+        for (const row of Stmt.listPublicGroupsForDiscover.all(req.authUser.id)) {
+            const name = decField('groups.name', row.name);
+            const description = decField('groups.description', row.description);
+            if (!normalizeGroupSearch(`${name}\n${description}`).includes(normalizedQuery)) continue;
+            if (matchCount >= offset) matches.push(row.id);
+            matchCount++;
+            if (matches.length > limit) break;
+        }
+        more = matches.length > limit;
+        ids = matches.slice(0, limit);
     }
-    return json(res, 200, { groups: list });
+
+    const groups = [];
+    for (const id of ids) {
+        const row = Stmt.publicGroupDiscoverDetails.get(req.authUser.id, id, req.authUser.id);
+        if (!row) continue;
+        groups.push({
+            id: row.id,
+            name: decField('groups.name', row.name),
+            description: decField('groups.description', row.description),
+            avatar: readImage(row.avatar_ref),
+            members: row.members,
+            joinPolicy: row.join_policy,
+            requested: !!row.requested
+        });
+    }
+    return json(res, 200, { groups, more });
 }
 
 function postGroups(req, res, url, data, actor) {

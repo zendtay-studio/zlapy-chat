@@ -81,7 +81,7 @@ const isFieldEnvelope = value =>
  * material de grupos, VAPID y blobs).
  */
 const FIELD_TABLES = Object.freeze([
-    { table: 'user_chat_settings', columns: ['wall', 'sender', 'receiver', 'sender_text', 'receiver_text'] },
+    { table: 'user_chat_settings', columns: ['wall', 'sender', 'receiver', 'sender_text', 'receiver_text', 'accent'] },
     { table: 'user_stickers', columns: ['sticker'] },
     { table: 'user_privacy_users', columns: ['target_name'] },
     { table: 'user_muted_peers', columns: ['peer_name'] },

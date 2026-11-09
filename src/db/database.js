@@ -13,6 +13,8 @@ const Database = require('better-sqlite3');
 const { BLOB_DB_PATH, CONFIG, DB_PATH } = require('../config.js');
 const { ensureSchema } = require('./schema.js');
 
+const DATABASE_CRYPTO_VERSION = 2;
+
 // SQLite — apertura y esquema
 
 /* La carpeta de datos se crea si no existe: en una instalacion nueva el
@@ -58,7 +60,7 @@ CREATE TABLE IF NOT EXISTS blobs (
         const metaExists = !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta'").get();
         if (metaExists) metaCrypto = db.prepare('SELECT value FROM meta WHERE key = ?').get('crypto_version')?.value ?? null;
     } catch { }
-    if (metaCrypto !== null && metaCrypto !== '2')
+    if (metaCrypto !== null && metaCrypto !== String(DATABASE_CRYPTO_VERSION))
         throw new Error(`Formato de cifrado de la base no compatible (crypto_version=${metaCrypto}). ` +
             'Restáurala desde tus respaldos (backups/) o arranca con una base nueva.');
 }
@@ -77,4 +79,5 @@ module.exports = {
     db,
     blobDb,
     messageSchema,
+    DATABASE_CRYPTO_VERSION,
 };

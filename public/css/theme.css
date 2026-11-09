@@ -12,8 +12,9 @@
   --muted: #97a5ae;
   --accent: #00a884;
   --accent-ink: #0b141a;
-  --accent-hover: #06cf9c;
+  --accent-hover: color-mix(in srgb, var(--accent) 88%, var(--accent-ink));
   --accent-secondary: var(--accent);
+  --public-header-height: 64px;
 }
 
 @keyframes public-page-enter {
@@ -41,7 +42,22 @@ body.page-privacy > header,
 body.page-profile > header,
 body.page-group-details > header,
 body.page-view > header,
-body.page-stories .page > header {
+body.page-stories .page > header,
+body.page-group-create > .appbar {
+  box-sizing: border-box;
+  height: calc(var(--public-header-height) + env(safe-area-inset-top, 0px));
+  min-height: calc(var(--public-header-height) + env(safe-area-inset-top, 0px));
+  flex: none;
+  padding-top: calc(8px + env(safe-area-inset-top, 0px));
+  padding-bottom: 8px
+}
+
+body.page-privacy > header,
+body.page-profile > header,
+body.page-group-details > header,
+body.page-view > header,
+body.page-stories .page > header,
+body.page-group-create > .appbar {
   animation: public-page-enter .28s ease-out both
 }
 
@@ -648,4 +664,28 @@ select:focus-visible {
     scroll-behavior: auto !important;
     transition-duration: .01ms !important
   }
+}
+/* ---------- Scrollbars discretos ----------
+   El scroll sigue funcionando igual (rueda, touch, teclado), pero no se
+   muestra ninguna barra que lo indique en ninguna página de la app. */
+* {
+  scrollbar-width: none
+}
+
+::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0
+}
+
+input:not([type]),
+input[type="text"],
+input[type="search"],
+input[type="email"],
+input[type="password"],
+input[type="tel"],
+input[type="url"],
+input[type="number"],
+textarea {
+  border-radius: 12px !important
 }
