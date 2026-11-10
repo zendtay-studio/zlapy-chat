@@ -652,7 +652,7 @@ public/                el cliente web (PWA): index.html, login.html, profile.htm
                        autogrow.js, avatar-editor.css/js, appearance.js,
                        transport-crypto.js (primitivas) y transport.js (sobre y WS)
 Los WebP del paquete bbot se regeneran con `npm run generate:bbot-stickers`
-(requiere ImageMagick); las fuentes estáticas están en `scripts/assets/bbot-v3`.
+(requiere ImageMagick); las fuentes estáticas están en `ops/scripts/assets/bbot-v3`.
 Se conservan las rutas del paquete; por eso también se actualiza la apariencia
 de los mensajes antiguos que usan esos stickers.
 docs/                  documentación (ver el índice final)

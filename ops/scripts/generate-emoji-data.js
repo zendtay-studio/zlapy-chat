@@ -3,7 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const root = path.resolve(__dirname, '..');
+const root = path.resolve(__dirname, '../..');
 const sourcePath = path.join(root, 'public', 'files', 'emoji-test.txt');
 const outputDirectory = path.join(root, 'public', 'files', 'emoji');
 const indexPath = path.join(outputDirectory, 'index.json');

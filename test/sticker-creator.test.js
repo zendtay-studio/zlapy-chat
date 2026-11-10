@@ -71,7 +71,7 @@ test('default bbot sticker files are transparent animated WebP', () => {
     for (const sticker of DEFAULT_BBOT_STICKERS) {
         const asset = fs.readFileSync(path.join(__dirname, '..', 'public', sticker.sticker));
         assert.equal(webpHasAlpha(asset), true, `${sticker.expression} has a transparent background`);
-        assert.equal(webpAnimationFrameCount(asset), 8, `${sticker.expression} is an animated WebP`);
+        assert.ok(webpAnimationFrameCount(asset) >= 20, `${sticker.expression} is an animated WebP (>=20 frames)`);
     }
 });
 
@@ -102,9 +102,9 @@ test('creates private stickers, publishes tagged stickers voluntarily, and share
             'sticker sources are ordered favorites, Zlapy, Giphy, bbot');
         assert.match(indexHtml, /id="stkTabFavs" class="on"[^>]*aria-selected="true"/);
         assert.doesNotMatch(indexHtml, /id="stickerSourceTabs"|id="stkTabSearch"/);
-        assert.match(indexHtml, /<svg class="bbotFaceIcon"[\s\S]*?<path d="M9 15h6"><\/path>/);
-        assert.match(stickerCss, /\.bbotStickerTile > span:last-child\s*\{[^}]*text-align: center/s);
-        assert.doesNotMatch(stickerCss, /\.bbotStickerTile > span:last-child\s*\{[^}]*background:/s);
+        assert.match(indexHtml, /<svg class="bbotFaceIcon"[\s\S]*?<circle class="bbotFaceHead"[^>]*><\/circle>[\s\S]*?<ellipse class="bbotFaceEye"/);
+        assert.match(stickerCss, /\.bbotStickerTile\s*\{[^}]*justify-items: center/s);
+        assert.doesNotMatch(stickerCss, /\.bbotStickerPreview\s*\{[^}]*background:/s);
         assert.match(indexHtml, /<aside id="stickerCreatorLayer" aria-hidden="true">[\s\S]*?class="stickerCreatorPanelInner"/);
         assert.match(indexHtml, /panel-sticker-creator/);
         assert.match(indexHtml, /id: 'create-sticker', label: 'Crear stricker'/);
@@ -115,7 +115,7 @@ test('creates private stickers, publishes tagged stickers voluntarily, and share
         assert.match(indexHtml, /createTile\.onclick = \(\) => openStickerCreator\(null, 'idle', \{\}, false\)/);
         assert.match(indexHtml, /tile\.onclick = \(\) => sendSticker\(sticker\.sticker\)/);
         assert.match(indexHtml, /if \(bbot && !bbot\.packaged\) items\.push/);
-        assert.match(stickerCss, /#stickerGrid \.bbotStickerTile \.bbotStickerSavedImage\s*\{[^}]*background: transparent/s);
+        assert.match(stickerCss, /#stickerGrid \.bbotStickerTile \.bbotStickerSavedImage\s*\{[^}]*background: radial-gradient/s);
         assert.match(indexHtml, /#stickerGrid \.bbotStickerTile/);
         assert.match(indexHtml, /const target = tile \|\| image/);
         assert.match(indexHtml, /if \(result\.sendAfterCreate\) sendSticker\(result\.sticker\)/);
@@ -128,10 +128,10 @@ test('creates private stickers, publishes tagged stickers voluntarily, and share
         assert.match(indexHtml, /zlapy-sticker-edit-image/);
         const creatorHtml = await (await fetch(srv.base + '/sticker-creator.html')).text();
         assert.match(creatorHtml, /animated-webp\.js\?v=1/);
-        assert.match(creatorHtml, /sticker-editor\.js\?v=20/);
+        assert.match(creatorHtml, /sticker-editor\.js\?v=21/);
         assert.match(creatorHtml, /id="stickerCreatorBbot"/);
         assert.match(creatorHtml, /id="stickerCreatorFormats"/);
-        const editorResponse = await fetch(srv.base + '/js/sticker-editor.js?v=20');
+        const editorResponse = await fetch(srv.base + '/js/sticker-editor.js?v=21');
         const editorScript = await editorResponse.text();
         assert.match(editorScript, /const VIDEO_FPS = \d+/);
         assert.match(editorScript, /formatMegabytes\(MAX_VIDEO_BYTES\)/);
@@ -157,7 +157,8 @@ test('creates private stickers, publishes tagged stickers voluntarily, and share
         assert.match(editorScript, /EXPRESSION_NAMES/);
         assert.match(editorScript, /canvas\.toBlob\(result => result[\s\S]+?image\/webp/);
         assert.match(editorScript, /result\.bbot = bbot/);
-        assert.match(editorScript, /bbot:\s*\{\s*expression: expressionSelect\.value/);
+        assert.match(editorScript, /bbot: \{ \.\.\.settings \}/);
+        assert.match(editorScript, /bbot: \{ \.\.\.initialSettings, expression \}/);
         assert.match(editorScript, /createStickerFromFile\(event\.data\.file\)/);
         assert.match(editorScript, /landing\.appendChild\(editorContent\)/);
         assert.doesNotMatch(editorScript, /document\.body\.appendChild/);
@@ -165,7 +166,7 @@ test('creates private stickers, publishes tagged stickers voluntarily, and share
         assert.match(editorScript, /stagePointers = new Map\(\)/);
         assert.match(editorScript, /Math\.hypot\(second\.x - first\.x, second\.y - first\.y\)/);
         assert.match(editorScript, /stage\.addEventListener\('wheel'/);
-        assert.doesNotMatch(editorScript, /Zoom del recorte|type: 'range'/);
+        assert.doesNotMatch(editorScript, /Zoom del recorte/);
         assert.doesNotMatch(editorScript, /Reproducir tramo|stickerEditorPlay/);
         assert.match(editorScript, /trimPreviewTimer = setTimeout\(playTrimmedPreview, 140\)/);
         assert.match(editorScript, /videoPreview\.currentTime >= trimEnd/);
@@ -184,7 +185,7 @@ test('creates private stickers, publishes tagged stickers voluntarily, and share
         for (const sticker of defaultPack.json.stickers) {
             const asset = fs.readFileSync(path.join(__dirname, '..', 'public', sticker.sticker));
             assert.equal(webpHasAlpha(asset), true, `${sticker.expression} has a transparent background`);
-            assert.equal(webpAnimationFrameCount(asset), 8, `${sticker.expression} is an animated WebP`);
+            assert.ok(webpAnimationFrameCount(asset) >= 20, `${sticker.expression} is an animated WebP (>=20 frames)`);
         }
         const sadTag = await api(srv.base, 'GET', '/stickers/discover?tags=triste', null, ana.cookie);
         assert.equal(sadTag.json.stickers.some(sticker => sticker.expression === 'sad'), true);

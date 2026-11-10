@@ -802,6 +802,28 @@
         renderRoot.appendChild(faceHost);
         let faceInstance = null;
         try {
+            /* Coreografía determinista con la API real de reacciones del
+             * motor (la misma de la web): la agenda espontánea de bbot
+             * programa el primer parpadeo a 1.2–4.2 s, fuera del rango de un
+             * bucle de 2 s, así que aquí se dispara con `force` en los
+             * tiempos exactos del bucle y la reacción se re-dispara a mitad
+             * de vuelta, como haría una persona al interactuar con la cara.
+             * Los tiempos salen de REACTIONS/EXPRESSIONS del propio módulo,
+             * para no duplicar constantes del motor. */
+            const engine = await import('./vendor/bbot-face.js');
+            const reactionDefinition = (engine.REACTIONS || {})[settings.reaction];
+            const reactionSeconds = Number(reactionDefinition && reactionDefinition.dur) || 0;
+            const loopSeconds = BBOT_ANIMATION_FRAMES * BBOT_FRAME_DURATION / 1000;
+            const loopFrames = seconds => seconds * 1000 / BBOT_FRAME_DURATION;
+            const refireFrame = settings.reaction && reactionSeconds
+                ? Math.max(1, Math.round(loopFrames(loopSeconds - reactionSeconds - .45)))
+                : -1;
+            const preset = engine.EXPRESSIONS && engine.EXPRESSIONS[expression] || null;
+            const canBlink = settings.blink !== false && settings.reaction !== 'blink' &&
+                settings.reaction !== 'wink' && (!preset || preset.lidT + preset.lidB < .9);
+            const blinkFrame = canBlink
+                ? Math.max(1, Math.round(loopFrames(loopSeconds - .45)))
+                : -1;
             faceInstance = createFace(faceHost, {
                 expression,
                 mouth: settings.mouth === true,
@@ -819,9 +841,6 @@
             svg.style.left = '50%';
             svg.style.top = '50%';
             svg.style.transform = 'translate(-50%, -50%)';
-            if (settings.reaction && typeof faceInstance.react === 'function')
-                faceInstance.react(settings.reaction, { force: true });
-
             const styleProperties = [
                 'fill', 'stroke', 'stroke-width', 'stroke-linecap', 'stroke-linejoin',
                 'vector-effect', 'opacity', 'transform', 'transform-origin', 'transform-box',
@@ -833,6 +852,12 @@
                 if (settings.track && typeof faceInstance.look === 'function') {
                     faceInstance.look(Math.sin(phase * Math.PI * 2) * .72,
                         Math.cos(phase * Math.PI * 2) * .35, 120);
+                }
+                if (typeof faceInstance.react === 'function') {
+                    if (settings.reaction && (frameIndex === 0 || frameIndex === refireFrame))
+                        faceInstance.react(settings.reaction, { force: true });
+                    if (canBlink && frameIndex === blinkFrame)
+                        faceInstance.react('blink', { force: true });
                 }
                 await new Promise(resolve => global.requestAnimationFrame(() =>
                     global.setTimeout(resolve, BBOT_FRAME_DURATION)));
