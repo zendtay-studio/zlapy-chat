@@ -338,6 +338,9 @@ invalida al cerrar sesión, al cambiar la contraseña o al reiniciar el servidor
   imágenes se convierten a WebP para quitar metadatos; las selecciones
   múltiples se envían como galería con comentario opcional.
 - Deduplicación de adjuntos por hash SHA-256 en `data/blob.db`.
+- La imagen de respaldo para archivos ausentes se registra en `data/blob.db`
+  al iniciar; las referencias de mensajes y perfiles pueden mostrarla si falta
+  el blob original.
 - Notas de voz con grabación y previsualización.
 - **Ver una vez** (se borra al verlo).
 - Paginación de mensajes antiguos al hacer scroll arriba.
@@ -651,10 +654,16 @@ public/                el cliente web (PWA): index.html, login.html, profile.htm
                        login.css, popmenu.css/js (menu desplegable comun),
                        autogrow.js, avatar-editor.css/js, appearance.js,
                        transport-crypto.js (primitivas) y transport.js (sobre y WS)
-Los WebP del paquete bbot se regeneran con `npm run generate:bbot-stickers`
-(requiere ImageMagick); las fuentes estáticas están en `ops/scripts/assets/bbot-v3`.
-Se conservan las rutas del paquete; por eso también se actualiza la apariencia
-de los mensajes antiguos que usan esos stickers.
+Si faltan stickers bbot o cambia la versión del paquete, el servidor regenera
+al arrancar (usa rasterizador SVG y codificador WebP portables basados en
+WebAssembly, sin depender de programas instalados en el sistema) las 30
+expresiones como WebP animados de
+7 segundos, con miradas, parpadeos y varias reacciones por animación, y guarda
+los resultados como blobs cifrados en la base de datos. El generador procesa
+una expresión a la vez e informa en la terminal el porcentaje de fotogramas
+renderizados y codificados. No se sirven ni se guardan archivos del paquete
+en `public/`; las rutas antiguas de mensajes se resuelven desde la biblioteca.
+Las fuentes del generador están en `ops/scripts/assets/bbot-v3`.
 docs/                  documentación (ver el índice final)
 test/                  pruebas unitarias y de integración (node --test)
   server-http.test.js      rutas HTTP: registro, contactos, mensajes, grupos

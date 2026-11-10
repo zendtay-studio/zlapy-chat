@@ -12,7 +12,16 @@
 const RANK = { sent: 1, delivered: 2, read: 3 };
 
 const crypto = require('crypto');
-const { blobAvailableTo, blobHashOk, blobQuotaOk, invalidateBlobQuota, readBlob, storeBlob } = require('./media.js');
+const {
+    MEDIA_FALLBACK_DATA_URL,
+    MEDIA_FALLBACK_HASH,
+    blobAvailableTo,
+    blobHashOk,
+    blobQuotaOk,
+    invalidateBlobQuota,
+    readBlob,
+    storeBlob
+} = require('./media.js');
 const { deleteMessageById, filterForViewer, getChatPage, invalidateChatPage, readMessagePage, resolveReply, rowToMessage, updateStoredMessage } = require('./messages.js');
 const { decorateForClient, decryptSummaryCached, healSummary, lastEntryFromMsg, onChatDeletedSummary, onMessageDeletedSummary, onMessageSentSummary, onReadSummary, readSummaryEntry, resolveName, writeSummaryEntry } = require('./summaries.js');
 const { applyChatPrefs, readChatPrefs, resolveTarget, unarchiveForIncoming } = require('./prefs.js');
@@ -130,14 +139,15 @@ function postMessageReaction(req, res, url, data, actor) {
 function getRoute2197(req, res, url, data, actor) {
     const hash = url.pathname.slice(6);
     if (!blobAvailableTo(req.authUser, hash)) return json(res, 404, {});
-    const plaintext = readBlob(hash);
-    if (plaintext === null || plaintext === '') return json(res, 404, {});
+    const stored = readBlob(hash);
+    const missing = stored === null || stored === '';
+    const plaintext = missing ? MEDIA_FALLBACK_DATA_URL : stored;
     res.writeHead(200, {
     'Content-Type': 'text/plain',
     // La caché es privada y dura poco: los adjuntos no deben quedar
     // vivos en el navegador de un dispositivo compartido.
-    'Cache-Control': 'private, max-age=86400',
-    'ETag': '"' + hash + '"',
+    'Cache-Control': missing ? 'private, no-store' : 'private, max-age=86400',
+    'ETag': '"' + (missing ? MEDIA_FALLBACK_HASH : hash) + '"',
     ...securityHeaders
     });
     return res.end(plaintext);

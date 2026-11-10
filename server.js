@@ -130,9 +130,11 @@ if (incompatibleRow)
         'Este servidor solo lee PCE3/crypto_version=3. Restaura la base desde un respaldo de backups/ o arranca con una base nueva.');
 
 // Carga las cuentas, los grupos y las historias en memoria.
+const { seedMediaFallback } = require('./src/chat/media.js');
+console.log(`[blobs] Imagen de respaldo lista (${seedMediaFallback()}).`);
 loadFromDb();
 
-// Registra en la biblioteca local el paquete bbot pre-renderizado de la app.
+// Genera el paquete bbot si hace falta y registra sus WebP en la biblioteca.
 const { seedDefaultBbotStickers } = require('./src/stickers/default-pack.js');
 console.log(`[stickers] Paquete bbot listo (${seedDefaultBbotStickers(db)} caras).`);
 

@@ -1,11 +1,5 @@
-const CACHE = 'zlapy-v126';
-const BBOT_PACK = [
-  'idle', 'content', 'relieved', 'happy', 'joy', 'excited', 'love', 'pleading', 'shy',
-  'surprised', 'scared', 'curious', 'confused', 'dizzy', 'thinking', 'focus', 'suspicious',
-  'unimpressed', 'smug', 'sly', 'bored', 'exasperated', 'worried', 'guilty', 'sad',
-  'disgusted', 'annoyed', 'angry', 'sleepy', 'sleep'
-].map(expression => `/stickers/bbot-v3/${expression}.webp`);
-const SHELL = ['/', '/index.html', '/login.html', '/profile.html', '/stories.html', '/view.html', '/sticker-creator.html', '/css/theme.css', '/css/login.css?v=1', '/css/popmenu.css?v=3', '/css/emoji-picker.css?v=4', '/css/avatar-editor.css?v=1', '/css/sticker-editor.css?v=22', '/files/emoji/index.json', '/files/emoji/smileys-emotion.json', '/files/emoji/people-body.json', '/files/emoji/animals-nature.json', '/files/emoji/food-drink.json', '/files/emoji/travel-places.json', '/files/emoji/activities.json', '/files/emoji/objects.json', '/files/emoji/symbols.json', '/files/emoji/flags.json', '/js/appearance.js', '/js/popmenu.js?v=4', '/js/emoji-picker.js?v=6', '/js/avatar-editor.js?v=1', '/js/animated-webp.js?v=1', '/js/sticker-editor.js?v=21', '/js/vendor/bbot-face.js', ...BBOT_PACK, '/image/isotype-308.webp', '/image/isotype-512-full.webp', '/manifest.webmanifest'];
+const CACHE = 'zlapy-v152';
+const SHELL = ['/', '/index.html', '/login.html', '/profile.html', '/stories.html', '/view.html', '/sticker-creator.html', '/css/theme.css', '/css/login.css?v=1', '/css/popmenu.css?v=4', '/css/emoji-picker.css?v=4', '/css/avatar-editor.css?v=1', '/css/sticker-editor.css?v=30', '/files/emoji/index.json', '/files/emoji/smileys-emotion.json', '/files/emoji/animals-nature.json', '/files/emoji/travel-places.json', '/files/emoji/activities.json', '/files/emoji/objects.json', '/files/emoji/symbols.json', '/files/emoji/flags.json', '/js/appearance.js', '/js/popmenu.js?v=5', '/js/emoji-picker.js?v=6', '/js/avatar-editor.js?v=1', '/js/animated-webp.js?v=2', '/js/sticker-editor.js?v=43', '/js/vendor/bbot-face.js', '/image/isotype-308.webp', '/image/isotype-512-full.webp', '/manifest.webmanifest'];
 // Rutas navegables de la app. Sólo estas navigaciones pueden
 // servirse desde la caché cuando no hay red: para el resto de rutas del
 // mismo origen (p. ej. /privacy.html) no se inventa un shell que el

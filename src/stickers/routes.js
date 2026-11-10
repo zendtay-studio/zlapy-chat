@@ -11,7 +11,15 @@ const crypto = require('crypto');
 const https = require('https');
 const { sessionUser } = require('../auth/sessions.js');
 const { GIPHY_API_KEY } = require('../config.js');
-const { blobAvailableTo, blobQuotaOk, invalidateBlobQuota, readBlob, storeBlob } = require('../chat/media.js');
+const {
+    MEDIA_FALLBACK_DATA_URL,
+    MEDIA_FALLBACK_HASH,
+    blobAvailableTo,
+    blobQuotaOk,
+    invalidateBlobQuota,
+    readBlob,
+    storeBlob
+} = require('../chat/media.js');
 const { rejectRateLimited } = require('../http/helpers.js');
 const { giphyLimiter, stickerCreateLimiter } = require('../http/rate-limit.js');
 const { json, securityHeaders } = require('../http/responses.js');
@@ -96,22 +104,75 @@ function getStickerDiscover(req, res, url) {
     const offset = Number(offsetParam);
     if (offset > 100000) return json(res, 400, { error: 'Paginación inválida.' });
     const rawTags = url.searchParams.get('tags');
+    const rawPrefix = url.searchParams.get('prefix');
+    const rawQuery = url.searchParams.get('q');
     let tags = [];
+    let prefix = '';
+    let query = '';
+    let queryTerms = [];
     if (rawTags) {
         tags = stickerTags(rawTags.split(','));
         if (!tags || !tags.length) return json(res, 400, { error: 'Etiquetas inválidas.' });
     }
+    if (rawPrefix !== null) {
+        const parsedPrefix = stickerTags([rawPrefix]);
+        if (!parsedPrefix || parsedPrefix.length !== 1)
+            return json(res, 400, { error: 'Prefijo de etiqueta inválido.' });
+        prefix = parsedPrefix[0];
+    }
+    if (rawQuery !== null) {
+        query = rawQuery.trim().normalize('NFC').toLowerCase();
+        queryTerms = [...new Set(query.split(/\s+/).filter(Boolean).map(term => term.replace(/^#/, '')))];
+        if (query.length > 64 || rawTags !== null || rawPrefix !== null ||
+            queryTerms.length > 8 || queryTerms.some(term => !/^[\p{L}\p{N}_-]{1,24}$/u.test(term)))
+            return json(res, 400, { error: 'Búsqueda inválida.' });
+    }
     const defaultStickers = Stmt.listDefaultStickers.all()
         .map(row => ({ ...row, tags: row.tags.split(',') }))
-        .filter(row => !tags.length || tags.every(tag => row.tags.includes(tag)));
-    const defaultPage = defaultStickers.slice(offset, offset + limit + 1);
-    const publicOffset = Math.max(0, offset - defaultStickers.length);
-    const publicLimit = Math.max(0, limit + 1 - defaultPage.length);
-    const publicRows = publicLimit === 0 ? [] : tags.length
-        ? Stmt.searchPublicStickersByTags.all(JSON.stringify(tags), tags.length, publicLimit, publicOffset)
-        : Stmt.listPublicStickers.all(publicLimit, publicOffset);
-    const rows = [...defaultPage, ...publicRows];
-    const hasMore = rows.length > limit;
+        .filter(row =>
+            tags.every(tag => row.tags.includes(tag)) &&
+            (!prefix || row.tags.some(tag => tag.startsWith(prefix))) &&
+            queryTerms.every(term => row.tags.some(tag => tag.includes(term))));
+    const publicFirst = queryTerms.length > 0 || (!tags.length && !prefix);
+    let publicCount = 0;
+    if (publicFirst) {
+        if (queryTerms.length) {
+            publicCount = Stmt.countPublicStickersByTagQuery.get(
+                JSON.stringify(queryTerms), queryTerms.length
+            ).count;
+        } else {
+            publicCount = Stmt.countPublicStickers.get().count;
+        }
+    }
+    const publicOffset = publicFirst
+        ? Math.min(offset, publicCount)
+        : Math.max(0, offset - defaultStickers.length);
+    const publicLimit = publicFirst
+        ? Math.min(limit + 1, Math.max(0, publicCount - publicOffset))
+        : Math.max(0, limit + 1 - defaultStickers.slice(offset, offset + limit + 1).length);
+    let publicRows = [];
+    if (publicLimit > 0) {
+        if (queryTerms.length) {
+            publicRows = Stmt.searchPublicStickersByTagQuery.all(
+                JSON.stringify(queryTerms), queryTerms.length, publicLimit, publicOffset
+            );
+        } else if (prefix) {
+            publicRows = Stmt.searchPublicStickersByTagPrefix.all(
+                JSON.stringify(tags), prefix, prefix, tags.length, prefix, prefix,
+                publicLimit, publicOffset
+            );
+        } else if (tags.length) {
+            publicRows = Stmt.searchPublicStickersByTags.all(JSON.stringify(tags), tags.length, publicLimit, publicOffset);
+        } else {
+            publicRows = Stmt.listPublicStickers.all(publicLimit, publicOffset);
+        }
+    }
+    const defaultOffset = publicFirst ? Math.max(0, offset - publicCount) : offset;
+    const defaultPage = defaultStickers.slice(defaultOffset, defaultOffset + Math.max(0, limit + 1 - publicRows.length));
+    const rows = publicFirst ? [...publicRows, ...defaultPage] : [...defaultPage, ...publicRows];
+    const hasMore = publicFirst
+        ? offset + rows.length < publicCount + defaultStickers.length
+        : rows.length > limit;
     const stickers = rows.slice(0, limit).map(row => ({
         sticker: row.sticker || `/stickers/blob/${row.hash}`,
         tags: Array.isArray(row.tags) ? row.tags : row.tags ? row.tags.split(',') : [],
@@ -158,14 +219,35 @@ function getStickerBlob(req, res, url) {
     if (!match) return json(res, 404, {});
     const hash = match[1].toLowerCase();
     if (!blobAvailableTo(req.authUser, hash)) return json(res, 404, {});
-    const dataUrl = readBlob(hash);
+    const stored = readBlob(hash);
+    const missing = stored === null || stored === '';
+    const dataUrl = missing ? MEDIA_FALLBACK_DATA_URL : stored;
     const parsed = parseStickerUpload(dataUrl);
     if (!parsed) return json(res, 404, {});
     res.writeHead(200, {
         'Content-Type': parsed.mime,
         'Content-Length': parsed.bytes.length,
         'Cache-Control': 'private, no-store',
-        'ETag': '"' + hash + '"',
+        'ETag': '"' + (missing ? MEDIA_FALLBACK_HASH : hash) + '"',
+        ...securityHeaders
+    });
+    return res.end(parsed.bytes);
+}
+
+function getLegacyDefaultSticker(req, res, url) {
+    const match = url.pathname.match(/^\/stickers\/bbot-v3\/([a-z]+)\.webp$/i);
+    if (!match) return json(res, 404, {});
+    const row = Stmt.getDefaultStickerByExpression.get(match[1].toLowerCase());
+    if (!row) return json(res, 404, {});
+    const stored = readBlob(row.hash);
+    const missing = stored === null || stored === '';
+    const parsed = parseStickerUpload(missing ? MEDIA_FALLBACK_DATA_URL : stored);
+    if (!parsed) return json(res, 404, {});
+    res.writeHead(200, {
+        'Content-Type': parsed.mime,
+        'Content-Length': parsed.bytes.length,
+        'Cache-Control': 'no-store',
+        'ETag': '"' + (missing ? MEDIA_FALLBACK_HASH : row.hash) + '"',
         ...securityHeaders
     });
     return res.end(parsed.bytes);
@@ -217,6 +299,7 @@ module.exports = {
     getStickerDiscover,
     getStickers,
     getStickerBlob,
+    getLegacyDefaultSticker,
     postCreateSticker,
     postStickers,
 };

@@ -38,6 +38,24 @@ body .zlapyMenu .zlapyMenuList {
   gap: 2px
 }
 
+body .zlapyMenu.compact {
+  min-width: 156px;
+  padding: 4px;
+  border-radius: 12px;
+  font-size: 13px
+}
+
+body .zlapyMenu.compact .zlapyMenuItem {
+  gap: 0;
+  min-height: 36px;
+  padding: 7px 9px;
+  font-size: 13px
+}
+
+body .zlapyMenu.compact .zlapyMenuIcon {
+  display: none
+}
+
 body .zlapyReactionBar {
   position: fixed;
   z-index: 121;
@@ -117,6 +135,11 @@ body .zlapyMenu .zlapyMenuItem:hover,
 body .zlapyMenu .zlapyMenuItem:focus-visible {
   background: #ffffff12;
   outline: none
+}
+
+body .zlapyMenu .zlapyMenuItem.selected {
+  background: #ffffff12;
+  color: var(--accent-readable, #9bd5c5)
 }
 
 body .zlapyMenu .zlapyMenuItem.danger {

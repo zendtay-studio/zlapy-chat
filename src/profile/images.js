@@ -14,7 +14,12 @@
 'use strict';
 
 const crypto = require('node:crypto');
-const { blobQuotaOk, readBlob, storeBlob } = require('../chat/media.js');
+const {
+    MEDIA_FALLBACK_DATA_URL,
+    blobQuotaOk,
+    readBlob,
+    storeBlob
+} = require('../chat/media.js');
 
 /* Tipos que el almacén rechaza (HTML/SVG/JS: contenido activo). El avatar
    llega del cliente, así que la validación es la misma que la de los
@@ -52,8 +57,12 @@ function readImage(hash) {
     if (typeof hash !== 'string' || !hash) return '';
     try {
         const value = readBlob(hash);
-        return typeof value === 'string' ? value : '';
-    } catch { return ''; }
+        if (typeof value === 'string') return value;
+        console.warn(`[blobs] Falta la imagen ${hash}; se usa la imagen de respaldo.`);
+    } catch (error) {
+        console.error(`[blobs] No se pudo leer la imagen ${hash}; se usa la imagen de respaldo:`, error.message);
+    }
+    return MEDIA_FALLBACK_DATA_URL;
 }
 
 module.exports = {

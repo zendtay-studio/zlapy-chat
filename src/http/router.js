@@ -45,7 +45,7 @@ const { resolvePublicFile } = require('../shared/static-path.js');
 const { normalizeContactData, normalizePollData } = require('../shared/types.js');
 const { clampStr, localStickerHash, validAvatar, validMessageId, validMime, validStickerData } = require('../shared/validation.js');
 const { groupCache, profiles, stories, users } = require('../state.js');
-const { getGiphySearch, getStickerBlob, getStickerDiscover, getStickers, postCreateSticker, postStickers } = require('../stickers/routes.js');
+const { getGiphySearch, getLegacyDefaultSticker, getStickerBlob, getStickerDiscover, getStickers, postCreateSticker, postStickers } = require('../stickers/routes.js');
 const { getStories, postStory, postStoryLike } = require('../stories/routes.js');
 const { byName } = require('../users/helpers.js');
 const { isBlockedBy, isContact } = require('../users/privacy.js');
@@ -139,6 +139,7 @@ const handleRequest = (req, res) => {
     // Proxy de stickers: la clave de GIPHY se queda en el servidor.
     if (req.method === 'GET' && url.pathname === '/giphy/search') return getGiphySearch(req, res, url, data, actor);
     if (req.method === 'GET' && url.pathname.startsWith('/stickers/blob/')) return getStickerBlob(req, res, url);
+    if (req.method === 'GET' && url.pathname.startsWith('/stickers/bbot-v3/')) return getLegacyDefaultSticker(req, res, url);
     if (req.method === 'GET' && url.pathname === '/stickers/discover') return getStickerDiscover(req, res, url);
     if (req.method === 'GET' && url.pathname.startsWith('/blob/')) return getRoute2197(req, res, url, data, actor);
     if (req.method === 'GET' && (url.pathname === '/users' || url.pathname === '/contacts'))

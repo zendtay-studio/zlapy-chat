@@ -1,7 +1,7 @@
 'use strict';
 
 /*
- * Genera el paquete bbot-v3 (public/stickers/bbot-v3) como WebP animados
+ * Genera el paquete bbot-v3 como WebP animados
  * con transparencia usando el motor de animación real de @bwnd/bbot
  * (https://github.com/bwndapp/bbot — licencia MIT, ver
  * public/js/vendor/BBOT-LICENSE.txt). No se repite una pose a mano: el
@@ -9,36 +9,36 @@
  * k/d idénticos, deambular de la mirada con su misma estadística,
  * parpadeos con la condición expresa de los ojos ya cerrados y las
  * reacciones wink/nod/shake/bounce/pop/boing/spin/jitter) y dibuja cada
- * fotograma con la misma geometría de esfera y párpados. Requiere
- * ImageMagick (`convert`).
+ * fotograma con la misma geometría de esfera y párpados. Cada expresión se
+ * procesa completa antes de comenzar la siguiente e informa el avance por
+ * fotograma. Rasteriza y codifica con módulos WebAssembly portables, sin
+ * depender de ejecutables nativos del sistema.
  *
- *   npm run generate:bbot-stickers
+ *   node ops/scripts/generate-animated-bbot-pack.js <directorio-de-salida>
  *
- * Los fotogramas se rasterizan a PNG32 con alfa y se conmutan en un WebP
- * animado con -loop 0, validando fotogramas, alfa, tamaño y cabecera
- * antes de sustituir los archivos del paquete. La agenda de cada cara es
+ * Los fotogramas se rasterizan con alfa y se conmutan en un WebP animado,
+ * validando fotogramas, alfa, tamaño y cabecera antes de sustituir los
+ * archivos del paquete. La agenda de cada cara es
  * determinista (PRNG con semilla por expresión), así que dos
  * regeneraciones del mismo código producen los mismos bytes.
  *
- * El rasterizador SVG interno de ImageMagick no soporta clipPath, así
- * que el recorte circular del párpado (disco ∩ semiplano) se calcula
- * aquí y sale como polígono (cuerda exacta + arco muestreado a 4°). El
- * resultado fill es idéntico al `rect` + `clip-path` del navegador.
+ * El recorte circular del párpado (disco ∩ semiplano) se calcula aquí y sale
+ * como polígono (cuerda exacta + arco muestreado a 4°).
  */
 
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
-const { spawn } = require('node:child_process');
 
 /* ------------------------------------------------------- pack y formato */
 
 const OUTPUT_SIZE = 256; // px. El paquete siempre ha sido cuadrado de 256.
 const FRAME_MS = 50;     // 50 ms = 20 fps (delay = 5 centésimas de segundo)
-const FRAMES = 36;       // 36 × 50 ms = bucle de 1.8 s
+const FRAMES = 140;      // 7 segundos por expresión
 const LOOP_SECONDS = (FRAMES * FRAME_MS) / 1000;
 const MAX_BYTES = 8 * 1024 * 1024;
-const ASSET_DIRECTORY = path.resolve(__dirname, '../../public/stickers/bbot-v3');
+const WEBP_QUALITY = 100;
+const WEBP_METHOD = 0;
+let imageProcessorPromise;
 
 /* Paleta por defecto de la web de bbot (face.css):
  *   --face-skin #17191c · --face-ink #f7f9f9 · anillo transparente.
@@ -245,30 +245,39 @@ const REACTION_BY_EXPRESSION = {
 function buildSchedule(expression) {
     const random = mulberry32(hashSeed(`bbot-v3:${expression}`));
     const stops = [];
-    while (stops.length < 2) {
+    while (stops.length < 6) {
         const stop = random() < .3
             ? { x: 0, y: 0 }
             : { x: (random() * 2 - 1) * .9, y: (random() * 2 - 1) * .6 };
         if (stops.some(item => Math.hypot(item.x - stop.x, item.y - stop.y) < .25)) continue;
         stops.push(stop);
     }
-    const wander = [
-        { t: .02, x: stops[0].x, y: stops[0].y },
-        { t: .62, x: stops[1].x, y: stops[1].y },
-        { t: 1.14, x: 0, y: 0 }
-    ];
-    const blinkAt = .42 + random() * .3;
-    const blinks = [blinkAt];
-    if (random() < .24) {
-        const second = blinkAt + .24;
-        if (second + REACTIONS.blink.dur < LOOP_SECONDS - .1) blinks.push(second);
+    const wander = stops.map((stop, index) => ({
+        t: .04 + index * (LOOP_SECONDS - .8) / stops.length,
+        x: stop.x,
+        y: stop.y
+    }));
+    wander.push({ t: LOOP_SECONDS - .12, x: 0, y: 0 });
+
+    const blinkCount = 5 + Math.floor(random() * 2);
+    const blinkSpacing = (LOOP_SECONDS - 1) / blinkCount;
+    const blinks = Array.from({ length: blinkCount }, (_, index) =>
+        .45 + index * blinkSpacing + (random() - .5) * .24);
+    const reactions = [];
+    let previousReaction = REACTION_BY_EXPRESSION[expression] || 'blink';
+    reactions.push({ t: .28, name: previousReaction });
+    let reactionTime = 1.05 + random() * .2;
+    while (reactionTime < LOOP_SECONDS - 1) {
+        const choices = Object.keys(REACTIONS).filter(name => name !== previousReaction);
+        const name = choices[Math.floor(random() * choices.length)];
+        reactions.push({ t: reactionTime, name });
+        previousReaction = name;
+        reactionTime += .95 + random() * .5;
     }
-    const reaction = REACTION_BY_EXPRESSION[expression] || 'blink';
     return {
         wander,
         blinks,
-        reaction: REACTIONS[reaction] ? reaction : null,
-        reactionAt: .14
+        reactions
     };
 }
 
@@ -302,8 +311,8 @@ function simulate(expression) {
     for (let period = 0; period < WARMUP_LOOP_TIMES; period++) {
         for (const time of schedule.blinks)
             events.push({ at: period * LOOP_SECONDS + time, def: REACTIONS.blink });
-        if (schedule.reaction)
-            events.push({ at: period * LOOP_SECONDS + schedule.reactionAt, def: REACTIONS[schedule.reaction] });
+        for (const reaction of schedule.reactions)
+            events.push({ at: period * LOOP_SECONDS + reaction.t, def: REACTIONS[reaction.name] });
     }
     events.sort((a, b) => a.at - b.at);
 
@@ -457,42 +466,39 @@ function faceSvg(frame) {
         '</g></svg>';
 }
 
-/* ---------------------------------------------------------- comandos */
+/* --------------------------------------------------- rasterizar y codificar */
 
-function runConvertAsync(args) {
-    return new Promise((resolve, reject) => {
-        // Captura: los fallos de la rasterización intermitente (bajo
-        // paralelismo) salen silenciosos con stdio ignorado.
-        spawn('convert', ['-background', 'none', ...args], { stdio: ['ignore', 'ignore', 'pipe'] })
-            .on('error', reject)
-            .on('exit', code => code === 0
-                ? resolve()
-                : reject(new Error(`convert terminó con código ${code}: ${args.join(' ')}`)));
-    });
+async function getImageProcessors() {
+    if (!imageProcessorPromise) {
+        imageProcessorPromise = (async () => {
+            const { Resvg, initWasm } = await import('@resvg/resvg-wasm');
+            const wasmPath = require.resolve('@resvg/resvg-wasm/index_bg.wasm');
+            await initWasm(fs.readFileSync(wasmPath));
+            const webp = require('webp-wasm');
+            await webp.load();
+            return { Resvg, encodeWebP: webp.encode };
+        })();
+    }
+    return imageProcessorPromise;
 }
 
-async function rasterizeAll(tasks) {
-    const workers = Math.max(2, Math.min(6, os.cpus().length));
-    let next = 0;
-    let failure = null;
-    const run = async () => {
-        for (;;) {
-            const index = next++;
-            if (index >= tasks.length || failure) return;
-            // Un reintento: convert falla de forma esporádica en paralelo
-            // (lectura del SVG durante la carga, sin rastro reproducible).
-            for (let attempt = 0; attempt < 3 && !failure; attempt++) {
-                try {
-                    await tasks[index]();
-                    break;
-                } catch (error) {
-                    if (attempt === 2) failure = failure || error;
-                }
-            }
-        }
-    };
-    await Promise.all(Array.from({ length: workers }, run));
-    if (failure) throw failure;
+async function encodeFrame(svg, Resvg, encodeWebP) {
+    const renderer = new Resvg(svg, { shapeRendering: 2 });
+    let rendered;
+    try {
+        rendered = renderer.render();
+        if (rendered.width !== OUTPUT_SIZE || rendered.height !== OUTPUT_SIZE)
+            throw new Error(`El rasterizador devolvió ${rendered.width}x${rendered.height}; se esperaban ${OUTPUT_SIZE}x${OUTPUT_SIZE}.`);
+        const pixels = new Uint8ClampedArray(rendered.pixels);
+        const encoded = await encodeWebP(
+            { data: pixels, width: rendered.width, height: rendered.height },
+            { lossless: 1, exact: 1, quality: WEBP_QUALITY, method: WEBP_METHOD }
+        );
+        return new Uint8Array(encoded);
+    } finally {
+        if (rendered) rendered.free();
+        renderer.free();
+    }
 }
 
 function animationFrameCount(bytes) {
@@ -522,69 +528,31 @@ function webpHasAlpha(bytes) {
     return false;
 }
 
-async function main() {
-    const staging = fs.mkdtempSync(path.join(os.tmpdir(), 'zlapy-bbot-'));
+async function main(outputDirectory) {
+    const destinationDirectory = path.resolve(outputDirectory);
+    fs.mkdirSync(destinationDirectory, { recursive: true });
+    const staging = fs.mkdtempSync(path.join(destinationDirectory, '.zlapy-bbot-'));
     try {
-        const jobs = Object.keys(EXPRESSIONS).map(expression => ({
-            expression,
-            frameDirectory: path.join(staging, expression)
-        }));
-        for (const job of jobs) {
-            fs.mkdirSync(job.frameDirectory);
-            const frames = simulate(job.expression);
-            if (frames.length !== FRAMES)
-                throw new Error(`La simulación de "${job.expression}" dio ${frames.length} fotogramas, se esperaban ${FRAMES}.`);
-            job.pngs = [];
-            for (let index = 0; index < FRAMES; index++) {
-                const svgPath = path.join(job.frameDirectory, `${index}.svg`);
-                const pngPath = path.join(job.frameDirectory, `${index}.png`);
-                fs.writeFileSync(svgPath, faceSvg(frames[index]));
-                job.pngs.push(pngPath);
-            }
-        }
-
-        const rasterTasks = [];
-        for (const { frameDirectory, pngs } of jobs)
-            for (let index = 0; index < pngs.length; index++) {
-                const svgPath = path.join(frameDirectory, `${index}.svg`);
-                rasterTasks.push(() => runConvertAsync([svgPath, `PNG32:${pngs[index]}`]));
-            }
-        console.log(`Rasterizando ${rasterTasks.length} fotogramas…`);
-        await rasterizeAll(rasterTasks);
-
-        /* Codificar fotograma a fotograma y conmutar los chunks ANMF con el
-         * muxer del propio cliente (public/js/animated-webp.js, por el ramal
-         * UMD de Node). ImageMagick deduplica fotogramas idénticos al
-         * escribir webp animado y con eso altera los tiempos del bucle. */
+        const expressions = Object.keys(EXPRESSIONS);
         const { mux } = require('../../public/js/animated-webp.js');
-
+        const { Resvg, encodeWebP } = await getImageProcessors();
         const staged = [];
-        for (const { expression, frameDirectory, pngs } of jobs) {
+        for (let expressionIndex = 0; expressionIndex < expressions.length; expressionIndex++) {
+            const expression = expressions[expressionIndex];
+            const frames = simulate(expression);
+            if (frames.length !== FRAMES)
+                throw new Error(`La simulación de "${expression}" dio ${frames.length} fotogramas, se esperaban ${FRAMES}.`);
+            const progressPrefix = `[${String(expressionIndex + 1).padStart(2, '0')}/${expressions.length}] ${expression}`;
             const frameBytes = new Array(FRAMES);
-            const encodeJobs = [];
+            console.log(`${progressPrefix}: renderizando y codificando ${FRAMES} fotogramas (${LOOP_SECONDS} s)`);
             for (let index = 0; index < FRAMES; index++) {
-                const frameWebp = path.join(frameDirectory, `f${index}.webp`);
-                encodeJobs.push(() => runConvertAsync([
-                    pngs[index], '-define', 'webp:lossless=true',
-                    '-define', 'webp:method=6', frameWebp
-                ]));
-            }
-            let next = 0;
-            let failure = null;
-            await Promise.all(Array.from({ length: 4 }, async () => {
-                for (;;) {
-                    const index = next++;
-                    if (index >= encodeJobs.length || failure) return;
-                    for (let attempt = 0; attempt < 3 && !failure; attempt++) {
-                        try { await encodeJobs[index](); break; }
-                        catch (error) { if (attempt === 2) failure = failure || error; }
-                    }
+                try {
+                    frameBytes[index] = await encodeFrame(faceSvg(frames[index]), Resvg, encodeWebP);
+                } catch (error) {
+                    throw new Error(`No se pudo renderizar o codificar "${expression}" en el fotograma ${index + 1}/${FRAMES}.`, { cause: error });
                 }
-            }));
-            if (failure) throw failure;
-            for (let index = 0; index < FRAMES; index++) {
-                const frameWebp = path.join(frameDirectory, `f${index}.webp`);
-                frameBytes[index] = new Uint8Array(fs.readFileSync(frameWebp));
+                if ((index + 1) % 5 === 0 || index === FRAMES - 1)
+                    console.log(`${progressPrefix}: ${index + 1}/${FRAMES} fotogramas (${Math.round((index + 1) / FRAMES * 100)}%)`);
             }
             const bytes = Buffer.from(mux(
                 frameBytes.map(bytes => ({ bytes, duration: FRAME_MS })),
@@ -601,17 +569,37 @@ async function main() {
             }
             const stagedOutput = path.join(staging, `${expression}.webp`);
             fs.writeFileSync(stagedOutput, bytes);
-            staged.push([stagedOutput, path.join(ASSET_DIRECTORY, `${expression}.webp`)]);
-            console.log(`${expression}: ${frameCount} fotogramas, ${(bytes.length / 1024).toFixed(0)} kB`);
+            staged.push([stagedOutput, path.join(destinationDirectory, `${expression}.webp`)]);
+            console.log(`${progressPrefix}: lista (${frameCount} fotogramas, ${LOOP_SECONDS} s, ${(bytes.length / 1024).toFixed(0)} kB)`);
         }
-        fs.mkdirSync(ASSET_DIRECTORY, { recursive: true });
         for (const [stagedFile, destination] of staged) fs.renameSync(stagedFile, destination);
-        console.log(`Listo: ${staged.length} strickers animados en ${ASSET_DIRECTORY}`);
+        console.log(`Listo: ${staged.length} strickers animados en ${destinationDirectory}`);
     } finally {
         fs.rmSync(staging, { recursive: true, force: true });
     }
 }
 
-if (require.main === module) main();
+if (require.main === module) {
+    const outputDirectory = process.argv[2];
+    if (!outputDirectory) {
+        console.error('Indica un directorio temporal de salida; el servidor guarda el paquete en la biblioteca.');
+        process.exitCode = 2;
+    } else {
+        main(outputDirectory).catch(error => {
+            console.error('[bbot] No se pudo generar el paquete:', error);
+            process.exitCode = 1;
+        });
+    }
+}
 
-module.exports = { EXPRESSIONS, REACTION_BY_EXPRESSION, simulate, faceSvg };
+module.exports = {
+    EXPRESSIONS,
+    REACTION_BY_EXPRESSION,
+    buildSchedule,
+    FRAME_MS,
+    FRAMES,
+    LOOP_SECONDS,
+    simulate,
+    faceSvg,
+    main
+};

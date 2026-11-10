@@ -5,9 +5,18 @@
     const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
     const MAX_VIDEO_BYTES = 100 * 1024 * 1024;
     const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
-    const VIDEO_SECONDS_MAX = 10;
-    const VIDEO_FPS = 8;
-    const WEBP_QUALITY = .50;
+    const BBOT_ENCODING_WORKERS = 3;
+    const DEFAULT_OUTPUT_SETTINGS = {
+        photo: { size: 256, quality: 85 },
+        video: { size: 256, quality: 80, maxSeconds: 10, fps: 8 },
+        face: { size: 256, quality: 90, maxSeconds: 7, fps: 14 }
+    };
+    const outputSettings = Object.fromEntries(Object.entries(DEFAULT_OUTPUT_SETTINGS)
+        .map(([profile, settings]) => [profile, { ...settings }]));
+    const VIDEO_SECONDS_MAX = outputSettings.video.maxSeconds;
+    const VIDEO_FPS = outputSettings.video.fps;
+    const BBOT_RECORD_SECONDS = outputSettings.face.maxSeconds;
+    const BBOT_FPS = outputSettings.face.fps;
     let activeEditorCancel = null;
 
     function formatMegabytes(bytes) {
@@ -94,17 +103,18 @@
                 asset.release();
                 throw new Error(`Los GIF animados se conservan sin cambios y deben medir ${SIZE} × ${SIZE}. Para recortarlos, usa un video o una imagen.`);
             }
-            return openEditor(file, asset, { isVideo, isGif });
+            return openEditor(file, asset, { isVideo, isGif }, isVideo ? 'video' : 'photo');
         });
     }
 
-    function openEditor(file, asset, options) {
+    function openEditor(file, asset, options, outputProfile) {
         const landing = document.getElementById('stickerCreatorLanding');
         const intro = landing && landing.querySelector('.stickerCreatorIntro');
         const toolbarTitle = document.getElementById('stickerCreatorTitle');
         const editorContent = element('div', { id: 'stickerEditorContent' });
         const sheet = element('section', { class: 'stickerEditorSheet', 'aria-label': 'Editar stricker' });
         const title = options.isVideo ? 'Recortar video para stricker' : options.isGif ? 'Crear stricker GIF' : 'Recortar stricker';
+        const exportSettings = outputSettings[outputProfile];
         const previousTitle = toolbarTitle ? toolbarTitle.textContent : '';
         const previousIntroHidden = intro ? intro.hidden : false;
         if (!landing || !intro || !toolbarTitle) {
@@ -114,9 +124,9 @@
         toolbarTitle.textContent = title;
         const hint = element('div', { class: 'stickerEditorHint' });
         hint.textContent = options.isVideo
-            ? `Pellizca para acercar y ajusta el tramo en la línea de tiempo. Se tomarán los fotogramas del tramo seleccionado directamente del video y se convertirán en un WebP animado de ${SIZE} × ${SIZE} (máximo ${VIDEO_SECONDS_MAX} segundos a ${VIDEO_FPS} FPS).`
+            ? `Pellizca para acercar y ajusta el tramo en la línea de tiempo. Se tomarán los fotogramas del tramo seleccionado directamente del video y se convertirán en un WebP animado de ${exportSettings.size} × ${exportSettings.size} (máximo ${VIDEO_SECONDS_MAX} segundos a ${VIDEO_FPS} FPS).`
             : options.isGif ? `Este GIF ya mide ${SIZE} × ${SIZE}. Se conservará su animación.` :
-                `Pellizca para acercar o alejar y arrastra para encuadrar. Se comprimirá en WebP de ${SIZE} × ${SIZE}.`;
+                `Pellizca para acercar o alejar y arrastra para encuadrar. Se comprimirá en WebP de ${exportSettings.size} × ${exportSettings.size}.`;
         const stage = element('div', { class: 'stickerEditorStage', tabindex: '0', 'aria-label': 'Vista previa cuadrada. Pellizca para cambiar el zoom y arrastra para encuadrar.' });
         const canvas = element('canvas', { class: 'stickerEditorCanvas', width: SIZE, height: SIZE });
         const context = canvas.getContext('2d');
@@ -431,13 +441,26 @@
                 return `${String(Math.floor(whole / 60)).padStart(2, '0')}:${String(whole % 60).padStart(2, '0')}.${tenths}`;
             }
 
-            function exportImage() {
-                return new Promise((resolveExport, rejectExport) => canvas.toBlob(blob => {
+            function exportImage(onProgress = () => {}) {
+                const outputSize = exportSettings.size;
+                const outputCanvas = document.createElement('canvas');
+                outputCanvas.width = outputSize;
+                outputCanvas.height = outputSize;
+                const outputContext = outputCanvas.getContext('2d');
+                if (!outputContext) return Promise.reject(new Error('No se pudo preparar la imagen para exportarla.'));
+                outputContext.scale(outputSize / SIZE, outputSize / SIZE);
+                drawInto(outputContext, asset.source, asset.width, asset.height);
+                timeLabel.textContent = 'Convirtiendo imagen… 0%';
+                return new Promise((resolveExport, rejectExport) => outputCanvas.toBlob(blob => {
                     if (!blob) rejectExport(new Error('No se pudo comprimir la imagen.'));
                     else if (blob.type !== 'image/webp') rejectExport(new Error('Este navegador no puede crear imágenes WebP.'));
                     else if (blob.size > MAX_OUTPUT_BYTES) rejectExport(new Error(`El stricker supera el máximo de ${formatMegabytes(MAX_OUTPUT_BYTES)}.`));
-                    else resolveExport(new File([blob], 'stricker.webp', { type: 'image/webp' }));
-                }, 'image/webp', .50));
+                    else {
+                        timeLabel.textContent = 'Convirtiendo imagen… 100%';
+                        onProgress(100, 'Convirtiendo imagen');
+                        resolveExport(new File([blob], 'stricker.webp', { type: 'image/webp' }));
+                    }
+                }, 'image/webp', exportSettings.quality / 100));
             }
 
             async function exportVideo() {
@@ -452,13 +475,21 @@
                 const frameCount = Math.max(1, Math.ceil(duration * VIDEO_FPS));
                 if (duration > VIDEO_SECONDS_MAX || start + duration > asset.duration + .02)
                     throw new Error(`El tramo de video debe durar como máximo ${VIDEO_SECONDS_MAX} segundos.`);
-                timeLabel.textContent = 'Preparando el WebP animado del tramo…';
+                if (frameCount > global.AnimatedWebP.MAX_FRAMES)
+                    throw new Error(`La configuración de duración y FPS del video supera el máximo de ${global.AnimatedWebP.MAX_FRAMES} fotogramas.`);
+                timeLabel.textContent = 'Generando fotogramas de video… 0%';
                 return encodeAnimatedWebP(frameCount, start);
             }
 
             async function encodeAnimatedWebP(frameCount, startAt) {
                 const frames = [];
                 const frameDuration = Math.round(1000 / VIDEO_FPS);
+                const outputSize = exportSettings.size;
+                const outputCanvas = document.createElement('canvas');
+                outputCanvas.width = outputSize;
+                outputCanvas.height = outputSize;
+                const outputContext = outputCanvas.getContext('2d');
+                if (!outputContext) throw new Error('No se pudo preparar la animación para exportarla.');
                 await seek(asset, startAt);
                 try {
                     await videoPreview.play();
@@ -466,23 +497,26 @@
                         await waitForVideoTime(startAt + frame / VIDEO_FPS);
                         if (disposed) throw new Error('Conversión cancelada.');
                         draw();
-                        const blob = await new Promise((resolveFrame, rejectFrame) => canvas.toBlob(
+                        outputContext.clearRect(0, 0, outputSize, outputSize);
+                        outputContext.drawImage(canvas, 0, 0, outputSize, outputSize);
+                        const blob = await new Promise((resolveFrame, rejectFrame) => outputCanvas.toBlob(
                             value => value ? resolveFrame(value) : rejectFrame(new Error('No se pudo comprimir un fotograma WebP.')),
                             'image/webp',
-                            WEBP_QUALITY
+                            exportSettings.quality / 100
                         ));
                         if (blob.type !== 'image/webp')
                             throw new Error('Este navegador no puede crear fotogramas WebP.');
                         frames.push({ bytes: new Uint8Array(await blob.arrayBuffer()), duration: frameDuration });
                         if (!disposed)
-                            timeLabel.textContent = `Creando WebP animado… ${Math.round((frame + 1) / frameCount * 100)}%`;
+                            timeLabel.textContent = `Convirtiendo video… ${Math.round((frame + 1) / frameCount * 100)}%`;
                     }
                 } finally {
                     videoPreview.pause();
                 }
-                const encoded = global.AnimatedWebP.mux(frames, SIZE, SIZE);
+                const encoded = global.AnimatedWebP.mux(frames, outputSize, outputSize);
                 if (encoded.byteLength > MAX_OUTPUT_BYTES)
                     throw new Error(`El WebP animado supera el máximo de ${formatMegabytes(MAX_OUTPUT_BYTES)}. Recorta un tramo más corto.`);
+                if (!disposed) timeLabel.textContent = 'Finalizando video… 100%';
                 return new File([encoded], 'stricker.webp', { type: 'image/webp' });
             }
 
@@ -678,8 +712,15 @@
     }
 
     const BBOT_SIZE = 256;
-    const BBOT_ANIMATION_FRAMES = 20;
-    const BBOT_FRAME_DURATION = 100;
+    const BBOT_EDITOR_CANCELLED = Symbol('bbot-editor-cancelled');
+    const BBOT_ANIMATION_FRAMES = BBOT_RECORD_SECONDS * BBOT_FPS;
+    const BBOT_FRAME_DURATION = 1000 / BBOT_FPS;
+
+    async function waitForBbotFrame(targetTime) {
+        while (global.performance.now() < targetTime)
+            await new Promise(resolve => global.requestAnimationFrame(resolve));
+    }
+
     const BBOT_EFFECT_FILTERS = {
         none: '',
         chrome: 'grayscale(.45) contrast(1.35) brightness(1.12)',
@@ -688,15 +729,34 @@
         crt: 'contrast(1.25) saturate(.82)',
         worn: 'sepia(.18) contrast(.9) saturate(.72)'
     };
+    const BBOT_EFFECT_PRESETS = {
+        none: {},
+        chrome: { chrome: 80, gloss: 25, rim: 65 },
+        glass: { glass: 75, gloss: 70, rim: 30 },
+        neon: { rim: 90, bloom: 80, halo: 55, holo: 30 },
+        crt: { scanlines: 70, hueDrift: 20 },
+        worn: { scratches: 65, gloss: 15, hueDrift: 10 }
+    };
+    const BBOT_EFFECT_AMOUNT_KEYS = [
+        'gloss', 'rim', 'chrome', 'glass', 'bloom', 'halo', 'holo', 'scanlines', 'scratches', 'hueDrift'
+    ];
 
-    function drawBbotEffects(context, settings, phase) {
+    function settingsForBbotEffect(settings, effect) {
+        const preset = BBOT_EFFECT_PRESETS[effect];
+        if (!preset) return { ...settings, effect };
+        const result = { ...settings, effect };
+        for (const key of BBOT_EFFECT_AMOUNT_KEYS) result[key] = preset[key] || 0;
+        return result;
+    }
+
+    function drawBbotEffects(context, settings) {
         const amount = key => Math.max(0, Math.min(1, Number(settings[key]) / 100 || 0));
-        const radius = Math.max(1, (Number(settings.size) || 200) * .46);
+        const radius = Math.max(1, (Number(settings.size) || BBOT_SIZE) * .46);
         const center = BBOT_SIZE / 2;
         const filters = [BBOT_EFFECT_FILTERS[settings.effect] || ''];
         if (amount('chrome')) filters.push(`grayscale(${amount('chrome') * .55}) contrast(${1 + amount('chrome') * .35})`);
         if (amount('glass')) filters.push(`saturate(${1 + amount('glass') * .2}) brightness(${1 + amount('glass') * .08})`);
-        const hueDrift = Math.sin(phase * Math.PI * 2) * amount('hueDrift') * 90;
+        const hueDrift = amount('hueDrift') * 90;
         filters.push(`hue-rotate(${hueDrift}deg)`);
         context.filter = filters.filter(Boolean).join(' ');
         context.save();
@@ -781,97 +841,72 @@
         context.restore();
     }
 
-    async function renderBbotStickerFile(createFace, expression, settings = {}) {
+    async function renderBbotStickerFile(createFace, expression, settings = {}, onProgress = () => {},
+        sourcePreview = null, sourceInstance = null, exportSettings = outputSettings.face) {
         if (!global.AnimatedWebP || typeof global.AnimatedWebP.mux !== 'function')
             throw new Error('No se pudo inicializar la exportación de WebP animado.');
-        const renderRoot = document.getElementById('stickerCreatorLanding');
-        if (!renderRoot) throw new Error('No se pudo preparar la cara para exportarla.');
-        const faceHost = element('div', { class: 'bbotEditorFace' });
-        faceHost.style.position = 'fixed';
-        faceHost.style.left = '0';
-        faceHost.style.top = '0';
-        faceHost.style.width = `${BBOT_SIZE}px`;
-        faceHost.style.height = `${BBOT_SIZE}px`;
-        faceHost.style.display = 'grid';
-        faceHost.style.placeItems = 'center';
-        faceHost.style.visibility = 'hidden';
-        faceHost.style.pointerEvents = 'none';
-        faceHost.style.setProperty('--face-skin', /^#[0-9a-f]{6}$/i.test(settings.skin) ? settings.skin : '#17191c');
-        faceHost.style.setProperty('--face-ink', /^#[0-9a-f]{6}$/i.test(settings.ink) ? settings.ink : '#f7f9f9');
-        faceHost.style.setProperty('--face-ring', /^#[0-9a-f]{6}$/i.test(settings.ring) ? settings.ring : '#17191c');
-        renderRoot.appendChild(faceHost);
-        let faceInstance = null;
+        if (BBOT_ANIMATION_FRAMES > global.AnimatedWebP.MAX_FRAMES)
+            throw new Error(`La configuración de duración y FPS de la cara supera el máximo de ${global.AnimatedWebP.MAX_FRAMES} fotogramas.`);
+        let faceHost = null;
+        let faceInstance = sourceInstance;
         try {
-            /* Coreografía determinista con la API real de reacciones del
-             * motor (la misma de la web): la agenda espontánea de bbot
-             * programa el primer parpadeo a 1.2–4.2 s, fuera del rango de un
-             * bucle de 2 s, así que aquí se dispara con `force` en los
-             * tiempos exactos del bucle y la reacción se re-dispara a mitad
-             * de vuelta, como haría una persona al interactuar con la cara.
-             * Los tiempos salen de REACTIONS/EXPRESSIONS del propio módulo,
-             * para no duplicar constantes del motor. */
-            const engine = await import('./vendor/bbot-face.js');
-            const reactionDefinition = (engine.REACTIONS || {})[settings.reaction];
-            const reactionSeconds = Number(reactionDefinition && reactionDefinition.dur) || 0;
-            const loopSeconds = BBOT_ANIMATION_FRAMES * BBOT_FRAME_DURATION / 1000;
-            const loopFrames = seconds => seconds * 1000 / BBOT_FRAME_DURATION;
-            const refireFrame = settings.reaction && reactionSeconds
-                ? Math.max(1, Math.round(loopFrames(loopSeconds - reactionSeconds - .45)))
-                : -1;
-            const preset = engine.EXPRESSIONS && engine.EXPRESSIONS[expression] || null;
-            const canBlink = settings.blink !== false && settings.reaction !== 'blink' &&
-                settings.reaction !== 'wink' && (!preset || preset.lidT + preset.lidB < .9);
-            const blinkFrame = canBlink
-                ? Math.max(1, Math.round(loopFrames(loopSeconds - .45)))
-                : -1;
-            faceInstance = createFace(faceHost, {
-                expression,
-                mouth: settings.mouth === true,
-                pupils: settings.pupils === true,
-                track: false,
-                blink: settings.blink !== false,
-                idle: settings.idle !== false
-            });
-            const svg = faceHost.querySelector('svg');
+            let svg;
+            if (sourcePreview) {
+                svg = sourcePreview.querySelector('svg');
+                if (!svg || !faceInstance)
+                    throw new Error('La vista previa de la cara ya no está disponible.');
+            } else {
+                const renderRoot = document.getElementById('stickerCreatorLanding');
+                if (!renderRoot) throw new Error('No se pudo preparar la cara para exportarla.');
+                faceHost = element('div', { class: 'bbotEditorFace' });
+                faceHost.style.position = 'fixed';
+                faceHost.style.left = '0';
+                faceHost.style.top = '0';
+                faceHost.style.width = `${BBOT_SIZE}px`;
+                faceHost.style.height = `${BBOT_SIZE}px`;
+                faceHost.style.display = 'grid';
+                faceHost.style.placeItems = 'center';
+                faceHost.style.visibility = 'visible';
+                faceHost.style.opacity = '0';
+                faceHost.style.zIndex = '-1';
+                faceHost.style.pointerEvents = 'none';
+                faceHost.style.setProperty('--face-skin', /^#[0-9a-f]{6}$/i.test(settings.skin) ? settings.skin : '#17191c');
+                faceHost.style.setProperty('--face-ink', /^#[0-9a-f]{6}$/i.test(settings.ink) ? settings.ink : '#f7f9f9');
+                faceHost.style.setProperty('--face-ring', /^#[0-9a-f]{6}$/i.test(settings.ring) ? settings.ring : '#17191c');
+                renderRoot.appendChild(faceHost);
+                faceInstance = createFace(faceHost, {
+                    expression,
+                    mouth: settings.mouth === true,
+                    pupils: settings.pupils === true,
+                    track: settings.track === true,
+                    blink: settings.blink === true,
+                    idle: settings.idle === true
+                });
+                svg = faceHost.querySelector('svg');
+            }
             if (!svg) throw new Error('No se pudo preparar la cara para exportarla.');
-            const faceSize = Math.max(120, Math.min(240, Number(settings.size) || 200));
-            svg.style.width = `${faceSize}px`;
-            svg.style.height = `${faceSize}px`;
-            svg.style.position = 'absolute';
-            svg.style.left = '50%';
-            svg.style.top = '50%';
-            svg.style.transform = 'translate(-50%, -50%)';
+            const faceSize = Math.max(120, Math.min(BBOT_SIZE, Number(settings.size) || BBOT_SIZE));
+            if (!sourcePreview) {
+                svg.style.width = `${faceSize}px`;
+                svg.style.height = `${faceSize}px`;
+                svg.style.position = 'absolute';
+                svg.style.left = '50%';
+                svg.style.top = '50%';
+                svg.style.transform = 'translate(-50%, -50%)';
+            }
             const styleProperties = [
                 'fill', 'stroke', 'stroke-width', 'stroke-linecap', 'stroke-linejoin',
                 'vector-effect', 'opacity', 'transform', 'transform-origin', 'transform-box',
                 'clip-path', 'overflow', 'display'
             ];
-            const frames = [];
-            for (let frameIndex = 0; frameIndex < BBOT_ANIMATION_FRAMES; frameIndex++) {
-                const phase = frameIndex / BBOT_ANIMATION_FRAMES;
-                if (settings.track && typeof faceInstance.look === 'function') {
-                    faceInstance.look(Math.sin(phase * Math.PI * 2) * .72,
-                        Math.cos(phase * Math.PI * 2) * .35, 120);
-                }
-                if (typeof faceInstance.react === 'function') {
-                    if (settings.reaction && (frameIndex === 0 || frameIndex === refireFrame))
-                        faceInstance.react(settings.reaction, { force: true });
-                    if (canBlink && frameIndex === blinkFrame)
-                        faceInstance.react('blink', { force: true });
-                }
-                await new Promise(resolve => global.requestAnimationFrame(() =>
-                    global.setTimeout(resolve, BBOT_FRAME_DURATION)));
-
+            const outputSize = exportSettings.size;
+            const recordFrame = () => {
+                if (!svg.isConnected)
+                    throw new Error('La vista previa de la cara se cerró durante la grabación.');
                 const clone = svg.cloneNode(true);
                 clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
                 clone.setAttribute('width', String(faceSize));
                 clone.setAttribute('height', String(faceSize));
-                clone.style.width = `${faceSize}px`;
-                clone.style.height = `${faceSize}px`;
-                clone.style.position = 'absolute';
-                clone.style.left = '50%';
-                clone.style.top = '50%';
-                clone.style.transform = 'translate(-50%, -50%)';
                 const originals = [svg, ...svg.querySelectorAll('*')];
                 const copies = [clone, ...clone.querySelectorAll('*')];
                 originals.forEach((node, index) => {
@@ -883,54 +918,138 @@
                 });
                 clone.style.width = `${faceSize}px`;
                 clone.style.height = `${faceSize}px`;
-                clone.style.position = 'absolute';
-                clone.style.left = '50%';
-                clone.style.top = '50%';
-                clone.style.transform = 'translate(-50%, -50%)';
+                clone.style.position = 'static';
+                clone.style.left = '0';
+                clone.style.top = '0';
+                clone.style.transform = 'none';
+                return new XMLSerializer().serializeToString(clone);
+            };
 
-                const svgBlob = new Blob([new XMLSerializer().serializeToString(clone)], {
-                    type: 'image/svg+xml;charset=utf-8'
+            const frames = new Array(BBOT_ANIMATION_FRAMES);
+            let firstFramePixels = null;
+            let hasAnimatedPixels = false;
+            const animationFlow = Array.isArray(settings.animationFlow)
+                ? settings.animationFlow
+                    .filter(event => event && Number.isFinite(Number(event.time)) &&
+                        Number(event.time) >= 0 && Number(event.time) < BBOT_RECORD_SECONDS &&
+                        ['emotion', 'reaction', 'effect'].includes(event.type) &&
+                        typeof event.value === 'string')
+                    .map(event => ({ ...event, time: Number(event.time) }))
+                    .sort((left, right) => left.time - right.time)
+                : [];
+            let flowIndex = 0;
+            let activeEffectSettings = { ...settings };
+            const frameCaptures = [];
+            if (settings.reaction) faceInstance.react(settings.reaction, { force: true });
+            const animationStart = global.performance.now();
+            onProgress(0, 'Grabando cara');
+            for (let frameIndex = 0; frameIndex < BBOT_ANIMATION_FRAMES; frameIndex++) {
+                if (frameIndex)
+                    await waitForBbotFrame(animationStart + frameIndex * BBOT_FRAME_DURATION);
+                const elapsed = frameIndex / BBOT_FPS;
+                while (flowIndex < animationFlow.length && animationFlow[flowIndex].time <= elapsed) {
+                    const event = animationFlow[flowIndex++];
+                    if (event.type === 'emotion') faceInstance.setExpression(event.value);
+                    else if (event.type === 'reaction') faceInstance.react(event.value, { force: true });
+                    else if (event.type === 'effect')
+                        activeEffectSettings = settingsForBbotEffect(activeEffectSettings, event.value);
+                }
+                frameCaptures.push({
+                    svg: recordFrame(),
+                    effectSettings: { ...activeEffectSettings }
                 });
+                onProgress(Math.round((frameIndex + 1) / BBOT_ANIMATION_FRAMES * 45), 'Grabando cara');
+            }
+
+            const createEncoder = () => {
+                const frameCanvas = document.createElement('canvas');
+                frameCanvas.width = BBOT_SIZE;
+                frameCanvas.height = BBOT_SIZE;
+                const frameContext = frameCanvas.getContext('2d');
+                if (!frameContext) throw new Error('No se pudo preparar la conversión de la cara.');
+                const encodedCanvas = document.createElement('canvas');
+                encodedCanvas.width = outputSize;
+                encodedCanvas.height = outputSize;
+                const encodedContext = encodedCanvas.getContext('2d');
+                if (!encodedContext) throw new Error('No se pudo preparar el WebP animado.');
+                encodedContext.scale(outputSize / BBOT_SIZE, outputSize / BBOT_SIZE);
+                return { frameCanvas, frameContext, encodedCanvas, encodedContext };
+            };
+            const encodeFrame = async (frameIndex, encoder) => {
+                const capture = frameCaptures[frameIndex];
+                const svgBlob = new Blob([capture.svg], { type: 'image/svg+xml;charset=utf-8' });
                 const objectUrl = URL.createObjectURL(svgBlob);
                 try {
                     const image = new Image();
                     await new Promise((resolve, reject) => {
                         image.onload = resolve;
-                        image.onerror = () => reject(new Error('No se pudo convertir la cara a fotograma.'));
+                        image.onerror = () => reject(new Error('No se pudo capturar la vista previa de la cara.'));
                         image.src = objectUrl;
                     });
-                    const canvas = document.createElement('canvas');
-                    canvas.width = BBOT_SIZE;
-                    canvas.height = BBOT_SIZE;
-                    const context = canvas.getContext('2d');
-                    if (!context) throw new Error('No se pudo preparar el WebP animado.');
-                    drawBbotEffects(context, { ...settings, image }, phase);
-                    const blob = await new Promise((resolve, reject) => {
-                        canvas.toBlob(result => result
-                            ? resolve(result)
-                            : reject(new Error('No se pudo exportar un fotograma WebP.')), 'image/webp', .86);
-                    });
-                    if (blob.type !== 'image/webp')
-                        throw new Error('Este navegador no puede exportar como WebP.');
-                    frames.push({
-                        bytes: new Uint8Array(await blob.arrayBuffer()),
-                        duration: BBOT_FRAME_DURATION
-                    });
+                    encoder.frameContext.clearRect(0, 0, BBOT_SIZE, BBOT_SIZE);
+                    encoder.frameContext.drawImage(image, (BBOT_SIZE - faceSize) / 2,
+                        (BBOT_SIZE - faceSize) / 2, faceSize, faceSize);
                 } finally {
                     URL.revokeObjectURL(objectUrl);
                 }
-            }
-            const bytes = global.AnimatedWebP.mux(frames, BBOT_SIZE, BBOT_SIZE, 0);
+                encoder.encodedContext.clearRect(0, 0, outputSize, outputSize);
+                drawBbotEffects(encoder.encodedContext, {
+                    ...capture.effectSettings,
+                    image: encoder.frameCanvas
+                });
+                const pixels = encoder.encodedContext.getImageData(0, 0, outputSize, outputSize).data;
+                const blob = await new Promise((resolve, reject) => encoder.encodedCanvas.toBlob(result => result
+                    ? resolve(result)
+                    : reject(new Error('No se pudo exportar un fotograma WebP.')),
+                'image/webp', exportSettings.quality / 100));
+                if (blob.type !== 'image/webp')
+                    throw new Error('Este navegador no puede exportar como WebP.');
+                return {
+                    pixels,
+                    frame: {
+                        bytes: new Uint8Array(await blob.arrayBuffer()),
+                        duration: Math.round((frameIndex + 1) * BBOT_FRAME_DURATION) -
+                            Math.round(frameIndex * BBOT_FRAME_DURATION)
+                    }
+                };
+            };
+            const encoderCount = Math.min(BBOT_ENCODING_WORKERS, frameCaptures.length);
+            const encoders = Array.from({ length: encoderCount }, createEncoder);
+            onProgress(45, 'Convirtiendo cara');
+            const firstCapture = await encodeFrame(0, encoders[0]);
+            firstFramePixels = new Uint8ClampedArray(firstCapture.pixels);
+            frames[0] = firstCapture.frame;
+            let completedFrames = 1;
+            onProgress(45 + Math.round(completedFrames / frameCaptures.length * 50), 'Convirtiendo cara');
+            let nextFrameIndex = 1;
+            await Promise.all(encoders.map(async encoder => {
+                while (nextFrameIndex < frameCaptures.length) {
+                    const frameIndex = nextFrameIndex++;
+                    const result = await encodeFrame(frameIndex, encoder);
+                    if (!hasAnimatedPixels)
+                        hasAnimatedPixels = result.pixels.some((value, index) => value !== firstFramePixels[index]);
+                    frames[frameIndex] = result.frame;
+                    completedFrames++;
+                    onProgress(45 + Math.round(completedFrames / frameCaptures.length * 50), 'Convirtiendo cara');
+                }
+            }));
+            if (!hasAnimatedPixels)
+                throw new Error('La cara no produjo fotogramas distintos; no se guardó un sticker estático.');
+            onProgress(98, 'Finalizando cara');
+            const bytes = global.AnimatedWebP.mux(frames, outputSize, outputSize, 0);
             if (bytes.length > MAX_OUTPUT_BYTES)
                 throw new Error(`El stricker supera el máximo de ${formatMegabytes(MAX_OUTPUT_BYTES)}.`);
+            onProgress(100, 'Cara lista');
             return new File([bytes], 'bbot-stricker.webp', { type: 'image/webp' });
         } finally {
-            if (faceInstance) faceInstance.destroy();
-            faceHost.remove();
+            if (faceHost) {
+                if (faceInstance) faceInstance.destroy();
+                faceHost.remove();
+            }
         }
     }
 
-    function openBbotEditor(initialExpression, initialSettings = {}) {
+    function openBbotEditor(initialExpression, initialSettings = {}, onSave) {
         return import('./vendor/bbot-face.js').then(({ createFace, EXPRESSION_NAMES, REACTION_NAMES }) => {
             const expression = EXPRESSION_NAMES.includes(initialExpression) ? initialExpression : 'idle';
             const landing = document.getElementById('stickerCreatorLanding');
@@ -962,20 +1081,40 @@
             };
             const defaults = {
                 expression, skin: '#17191c', ink: '#f7f9f9', ring: '#17191c',
-                size: 200, mouth: false, pupils: false, track: true, blink: true, idle: true,
-                preset: 'default', effect: 'none', gloss: 0, rim: 0, chrome: 0, glass: 0, bloom: 0,
+                size: BBOT_SIZE, mouth: false, pupils: false, track: true, blink: true, idle: true,
+                effect: 'none', gloss: 0, rim: 0, chrome: 0, glass: 0, bloom: 0,
                 halo: 0, holo: 0, scanlines: 0, scratches: 0, hueDrift: 0, reaction: ''
             };
             const state = { ...defaults, ...initialSettings };
+            delete state.preset;
+            delete state.presetEffect;
             if (!EXPRESSION_NAMES.includes(state.expression)) state.expression = expression;
             if (!REACTION_NAMES.includes(state.reaction)) state.reaction = '';
+            state.animationFlow = Array.isArray(state.animationFlow)
+                ? state.animationFlow
+                    .filter(event => event && Number.isFinite(Number(event.time)) &&
+                        Number(event.time) >= 0 && Number(event.time) < BBOT_RECORD_SECONDS &&
+                        (event.type === 'emotion'
+                            ? EXPRESSION_NAMES.includes(event.value)
+                            : event.type === 'reaction'
+                                ? REACTION_NAMES.includes(event.value)
+                                : event.type === 'effect' && Object.prototype.hasOwnProperty.call(BBOT_EFFECT_PRESETS, event.value)))
+                    .map((event, index) => ({
+                        id: Number.isInteger(event.id) ? event.id : index + 1,
+                        time: Math.min((BBOT_ANIMATION_FRAMES - 1) / BBOT_FPS,
+                            Math.round(Number(event.time) * BBOT_FPS) / BBOT_FPS),
+                        type: event.type,
+                        value: event.value
+                    }))
+                : [];
             for (const key of ['mouth', 'pupils', 'track', 'blink', 'idle'])
                 state[key] = state[key] === true;
             for (const key of ['skin', 'ink', 'ring']) {
                 if (!/^#[0-9a-f]{6}$/i.test(state[key])) state[key] = defaults[key];
             }
-            state.size = Math.max(120, Math.min(240, Number(state.size) || defaults.size));
+            state.size = Math.max(120, Math.min(BBOT_SIZE, Number(state.size) || defaults.size));
             const settings = { ...state };
+            settings.animationFlow = state.animationFlow;
             const group = title => {
                 const section = element('section', { class: 'bbotEditorSection' });
                 const heading = element('h3', { class: 'bbotEditorSectionTitle' });
@@ -1022,32 +1161,6 @@
                 input.addEventListener('input', () => { output.textContent = `${input.value}${suffix}`; });
                 return { wrapper, input };
             };
-            const presetGroup = group('Preajustes');
-            const presets = {
-                default: ['#17191c', '#f7f9f9', '#17191c'],
-                inverted: ['#f7f9f9', '#17191c', '#ffffff'],
-                acid: ['#b7ff3c', '#151b0a', '#f0ff9a'],
-                sky: ['#86d8ff', '#102637', '#d2f3ff'],
-                paper: ['#f1e7d0', '#302719', '#fff8e9'],
-                ember: ['#ff784f', '#32130d', '#ffd0a1']
-            };
-            const presetButtons = new Map();
-            for (const [name, colors] of Object.entries(presets)) {
-                const item = button(name);
-                item.classList.toggle('on', state.preset === name);
-                item.onclick = () => {
-                    [settings.skin, settings.ink, settings.ring] = colors;
-                    state.preset = name;
-                    settings.preset = name;
-                    syncColors();
-                    renderFace();
-                };
-                presetButtons.set(name, item);
-                presetGroup.appendChild(item);
-            }
-            const randomize = button('Sorpréndeme');
-            presetGroup.appendChild(randomize);
-
             const colorsGroup = group('Color');
             const colorInputs = {};
             for (const [key, label] of [['skin', 'Cara'], ['ink', 'Ojos y boca'], ['ring', 'Contorno']]) {
@@ -1055,15 +1168,59 @@
                     type: 'color', value: state[key], 'data-setting': key,
                     'aria-label': label
                 });
+                input.classList.add('bbotColorSwatch');
                 colorInputs[key] = input;
-                colorsGroup.appendChild(field(label, input));
+                const colorField = field(label, input);
+                colorField.classList.add('bbotColorField');
+                colorsGroup.appendChild(colorField);
                 input.addEventListener('input', () => {
                     settings[key] = input.value;
-                    state.preset = 'custom';
-                    settings.preset = 'custom';
-                    updateActivePreset();
+                    updateActiveColorPreset();
                     renderFace();
                 });
+            }
+            const colorPresets = {
+                default: ['#17191c', '#f7f9f9', '#17191c'],
+                inverted: ['#f7f9f9', '#17191c', '#ffffff'],
+                gray: ['#5b626b', '#f7f9f9', '#363b42'],
+                acid: ['#b7ff3c', '#151b0a', '#f0ff9a'],
+                sky: ['#86d8ff', '#102637', '#d2f3ff'],
+                paper: ['#f1e7d0', '#302719', '#fff8e9'],
+                ember: ['#ff784f', '#32130d', '#ffd0a1'],
+                supreme: ['#5522a8', '#fff2ff', '#e88aff']
+            };
+            const colorPresetNames = {
+                default: 'Clásico', inverted: 'Invertido', gray: 'Gris', acid: 'Ácido',
+                sky: 'Sky', paper: 'Paper', ember: 'Ember', supreme: 'Supreme'
+            };
+            const colorPresetList = element('div', { class: 'bbotColorPresets', role: 'group', 'aria-label': 'Paletas de color' });
+            const colorPresetButtons = new Map();
+            for (const [name, colors] of Object.entries(colorPresets)) {
+                const preset = button(colorPresetNames[name], 'bbotColorPreset');
+                preset.title = colorPresetNames[name];
+                preset.setAttribute('aria-label', `Paleta ${colorPresetNames[name]}`);
+                preset.setAttribute('aria-pressed', 'false');
+                preset.style.setProperty('--swatch-skin', colors[0]);
+                preset.style.setProperty('--swatch-ink', colors[1]);
+                preset.style.setProperty('--swatch-ring', colors[2]);
+                preset.onclick = () => {
+                    [settings.skin, settings.ink, settings.ring] = colors;
+                    for (const key of Object.keys(colorInputs)) colorInputs[key].value = settings[key];
+                    updateActiveColorPreset(name);
+                    renderFace();
+                };
+                colorPresetButtons.set(name, preset);
+                colorPresetList.appendChild(preset);
+            }
+            colorsGroup.appendChild(colorPresetList);
+            function updateActiveColorPreset(activeName = null) {
+                const colors = [settings.skin, settings.ink, settings.ring].map(color => color.toLowerCase());
+                for (const [name, preset] of colorPresetButtons) {
+                    const selected = name === activeName || (!activeName &&
+                        colorPresets[name].every((color, index) => color.toLowerCase() === colors[index]));
+                    preset.classList.toggle('on', selected);
+                    preset.setAttribute('aria-pressed', String(selected));
+                }
             }
             function syncColors() {
                 for (const key of Object.keys(colorInputs)) {
@@ -1071,26 +1228,11 @@
                     if (/^#[0-9a-f]{6}$/i.test(value)) colorInputs[key].value = value;
                     else colorInputs[key].value = '#777777';
                 }
-                updateActivePreset();
+                updateActiveColorPreset();
             }
-            function updateActivePreset() {
-                for (const [name, item] of presetButtons) item.classList.toggle('on', state.preset === name);
-                randomize.classList.toggle('on', state.preset === 'random');
-            }
-            randomize.onclick = () => {
-                const names = Object.keys(presets);
-                const name = names[Math.floor(Math.random() * names.length)];
-                [settings.skin, settings.ink, settings.ring] = presets[name];
-                settings.expression = EXPRESSION_NAMES[Math.floor(Math.random() * EXPRESSION_NAMES.length)];
-                state.preset = 'random';
-                settings.preset = 'random';
-                syncColors();
-                updateActiveMood();
-                renderFace();
-            };
 
             const sizeGroup = group('Tamaño');
-            const sizeControl = range('size', 'Tamaño de cara', 120, 240, state.size, ' px');
+            const sizeControl = range('size', 'Tamaño de cara', 120, BBOT_SIZE, state.size, ' px');
             sizeGroup.appendChild(sizeControl.wrapper);
             sizeControl.input.addEventListener('input', () => {
                 settings.size = Number(sizeControl.input.value);
@@ -1134,24 +1276,13 @@
             }
 
             const effectGroup = group('Efectos');
-            const effectPresets = {
-                none: {},
-                chrome: { chrome: 80, gloss: 25, rim: 65 },
-                glass: { glass: 75, gloss: 70, rim: 30 },
-                neon: { rim: 90, bloom: 80, halo: 55, holo: 30 },
-                crt: { scanlines: 70, hueDrift: 20 },
-                worn: { scratches: 65, gloss: 15, hueDrift: 10 }
-            };
             let applyingEffectPreset = false;
             const effectButtons = new Map();
-            for (const name of Object.keys(effectPresets)) {
+            for (const name of Object.keys(BBOT_EFFECT_PRESETS)) {
                 const item = button(name);
                 item.classList.toggle('on', settings.effect === name);
                 item.onclick = () => {
-                    settings.effect = name;
-                    settings.presetEffect = name;
-                    for (const key of ['gloss', 'rim', 'chrome', 'glass', 'bloom', 'halo', 'holo', 'scanlines', 'scratches', 'hueDrift'])
-                        settings[key] = effectPresets[name][key] || 0;
+                    Object.assign(settings, settingsForBbotEffect(settings, name));
                     applyingEffectPreset = true;
                     for (const control of effectControls) {
                         control.input.value = String(settings[control.input.dataset.setting]);
@@ -1179,7 +1310,6 @@
                     settings[key] = Number(control.input.value);
                     if (!applyingEffectPreset) {
                         settings.effect = 'custom';
-                        settings.presetEffect = 'custom';
                     }
                     updateActiveEffect();
                     updatePreviewFilter();
@@ -1188,9 +1318,9 @@
             function updateActiveEffect() {
                 for (const [name, item] of effectButtons) item.classList.toggle('on', name === settings.effect);
             }
-            function updatePreviewFilter() {
-                const amount = key => Math.max(0, Math.min(1, Number(settings[key]) / 100 || 0));
-                const filters = [BBOT_EFFECT_FILTERS[settings.effect] || ''];
+            function updatePreviewFilter(effectSettings = settings) {
+                const amount = key => Math.max(0, Math.min(1, Number(effectSettings[key]) / 100 || 0));
+                const filters = [BBOT_EFFECT_FILTERS[effectSettings.effect] || ''];
                 if (amount('chrome')) filters.push(`grayscale(${amount('chrome') * .55}) contrast(${1 + amount('chrome') * .35})`);
                 if (amount('glass')) filters.push(`saturate(${1 + amount('glass') * .2}) brightness(${1 + amount('glass') * .08})`);
                 if (amount('hueDrift')) filters.push(`hue-rotate(${amount('hueDrift') * 90}deg)`);
@@ -1203,23 +1333,167 @@
                 preview.style.setProperty('--bbot-hue-drift', `${amount('hueDrift') * .9}deg`);
             }
 
-            const reactionGroup = group('Tócame');
-            const reactionButtons = new Map();
-            for (const name of REACTION_NAMES) {
-                const item = button(reactionLabels[name] || name);
-                item.classList.toggle('on', settings.reaction === name);
-                item.onclick = () => {
-                    settings.reaction = settings.reaction === name ? '' : name;
-                    for (const [reaction, control] of reactionButtons)
-                        control.classList.toggle('on', settings.reaction === reaction);
-                    if (settings.reaction && faceInstance) faceInstance.react(settings.reaction, { force: true });
+            const flowGroup = group(`Flujo de animación · ${BBOT_RECORD_SECONDS} s`);
+            const flowHelp = element('p', { class: 'bbotTimelineHelp' });
+            flowHelp.textContent = 'Elige qué ocurre y en qué segundo de la animación.';
+            const flowTrack = element('div', {
+                class: 'bbotTimelineTrack',
+                role: 'img',
+                'aria-label': `Línea de tiempo de ${BBOT_RECORD_SECONDS} segundos`
+            });
+            const flowTrackLine = element('span', { class: 'bbotTimelineTrackLine' });
+            flowTrack.appendChild(flowTrackLine);
+            const flowRows = element('div', { class: 'bbotTimelineRows' });
+            const flowActions = element('div', { class: 'bbotTimelineActions' });
+            const addFlowEvent = button('+ Añadir evento', 'bbotEditorChip bbotTimelineAdd');
+            const playFlow = button('▶ Probar flujo', 'bbotEditorChip bbotTimelinePlay');
+            const flowTime = element('output', { class: 'bbotTimelineTime', 'aria-live': 'polite' });
+            flowTime.textContent = `0.0 / ${BBOT_RECORD_SECONDS} s`;
+            flowActions.append(addFlowEvent, playFlow, flowTime);
+            flowGroup.append(flowHelp, flowTrack, flowRows, flowActions);
+
+            const flowTypeOptions = [
+                { value: 'emotion', label: 'Emoción' },
+                { value: 'reaction', label: 'Reacción' },
+                { value: 'effect', label: 'Efecto' }
+            ];
+            const flowEffectLabels = {
+                none: 'Sin efecto', chrome: 'Cromo', glass: 'Vidrio',
+                neon: 'Neón', crt: 'CRT', worn: 'Gastado'
+            };
+            const flowValueOptions = type => type === 'emotion'
+                ? EXPRESSION_NAMES.map(name => ({ value: name, label: expressionLabels[name] || name }))
+                : type === 'reaction'
+                    ? REACTION_NAMES.map(name => ({ value: name, label: reactionLabels[name] || name }))
+                    : Object.keys(BBOT_EFFECT_PRESETS).map(name => ({ value: name, label: flowEffectLabels[name] || name }));
+            let nextFlowEventId = state.animationFlow.reduce((maximum, event) => Math.max(maximum, event.id), 0) + 1;
+            let previewFlowFrame = 0;
+            let previewFlowPlaying = false;
+            let disposed = false;
+
+            function createFlowMenuPicker(event, index, mode) {
+                const isType = mode === 'type';
+                const options = isType ? flowTypeOptions : flowValueOptions(event.type);
+                if (!isType && !options.some(option => option.value === event.value))
+                    event.value = options[0].value;
+                const selectedValue = isType ? event.type : event.value;
+                const selectedOption = options.find(option => option.value === selectedValue);
+                const trigger = button(selectedOption.label, 'bbotFlowMenuTrigger');
+                trigger.setAttribute('aria-label', isType
+                    ? `Tipo del evento ${index + 1}`
+                    : `Acción del evento ${index + 1}`);
+                trigger.setAttribute('aria-haspopup', 'menu');
+                trigger.setAttribute('aria-expanded', 'false');
+                trigger.onclick = () => {
+                    if (!global.ZlapyPopMenu) {
+                        console.error('[sticker-editor] No está disponible el menú emergente compartido.');
+                        return;
+                    }
+                    const menu = global.ZlapyPopMenu.open({
+                        anchor: trigger,
+                        align: 'right',
+                        compact: true,
+                        items: options.map(option => ({
+                            id: option.value,
+                            label: option.label,
+                            selected: option.value === selectedValue
+                        })),
+                        onSelect: value => {
+                            stopPreviewFlow();
+                            if (isType) event.type = value;
+                            else event.value = value;
+                            renderFlow();
+                        },
+                        onClose: () => trigger.setAttribute('aria-expanded', 'false')
+                    });
+                    trigger.setAttribute('aria-expanded', String(Boolean(menu)));
                 };
-                reactionButtons.set(name, item);
-                reactionGroup.appendChild(item);
+                return trigger;
             }
 
+            function renderFlow() {
+                settings.animationFlow.sort((left, right) => left.time - right.time);
+                flowTrack.replaceChildren(flowTrackLine);
+                flowRows.replaceChildren();
+                const flowRowById = new Map();
+                settings.animationFlow.forEach((event, index) => {
+                    const marker = element('span', { class: 'bbotTimelineMarker' });
+                    marker.style.left = `${event.time / BBOT_RECORD_SECONDS * 100}%`;
+                    marker.title = `${event.time.toFixed(3)} s · ${flowTypeOptions.find(option => option.value === event.type).label}`;
+                    flowTrack.appendChild(marker);
+
+                    const row = element('div', { class: 'bbotTimelineEvent' });
+                    flowRowById.set(event.id, row);
+                    const timeLabel = element('div', {
+                        class: 'bbotTimelineTimeControl',
+                        role: 'group',
+                        'aria-label': `Segundo del evento ${index + 1}`
+                    });
+                    const timeStepper = element('div', { class: 'bbotTimelineStepper' });
+                    const timeOutput = element('output', {
+                        class: 'bbotTimelineSecondValue',
+                        'aria-live': 'polite'
+                    });
+                    timeOutput.textContent = `${event.time.toFixed(1)} s`;
+                    const stepTime = deltaSeconds => {
+                        stopPreviewFlow(true, false);
+                        const frame = Math.max(0, Math.min(BBOT_ANIMATION_FRAMES - 1,
+                            Math.round((event.time + deltaSeconds) * BBOT_FPS)));
+                        event.time = frame / BBOT_FPS;
+                        timeOutput.textContent = `${event.time.toFixed(1)} s`;
+                        marker.style.left = `${event.time / BBOT_RECORD_SECONDS * 100}%`;
+                        marker.title = `${event.time.toFixed(2)} s · ${flowTypeOptions.find(option => option.value === event.type).label}`;
+                        settings.animationFlow.sort((left, right) => left.time - right.time);
+                        for (const item of settings.animationFlow) flowRows.appendChild(flowRowById.get(item.id));
+                    };
+                    const minusTime = button('−', 'bbotEditorChip bbotTimelineStep');
+                    minusTime.setAttribute('aria-label', `Restar un segundo al evento ${index + 1}`);
+                    minusTime.onclick = () => stepTime(-1);
+                    const plusTime = button('+', 'bbotEditorChip bbotTimelineStep');
+                    plusTime.setAttribute('aria-label', `Sumar un segundo al evento ${index + 1}`);
+                    plusTime.onclick = () => stepTime(1);
+                    timeStepper.append(timeOutput, minusTime, plusTime);
+                    timeLabel.append(timeStepper);
+                    const typeLabel = element('label', { class: 'bbotTimelineField' });
+                    const typeCaption = element('span');
+                    typeCaption.textContent = 'Tipo';
+                    typeLabel.append(typeCaption, createFlowMenuPicker(event, index, 'type'));
+                    const valueLabel = element('div', { class: 'bbotTimelineField bbotTimelineAction' });
+                    const valueCaption = element('span');
+                    valueCaption.textContent = 'Acción';
+                    valueLabel.append(valueCaption, createFlowMenuPicker(event, index, 'action'));
+                    const remove = button('×', 'bbotEditorChip bbotTimelineRemove');
+                    remove.setAttribute('aria-label', `Quitar evento ${index + 1}`);
+                    remove.onclick = () => {
+                        stopPreviewFlow();
+                        settings.animationFlow = settings.animationFlow.filter(item => item.id !== event.id);
+                        renderFlow();
+                    };
+                    row.append(timeLabel, typeLabel, valueLabel, remove);
+                    flowRows.appendChild(row);
+                });
+                const disabled = settings.animationFlow.length === 0;
+                playFlow.disabled = disabled || previewFlowPlaying;
+                playFlow.textContent = previewFlowPlaying ? 'Detener flujo' : '▶ Probar flujo';
+            }
+
+            addFlowEvent.onclick = () => {
+                stopPreviewFlow();
+                const lastTime = settings.animationFlow.reduce((maximum, event) => Math.max(maximum, event.time), -1);
+                settings.animationFlow.push({
+                    id: nextFlowEventId++,
+                    time: Math.min((BBOT_ANIMATION_FRAMES - 1) / BBOT_FPS, lastTime < 0 ? 0 : lastTime + 1),
+                    type: 'emotion',
+                    value: settings.expression
+                });
+                renderFlow();
+            };
+            controls.insertBefore(flowGroup.parentElement, sizeGroup.parentElement);
+
             const layout = element('div', { class: 'bbotEditorLayout' });
-            layout.append(stage, controls);
+            const stageSlot = element('div', { class: 'bbotEditorStageSlot' });
+            stageSlot.appendChild(stage);
+            layout.append(stageSlot, controls);
             const publishToggle = element('div', { class: 'stickerEditorPublishToggle' });
             const publishSwitch = element('button', {
                 type: 'button', class: 'tgl stickerEditorSwitch', role: 'switch',
@@ -1289,9 +1563,61 @@
             intro.hidden = true;
             toolbarTitle.textContent = 'Personalizar cara bbot';
             landing.appendChild(editorContent);
+            const previewObserver = typeof global.IntersectionObserver === 'function'
+                ? new global.IntersectionObserver(entries => {
+                    const entry = entries[0];
+                    if (entry) stage.classList.toggle('is-floating', entry.intersectionRatio < 0.1);
+                }, { threshold: 0.1 })
+                : null;
+            if (previewObserver) previewObserver.observe(stageSlot);
             let faceInstance = null;
-            let disposed = false;
+            function stopPreviewFlow(resetFace = true, shouldRender = true) {
+                if (!previewFlowPlaying) return;
+                previewFlowPlaying = false;
+                if (previewFlowFrame) global.cancelAnimationFrame(previewFlowFrame);
+                previewFlowFrame = 0;
+                playFlow.textContent = settings.animationFlow.length ? '▶ Probar flujo' : 'Detener flujo';
+                playFlow.disabled = settings.animationFlow.length === 0;
+                flowTime.textContent = `0.0 / ${BBOT_RECORD_SECONDS} s`;
+                if (resetFace && faceInstance) faceInstance.setExpression(settings.expression);
+                updatePreviewFilter();
+                if (shouldRender) renderFlow();
+            }
+            function startPreviewFlow() {
+                if (previewFlowPlaying) {
+                    stopPreviewFlow();
+                    return;
+                }
+                if (!settings.animationFlow.length) return;
+                previewFlowPlaying = true;
+                playFlow.disabled = false;
+                playFlow.textContent = 'Detener flujo';
+                const events = settings.animationFlow.slice().sort((left, right) => left.time - right.time);
+                let eventIndex = 0;
+                let effectSettings = { ...settings };
+                const start = global.performance.now();
+                const tick = now => {
+                    if (!previewFlowPlaying || disposed) return;
+                    const elapsed = Math.min(BBOT_RECORD_SECONDS, (now - start) / 1000);
+                    while (eventIndex < events.length && events[eventIndex].time <= elapsed) {
+                        const event = events[eventIndex++];
+                        if (event.type === 'emotion') faceInstance.setExpression(event.value);
+                        else if (event.type === 'reaction') faceInstance.react(event.value, { force: true });
+                        else if (event.type === 'effect') {
+                            effectSettings = settingsForBbotEffect(effectSettings, event.value);
+                            updatePreviewFilter(effectSettings);
+                        }
+                    }
+                    flowTime.textContent = `${elapsed.toFixed(1)} / ${BBOT_RECORD_SECONDS} s`;
+                    if (elapsed >= BBOT_RECORD_SECONDS) stopPreviewFlow();
+                    else previewFlowFrame = global.requestAnimationFrame(tick);
+                };
+                previewFlowFrame = global.requestAnimationFrame(tick);
+            }
+            playFlow.onclick = startPreviewFlow;
+            renderFlow();
             const renderFace = () => {
+                stopPreviewFlow();
                 if (faceInstance) faceInstance.destroy();
                 preview.replaceChildren();
                 preview.style.setProperty('--face-skin', settings.skin);
@@ -1329,8 +1655,10 @@
             };
             const finish = result => {
                 if (disposed) return;
+                stopPreviewFlow();
                 disposed = true;
                 document.removeEventListener('keydown', onKey);
+                if (previewObserver) previewObserver.disconnect();
                 if (faceInstance) faceInstance.destroy();
                 editorContent.remove();
                 intro.hidden = previousIntroHidden;
@@ -1338,11 +1666,11 @@
                 if (activeEditorCancel === cancelEditor) activeEditorCancel = null;
                 resolve(result);
             };
-            const cancelEditor = () => finish(null);
+            const cancelEditor = () => finish(BBOT_EDITOR_CANCELLED);
             const onKey = event => {
                 if (event.key === 'Escape') {
                     event.preventDefault();
-                    finish(null);
+                    cancelEditor();
                 }
             };
             document.addEventListener('keydown', onKey);
@@ -1352,25 +1680,39 @@
             renderFace();
 
             save.onclick = async () => {
+                stopPreviewFlow();
                 save.disabled = true;
                 cancel.disabled = true;
                 error.textContent = '';
                 try {
                     if (publishEnabled && !publishTags.length)
                         throw new Error('Añade al menos una etiqueta o desactiva la publicación en Zlapy.');
-                    const file = await renderBbotStickerFile(createFace, settings.expression, settings);
-                    if (!disposed)
-                        finish({
-                            file,
-                            publish: publishEnabled,
-                            tags: publishTags.slice(),
-                            bbot: { ...settings }
-                        });
+                    for (const control of controls.querySelectorAll('button, input, select'))
+                        control.disabled = true;
+                    const file = await renderBbotStickerFile(createFace, settings.expression, settings,
+                        (percentage, phase) => { save.textContent = `${phase}… ${percentage}%`; },
+                        preview, faceInstance);
+                    if (disposed) return;
+                    if (typeof onSave !== 'function')
+                        throw new Error('No se pudo preparar el envío del stricker al servidor.');
+                    await onSave({
+                        file,
+                        publish: publishEnabled,
+                        tags: publishTags.slice(),
+                        bbot: { ...settings },
+                        onProgress: (percentage, phase) => {
+                            save.textContent = `${phase}… ${percentage}%`;
+                        }
+                    });
+                    if (!disposed) finish({ saved: true });
                 } catch (failure) {
                     if (!disposed) {
                         error.textContent = failure.message || 'No se pudo crear el stricker.';
                         save.disabled = false;
                         cancel.disabled = false;
+                        for (const control of controls.querySelectorAll('button, input, select'))
+                            control.disabled = false;
+                        save.textContent = 'Crear stricker';
                     }
                 }
             };
@@ -1387,10 +1729,11 @@
         const landing = document.getElementById('stickerCreatorLanding');
         const createBbot = document.getElementById('stickerCreatorBbot');
         const formats = document.getElementById('stickerCreatorFormats');
+        let parentSavePendingHash = null;
+        let parentSaveTimeout = 0;
         if (formats) {
             formats.textContent = `Imágenes hasta ${formatMegabytes(MAX_IMAGE_BYTES)} · Videos hasta ${formatMegabytes(MAX_VIDEO_BYTES)} · Tramos de video hasta ${VIDEO_SECONDS_MAX} segundos`;
         }
-
         function notifyParent(type, result) {
             if (global.parent !== global) {
                 global.parent.postMessage({ type, result }, global.location.origin);
@@ -1399,30 +1742,106 @@
             return false;
         }
 
+        function reportStickerError(failure, context) {
+            const message = failure && failure.message || 'No se pudo guardar el stricker.';
+            console.error(`[stickers] ${context}:`, failure);
+            error.textContent = message;
+            notifyParent('zlapy-sticker-create-error', { message });
+        }
+
+        function waitForParentFavoriteSync(hash) {
+            parentSavePendingHash = hash;
+            busy.hidden = false;
+            busy.textContent = 'Confirmando guardado… 100%';
+            choose.disabled = true;
+            createBbot.disabled = true;
+            global.clearTimeout(parentSaveTimeout);
+            parentSaveTimeout = global.setTimeout(() => {
+                if (parentSavePendingHash !== hash) return;
+                parentSavePendingHash = null;
+                busy.hidden = true;
+                error.textContent = 'El servidor guardó el stricker, pero la aplicación no confirmó que aparezca en Favoritos. Recarga Favoritos para comprobarlo.';
+                choose.disabled = false;
+                createBbot.disabled = false;
+            }, 15000);
+        }
+
         choose.addEventListener('click', () => {
             error.textContent = '';
             creatorFile.click();
         });
-        async function saveStickerFile(file, settings, sendAfterCreate, bbot) {
+        async function saveStickerFile(file, settings, sendAfterCreate, bbot, onProgress = () => {}) {
+            if (!(file instanceof Blob) || file.type !== 'image/webp' || file.size > MAX_OUTPUT_BYTES)
+                throw new Error(`El stricker generado no es un WebP válido o supera ${formatMegabytes(MAX_OUTPUT_BYTES)}.`);
+            busy.hidden = false;
+            busy.textContent = 'Preparando envío… 0%';
+            onProgress(0, 'Preparando envío');
             const data = await new Promise((resolve, reject) => {
                 const reader = new FileReader();
-                reader.onload = () => typeof reader.result === 'string'
-                    ? resolve(reader.result) : reject(new Error('No se pudo leer el stricker preparado.'));
+                reader.onload = () => {
+                    if (typeof reader.result !== 'string') {
+                        reject(new Error('No se pudo leer el stricker preparado.'));
+                        return;
+                    }
+                    busy.textContent = 'Preparando envío… 100%';
+                    onProgress(100, 'Preparando envío');
+                    resolve(reader.result);
+                };
                 reader.onerror = () => reject(new Error('No se pudo leer el stricker preparado.'));
+                reader.onprogress = event => {
+                    if (!event.lengthComputable) return;
+                    const percentage = Math.round(event.loaded / event.total * 100);
+                    busy.textContent = `Preparando envío… ${percentage}%`;
+                    onProgress(percentage, 'Preparando envío');
+                };
                 reader.readAsDataURL(file);
             });
-            busy.hidden = false;
-            busy.textContent = 'Guardando stricker…';
-            const response = await fetch('/stickers/create', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ data, publish: settings.publish, tags: settings.tags })
+            const body = JSON.stringify({ data, publish: settings.publish, tags: settings.tags });
+            busy.textContent = 'Subiendo stricker… 0%';
+            const result = await new Promise((resolve, reject) => {
+                const request = new XMLHttpRequest();
+                request.open('POST', '/stickers/create');
+                request.setRequestHeader('Content-Type', 'application/json');
+                request.upload.onprogress = event => {
+                    if (!event.lengthComputable) return;
+                    const percentage = Math.round(event.loaded / event.total * 100);
+                    busy.textContent = `Subiendo stricker… ${percentage}%`;
+                    onProgress(percentage, 'Subiendo stricker');
+                };
+                request.onload = () => {
+                    let response;
+                    try {
+                        response = JSON.parse(request.responseText);
+                    } catch {
+                        reject(new Error(`El servidor respondió ${request.status} sin confirmar el guardado del stricker.`));
+                        return;
+                    }
+                    if (!response || typeof response !== 'object') {
+                        reject(new Error('El servidor respondió sin confirmar el guardado del stricker.'));
+                        return;
+                    }
+                    if (request.status < 200 || request.status >= 300) {
+                        reject(new Error(response.error || `El servidor rechazó el stricker (HTTP ${request.status}).`));
+                        return;
+                    }
+                    resolve(response);
+                };
+                request.onerror = () => reject(new Error('No se pudo conectar con el servidor para guardar el stricker.'));
+                request.onabort = () => reject(new Error('Se canceló la subida del stricker.'));
+                request.send(body);
             });
-            const result = await response.json();
-            if (!response.ok) throw new Error(result.error || 'No se pudo guardar el stricker.');
+            busy.textContent = 'Guardando en el servidor… 100%';
+            onProgress(100, 'Guardando en el servidor');
+            if (result.ok !== true || typeof result.hash !== 'string' || !/^[a-f0-9]{64}$/i.test(result.hash) ||
+                typeof result.sticker !== 'string' ||
+                !Array.isArray(result.stickers) || !result.stickers.includes(result.sticker))
+                throw new Error('El servidor no confirmó que el stricker se guardó en tus favoritos.');
             result.sendAfterCreate = sendAfterCreate;
             if (bbot) result.bbot = bbot;
-            if (notifyParent('zlapy-sticker-created', result)) return;
+            if (notifyParent('zlapy-sticker-created', result)) {
+                waitForParentFavoriteSync(result.hash);
+                return;
+            }
             landing.querySelector('.stickerCreatorIntro p').textContent = 'Stricker creado y guardado en tus favoritos.';
             busy.textContent = 'Stricker creado';
         }
@@ -1432,10 +1851,10 @@
             choose.disabled = true;
             try {
                 const output = await open(file);
-                if (output) await saveStickerFile(output.file, output, sendAfterCreate);
+                if (output) await saveStickerFile(output.file, output, sendAfterCreate, null,
+                    (percentage, phase) => { busy.textContent = `${phase}… ${percentage}%`; });
             } catch (failure) {
-                console.error('[stickers] No se pudo crear el stricker:', failure);
-                error.textContent = failure.message || 'No se pudo crear el stricker.';
+                reportStickerError(failure, 'No se pudo crear o guardar el stricker');
             } finally {
                 busy.hidden = true;
                 choose.disabled = false;
@@ -1454,27 +1873,47 @@
                     ? await import('./vendor/bbot-face.js').then(({ createFace, EXPRESSION_NAMES }) => {
                         if (!EXPRESSION_NAMES.includes(expression))
                             throw new Error('La expresión de la cara no es válida.');
-                        return renderBbotStickerFile(createFace, expression, initialSettings).then(file => ({
+                        return renderBbotStickerFile(createFace, expression, initialSettings,
+                            (percentage, phase) => { busy.textContent = `${phase}… ${percentage}%`; }).then(file => ({
                             file,
                             publish: false,
                             tags: [],
                             bbot: { ...initialSettings, expression }
                         }));
                     })
-                    : await openBbotEditor(expression, initialSettings);
-                if (output) await saveStickerFile(output.file, output, sendAfterCreate, output.bbot);
+                    : await openBbotEditor(expression, initialSettings,
+                        output => saveStickerFile(output.file, output, sendAfterCreate, output.bbot, output.onProgress));
+                if (output === BBOT_EDITOR_CANCELLED) return;
+                if (autoCreate && !output)
+                    throw new Error('La exportación terminó sin entregar un sticker; no se envió al servidor.');
+                if (autoCreate)
+                    await saveStickerFile(output.file, output, sendAfterCreate, output.bbot,
+                        (percentage, phase) => { busy.textContent = `${phase}… ${percentage}%`; });
             } catch (failure) {
-                console.error('[stickers] No se pudo crear el stricker de cara:', failure);
-                error.textContent = failure.message || 'No se pudo crear el stricker de cara.';
+                reportStickerError(failure, 'No se pudo crear o guardar el stricker de cara');
             } finally {
-                busy.hidden = true;
-                choose.disabled = false;
-                createBbot.disabled = false;
+                if (!parentSavePendingHash) {
+                    busy.hidden = true;
+                    choose.disabled = false;
+                    createBbot.disabled = false;
+                }
             }
         }
         global.addEventListener('message', event => {
             if (global.parent === global || event.origin !== global.location.origin ||
                 event.source !== global.parent || !event.data) return;
+            if (event.data.type === 'zlapy-sticker-save-error') {
+                const result = event.data.result;
+                if (!result || result.hash !== parentSavePendingHash) return;
+                global.clearTimeout(parentSaveTimeout);
+                parentSavePendingHash = null;
+                busy.hidden = true;
+                error.textContent = typeof result.message === 'string'
+                    ? result.message : 'La aplicación no pudo confirmar el stricker en Favoritos.';
+                choose.disabled = false;
+                createBbot.disabled = false;
+                return;
+            }
             if (event.data.type === 'zlapy-sticker-edit-image' &&
                 event.data.file instanceof Blob && event.data.file.type.startsWith('image/')) {
                 createStickerFromFile(event.data.file);

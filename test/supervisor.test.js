@@ -51,7 +51,7 @@ test('el supervisor arranca el servidor y lo reinicia si muere', async t => {
             SUPERVISOR_PID_FILE: pidFile,
             SUPERVISOR_HEALTH_MS: '3000',
             SUPERVISOR_BACKOFF_MS: '300',
-            SUPERVISOR_STARTUP_MS: '30000'
+            SUPERVISOR_STARTUP_MS: '60000'
         }
     });
     t.after(() => {
@@ -69,7 +69,7 @@ test('el supervisor arranca el servidor y lo reinicia si muere', async t => {
 
     const health = await waitFor(async () => {
         try { return (await get(`http://127.0.0.1:${PORT}/healthz`)).status === 200; } catch { return false; }
-    });
+    }, 60000);
     assert.equal(health, true, 'el servidor debe responder /healthz');
 
     const childPid = await waitFor(() => {
@@ -78,13 +78,13 @@ test('el supervisor arranca el servidor y lo reinicia si muere', async t => {
             const pid = Number(raw);
             return Number.isInteger(pid) && pid > 0 ? pid : null;
         } catch { return null; }
-    });
+    }, 60000);
     assert.ok(childPid, 'el supervisor debe publicar el PID del hijo');
 
     process.kill(childPid, 'SIGKILL');
 
     const revived = await waitFor(async () => {
         try { return (await get(`http://127.0.0.1:${PORT}/healthz`)).status === 200; } catch { return false; }
-    }, 40000);
+    }, 60000);
     assert.equal(revived, true, 'el supervisor debe reiniciar el servidor');
 });

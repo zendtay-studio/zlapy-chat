@@ -34,7 +34,6 @@
     "owner": "node ops/owner-credentials.js",
     "test": "node --test --require ./test/bootstrap.js test/*.test.js",
     "generate:emojis": "node ops/scripts/generate-emoji-data.js",
-    "generate:bbot-stickers": "node ops/scripts/generate-animated-bbot-pack.js",
     "backup": "node ops/backup.js",
     "postinstall": "node ops/check-native.js",
     "rebuild:sqlite": "node ops/build-sqlite.js",
@@ -48,9 +47,11 @@
   },
   "dependencies": {
     "@noble/hashes": "^2.4.0",
+    "@resvg/resvg-wasm": "^2.6.2",
     "bcryptjs": "^3.0.3",
     "better-sqlite3": "^13.0.3",
     "dotenv": "^18.0.8",
-    "lru": "^3.1.0"
+    "lru": "^3.1.0",
+    "webp-wasm": "^1.0.6"
   }
 }

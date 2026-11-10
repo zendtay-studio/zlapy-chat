@@ -114,6 +114,7 @@
             menu.hidden = true;
             document.body.appendChild(menu);
         }
+        menu.classList.toggle('compact', opts.compact === true);
         /* Texto de cada etiqueta escapado: hoy todas son literales del código,
            pero este es el único `innerHTML` del menú y el día que una etiqueta
            nazca de un dato de usuario (un nombre de grupo, por ejemplo) no debe
@@ -123,7 +124,7 @@
         const reactions = Array.isArray(opts.reactions) ? opts.reactions.filter(value => typeof value === 'string').slice(0, 8) : [];
         const showReactions = reactions.length && (typeof opts.onReact === 'function' || typeof opts.onMore === 'function');
         menu.innerHTML = `<div class="zlapyMenuList">${items.map(item => `
-            <button class="zlapyMenuItem${item.danger ? ' danger' : ''}" type="button" role="menuitem" data-menu-id="${attr(item.id)}">
+            <button class="zlapyMenuItem${item.danger ? ' danger' : ''}${item.selected ? ' selected' : ''}" type="button" role="menuitem"${item.selected ? ' aria-current="true"' : ''} data-menu-id="${attr(item.id)}">
                 ${iconMarkup(item.icon)}<span class="zlapyMenuLabel">${text(item.label)}</span>
             </button>`).join('')}</div>`;
         menu.classList.add('on');

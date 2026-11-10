@@ -9,11 +9,27 @@
 'use strict';
 
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const { decryptAtRest, encryptAtRest } = require('../crypto/setup.js');
 const { Stmt } = require('../db/statements.js');
 const { profiles, users, blobBytesCache } = require('../state.js');
 const { permite } = require('../users/privacy.js');
 const { makeCache } = require('../shared/cache.js');
+
+const MEDIA_FALLBACK_BYTES = fs.readFileSync(path.resolve(__dirname, '../../public/image/icon-512-full.webp'));
+if (MEDIA_FALLBACK_BYTES.toString('ascii', 0, 4) !== 'RIFF' ||
+    MEDIA_FALLBACK_BYTES.toString('ascii', 8, 12) !== 'WEBP')
+    throw new Error('La imagen de respaldo de adjuntos no es un WebP válido.');
+const MEDIA_FALLBACK_HASH = crypto.createHash('sha256').update(MEDIA_FALLBACK_BYTES).digest('hex');
+const MEDIA_FALLBACK_DATA_URL = `data:image/webp;base64,${MEDIA_FALLBACK_BYTES.toString('base64')}`;
+
+function seedMediaFallback() {
+    if (!storeBlob(MEDIA_FALLBACK_HASH, MEDIA_FALLBACK_DATA_URL))
+        throw new Error('No se pudo guardar la imagen de respaldo en la base de datos de blobs.');
+    Stmt.setMeta.run('media_fallback_hash', MEDIA_FALLBACK_HASH);
+    return MEDIA_FALLBACK_HASH;
+}
 
 // Blobs (adjuntos)
 const blobHashOk = h => typeof h === 'string' && /^[a-f0-9]{64}$/i.test(h);
@@ -108,6 +124,7 @@ function blobAvailableTo(user, hash) {
     if (!user || !blobHashOk(hash)) return false;
     const h = hash.toLowerCase();
     if (Stmt.getPublicSticker.get(h)) return true;
+    if (Stmt.isDefaultStickerHash.get(h)) return true;
     if (Stmt.getUserStickerBlob.get(user.id, h)) return true;
     if (Stmt.getBlobAccessChat.get(h, user.id, user.id)) return true;
     /* Adjuntos de grupo: accede quien estaba en el grupo cuando se publicó.
@@ -126,6 +143,10 @@ function blobAvailableTo(user, hash) {
 }
 
 module.exports = {
+    MEDIA_FALLBACK_BYTES,
+    MEDIA_FALLBACK_HASH,
+    MEDIA_FALLBACK_DATA_URL,
+    seedMediaFallback,
     blobHashOk,
     storeBlob,
     readBlob,

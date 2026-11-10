@@ -29,10 +29,11 @@ const LOCAL_STICKER_RE = /^\/stickers\/blob\/([a-f0-9]{64})$/i;
 
 function persistStickers(user) {
     const stickers = (Array.isArray(user.stickers) ? user.stickers : []).slice(-30);
-    const previousHashes = Stmt.listUserStickerBlobs.all(user.id).map(row => row.hash);
     const stickerHashes = new Set(stickers.map(sticker => {
         const match = typeof sticker === 'string' ? sticker.match(LOCAL_STICKER_RE) : null;
-        return match ? match[1].toLowerCase() : '';
+        if (!match) return '';
+        const hash = match[1].toLowerCase();
+        return Stmt.getPublicSticker.get(hash) || Stmt.isDefaultStickerHash.get(hash) ? '' : hash;
     }).filter(Boolean));
 
     Stmt.deleteStickers.run(user.id);
@@ -40,11 +41,10 @@ function persistStickers(user) {
         if (typeof sticker === 'string')
             Stmt.insertSticker.run(user.id, index, encField('user_stickers.sticker', sticker));
     });
-    Stmt.deleteUserStickerBlobs.run(user.id);
+    // Esta tabla conserva la propiedad del blob, no solo el favorito. Quitar
+    // una cara de Favoritos no debe romper mensajes ni caras guardadas.
     for (const hash of stickerHashes) Stmt.insertUserStickerBlob.run(user.id, hash);
 
-    const removedHashes = previousHashes.filter(hash => !stickerHashes.has(hash));
-    if (removedHashes.length) pruneBlobHashes(removedHashes);
     invalidateBlobQuota(user.id);
 }
 

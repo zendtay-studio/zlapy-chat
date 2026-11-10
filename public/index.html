@@ -10014,8 +10014,8 @@
     </style>
     <link rel="stylesheet" href="/css/theme.css">
     <link rel="stylesheet" href="/css/avatar-editor.css?v=1">
-    <link rel="stylesheet" href="/css/sticker-editor.css?v=22">
-    <link rel="stylesheet" href="/css/popmenu.css?v=3">
+    <link rel="stylesheet" href="/css/sticker-editor.css?v=30">
+    <link rel="stylesheet" href="/css/popmenu.css?v=4">
     <link rel="stylesheet" href="/css/emoji-picker.css?v=4">
 </head>
 
@@ -10223,7 +10223,8 @@
         <div id="stickerPanel">
             <label class="stickerSearchBox" id="stickerSearchBox" for="stickerSearch">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"></circle><path d="m16 16 5 5"></path></svg>
-                <input id="stickerSearch" placeholder="Buscar stickers" autocomplete="off" autocorrect="off"
+                <input id="stickerSearch" placeholder="Buscar stickers" title="Escribe etiquetas separadas por espacios"
+                    autocomplete="off" autocorrect="off"
                     autocapitalize="off" spellcheck="false">
             </label>
             <div class="stickerPickerTabs" role="tablist" aria-label="Favoritos y fuentes de strickers">
@@ -10250,9 +10251,6 @@
                     </svg>
                 </button>
                 <button id="stkSourceEmoji" type="button" role="tab" aria-selected="false" title="Emojis" aria-label="Emojis">😀</button>
-            </div>
-            <div id="stickerTagFilter" class="stickerTagFilter">
-                <div id="stickerTagChips" class="stickerTagChips"></div>
             </div>
             <div id="stickerGrid"></div>
             <div id="stickerFavsGrid" style="display:none"></div>
@@ -10940,7 +10938,7 @@
                 return `<img${cls} src="${escapeHtml(raw)}" alt="${escapeHtml(alt || '')}"${attributes || ''}>`;
             }
             let stickerTimer = null, stickerOffset = 0, stickerQuery = '', stickerLoading = false, stickerHasMore = true;
-            let stickerSource = 'zlapy', stickerActiveTab = 'favs', zlapyTags = [], zlapyOffset = 0, zlapyHasMore = true, zlapyLoading = false;
+            let stickerSource = 'zlapy', stickerActiveTab = 'favs', zlapyQueryKey = '', zlapyOffset = 0, zlapyHasMore = true, zlapyLoading = false;
             let stickerEmojiAction = null;
             let zlapyRequestVersion = 0, zlapyRequestController = null;
             let stickerRequestVersion = 0, stickerRequestController = null;
@@ -11021,6 +11019,22 @@
                     unique.push(url);
                 }
                 return unique.slice(-30);
+            }
+            function savedBbotFaces() {
+                const raw = readAccountStorage('bbot_stickers');
+                if (!raw) return [];
+                try {
+                    const saved = JSON.parse(raw);
+                    if (!saved || typeof saved !== 'object' || Array.isArray(saved))
+                        throw new Error('Formato inválido');
+                    return Object.entries(saved).filter(([expression, face]) =>
+                        /^[a-z]+$/.test(expression) && face && typeof face === 'object' &&
+                        typeof face.sticker === 'string' && stickerUrlAllowed(face.sticker) &&
+                        face.settings && typeof face.settings === 'object');
+                } catch (error) {
+                    console.error('[stickers] No se pudieron leer las caras guardadas:', error);
+                    return [];
+                }
             }
             function saveStickerCache(accountId, stickers) {
                 const key = accountStorageKey('sticker_favorites');
@@ -11153,11 +11167,13 @@
             function renderStickerFavs() {
                 const box = document.getElementById('stickerFavsGrid');
                 if (!box) return;
-                const l = sortStickersByUsage(stickerFavs().reverse());
+                const query = document.getElementById('stickerSearch').value.trim().toLowerCase();
+                const l = sortStickersByUsage(stickerFavs().reverse())
+                    .filter(url => !query || url.toLowerCase().includes(query));
                 const createTile = '<button class="stickerCreateTile" type="button" aria-label="Crear stricker" title="Crear stricker"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 5 5 5M4 20l4.3-.9L19 8.4a2.1 2.1 0 0 0-3-3L5.3 16.1 4 20Z"></path><path d="M14 20h6"></path></svg><span>Crear</span></button>';
                 box.innerHTML = createTile + (l.length
                     ? l.map((url, index) => `<span class="favWrap" data-added-order="${l.length - index}">${stickerImgHTML(url, '', '', ` data-url="${escapeHtml(url)}" loading="lazy" title="Opciones del sticker"`)}</span>`).join('')
-                    : '<div class="sub" style="padding:12px;grid-column:1/-1">Sin favoritos todavía: mantén presionado un sticker en el chat y elige Favorito.</div>');
+                    : `<div class="sub" style="padding:12px;grid-column:1/-1">${query ? 'No hay favoritos que coincidan con la búsqueda.' : 'Sin favoritos todavía: mantén presionado un sticker en el chat y elige Favorito.'}</div>`);
                 box.querySelector('.stickerCreateTile').onclick = openStickerCreator;
                 box.querySelectorAll('img').forEach(image => image.onclick = event => {
                     event.stopPropagation();
@@ -11166,13 +11182,11 @@
             }
             function closeStickerCreator(fromPop = false) {
                 const layer = document.getElementById('stickerCreatorLayer');
-                const frame = document.getElementById('stickerCreatorFrame');
                 layer.classList.remove('on');
                 layer.setAttribute('aria-hidden', 'true');
-                frame.src = 'about:blank';
                 if (!fromPop) Layer.pop('panel-sticker-creator');
             }
-            window.addEventListener('message', event => {
+            window.addEventListener('message', async event => {
                 const frame = document.getElementById('stickerCreatorFrame');
                 if (event.origin !== location.origin || event.source !== frame.contentWindow ||
                     !event.data || typeof event.data !== 'object') return;
@@ -11180,30 +11194,74 @@
                     dismissLayer('panel-sticker-creator');
                     return;
                 }
+                if (event.data.type === 'zlapy-sticker-create-error') {
+                    const message = event.data.result && typeof event.data.result.message === 'string'
+                        ? event.data.result.message : 'Error desconocido al guardar el stricker.';
+                    toast(`No se pudo guardar el stricker: ${message}`);
+                    return;
+                }
                 if (event.data.type !== 'zlapy-sticker-created' || !event.data.result) return;
                 const result = event.data.result;
                 const accountId = currentStickerAccountId();
-                if (!accountId || !Array.isArray(result.stickers) || typeof result.sticker !== 'string') {
+                const sendCreatorSaveError = message => {
+                    event.source.postMessage({
+                        type: 'zlapy-sticker-save-error',
+                        result: { hash: result.hash, message }
+                    }, event.origin);
+                };
+                if (!accountId || typeof result.sticker !== 'string') {
                     console.error('[stickers] El servidor devolvió datos incompletos al crear el stricker:', result);
-                    toast('El stricker se creó, pero no se pudo actualizar la biblioteca. Recarga tus favoritos.');
+                    const message = 'El servidor guardó el stricker, pero no se pudo identificar la cuenta para actualizar Favoritos.';
+                    sendCreatorSaveError(message);
+                    toast(message);
+                    return;
+                }
+                let favorites;
+                try {
+                    let response = await fetch('/stickers');
+                    let saved = await response.json();
+                    if (!response.ok || !Array.isArray(saved.stickers))
+                        throw new Error(saved.error || `HTTP ${response.status}`);
+                    favorites = normalizeStickerFavorites(saved.stickers);
+                    if (!favorites.includes(result.sticker)) {
+                        response = await fetch('/stickers', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ stickers: [...favorites, result.sticker] })
+                        });
+                        saved = await response.json();
+                        if (!response.ok || !Array.isArray(saved.stickers))
+                            throw new Error(saved.error || `HTTP ${response.status}`);
+                        favorites = normalizeStickerFavorites(saved.stickers);
+                        if (!favorites.includes(result.sticker))
+                            throw new Error('El servidor no confirmó el stricker en favoritos.');
+                    }
+                } catch (error) {
+                    console.error('[stickers] No se pudo confirmar el favorito creado:', error);
+                    const message = `El servidor guardó el stricker, pero no se pudo confirmar en Favoritos: ${error.message || 'error de conexión'}.`;
+                    sendCreatorSaveError(message);
+                    toast(message);
                     return;
                 }
                 stickerFavsLoadVersion++;
                 stickerFavsSaveVersion++;
                 stickerFavsAccountId = accountId;
-                stickerFavsCache = normalizeStickerFavorites(result.stickers);
+                stickerFavsCache = favorites;
                 saveStickerCache(accountId, stickerFavsCache);
                 if (result.bbot && /^[a-z]+$/.test(result.bbot.expression || '')) {
-                    const saved = savedBbotFaces();
+                    const saved = Object.fromEntries(savedBbotFaces());
                     saved[result.bbot.expression] = {
                         sticker: result.sticker,
-                        settings: result.bbot
+                        settings: result.bbot,
+                        createdAt: Date.now()
                     };
-                    writeAccountStorage('bbot_stickers', JSON.stringify(saved));
+                    if (!writeAccountStorage('bbot_stickers', JSON.stringify(saved)))
+                        console.error('[stickers] No se pudo guardar la configuración de la cara.');
                 }
                 renderStickerFavs();
                 if (stickerActiveTab === 'bbot')
                     loadBbotStickers(document.getElementById('stickerSearch').value);
+                stkTab('favs');
                 toast(result.published
                     ? 'Stricker creado, guardado en favoritos y publicado en Zlapy.'
                     : 'Stricker creado y guardado en favoritos.');
@@ -11214,19 +11272,31 @@
             async function loadBbotStickers(query = '') {
                 const grid = document.getElementById('stickerGrid');
                 const renderVersion = ++bbotRenderVersion;
-                grid.classList.add('bbotStickerGrid');
                 grid.innerHTML = '<div class="sub" style="padding:10px;grid-column:1/-1">Cargando caras…</div>';
                 try {
                     const response = await fetch('/stickers/discover?tags=bbot&limit=48');
                     const result = await response.json();
                     if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
                     if (stickerActiveTab !== 'bbot' || renderVersion !== bbotRenderVersion) return;
-                    const normalized = query.trim().toLowerCase();
+                    const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+                    const matchesTerms = values => terms.every(term =>
+                        values.some(value => String(value).toLowerCase().includes(term)));
                     const stickers = (Array.isArray(result.stickers) ? result.stickers : []).filter(sticker =>
                         sticker && typeof sticker.expression === 'string' &&
                         typeof sticker.label === 'string' && typeof sticker.sticker === 'string' &&
-                        (!normalized || [sticker.expression, sticker.label, ...(sticker.tags || [])]
-                            .some(value => String(value).toLowerCase().includes(normalized))));
+                        matchesTerms([sticker.expression, sticker.label, ...(sticker.tags || [])]));
+                    const savedFaces = savedBbotFaces()
+                        .map(([expression, face]) => ({
+                            expression,
+                            label: expression,
+                            sticker: face.sticker,
+                            settings: face.settings,
+                            createdAt: Number(face.createdAt) || 0
+                        }))
+                        .filter(face => !stickers.some(sticker => sticker.sticker === face.sticker) &&
+                            matchesTerms([face.expression]));
+                    stickers.unshift(...savedFaces);
+                    stickers.sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
                     grid.replaceChildren();
                     const createTile = document.createElement('button');
                     createTile.type = 'button';
@@ -11254,10 +11324,10 @@
                         image.alt = '';
                         image.dataset.url = sticker.sticker;
                         image.dataset.bbotExpression = sticker.expression;
-                        image.className = 'bbotStickerPreview bbotStickerSavedImage';
                         tile.dataset.bbotExpression = sticker.expression;
-                        tile.dataset.bbotPack = 'true';
+                        tile.dataset.bbotPack = String(!sticker.settings);
                         tile.dataset.url = sticker.sticker;
+                        if (sticker.settings) tile.bbotSettings = sticker.settings;
                         tile.append(image);
                         grid.appendChild(tile);
                         tile.onclick = () => sendSticker(sticker.sticker);
@@ -11276,9 +11346,6 @@
                 const leavingEmoji = stickerActiveTab === 'emoji' && !isEmoji;
                 const sourceChanged = !isFavs && !isEmoji && stickerSource !== which;
                 stickerEmojiAction = isEmoji && typeof onEmoji === 'function' ? onEmoji : null;
-                if (which !== 'bbot') {
-                    document.getElementById('stickerGrid').classList.remove('bbotStickerGrid');
-                }
                 if (isFavs) {
                     stickerRequestController?.abort();
                     zlapyRequestController?.abort();
@@ -11318,8 +11385,7 @@
                     button.classList.toggle('on', selected);
                     button.setAttribute('aria-selected', String(selected));
                 }
-                document.getElementById('stickerSearchBox').hidden = isFavs;
-                document.getElementById('stickerTagFilter').hidden = isFavs || isEmoji || stickerSource !== 'zlapy';
+                document.getElementById('stickerSearchBox').hidden = isEmoji;
                 document.getElementById('stickerGrid').style.display = isFavs || isEmoji ? 'none' : 'grid';
                 document.getElementById('stickerFavsGrid').style.display = isFavs ? 'grid' : 'none';
                 const emojiPicker = document.getElementById('stickerEmojiPicker');
@@ -11344,9 +11410,10 @@
                     });
                     return;
                 }
-                document.getElementById('stickerSearch').placeholder = stickerSource === 'zlapy'
-                    ? 'Buscar stickers'
-                    : stickerSource === 'bbot' ? 'Buscar expresiones' : 'Buscar en Giphy';
+                document.getElementById('stickerSearch').placeholder = isFavs
+                    ? 'Buscar en favoritos'
+                    : stickerSource === 'zlapy' ? 'Buscar en Zlapy'
+                        : stickerSource === 'bbot' ? 'Buscar expresiones' : 'Buscar en Giphy';
                 if (isFavs) renderStickerFavs();
                 else if (enteringSource || sourceChanged || !document.getElementById('stickerGrid').dataset.loaded) {
                     document.getElementById('stickerGrid').dataset.loaded = '1';
@@ -11355,30 +11422,26 @@
                     else loadStrikers(document.getElementById('stickerSearch').value);
                 }
             }
-            function renderZlapyTagChips() {
-                const chips = document.getElementById('stickerTagChips');
-                chips.replaceChildren();
-                for (const tag of zlapyTags) {
-                    const chip = document.createElement('span');
-                    chip.className = 'stickerTagChip';
-                    chip.textContent = '#' + tag;
-                    const remove = document.createElement('button');
-                    remove.type = 'button';
-                    remove.setAttribute('aria-label', 'Quitar etiqueta ' + tag);
-                    remove.textContent = '×';
-                    remove.onclick = () => {
-                        zlapyTags = zlapyTags.filter(item => item !== tag);
-                        renderZlapyTagChips();
-                        loadZlapyStickers();
-                    };
-                    chip.appendChild(remove);
-                    chips.appendChild(chip);
-                }
-            }
             async function loadZlapyStickers(append = false) {
                 const grid = document.getElementById('stickerGrid');
                 if (!grid) return;
-                const tagKey = zlapyTags.join(',');
+                const query = document.getElementById('stickerSearch').value.trim().normalize('NFC');
+                const queryTerms = [...new Set(query.toLowerCase().split(/\s+/).filter(Boolean)
+                    .map(term => term.replace(/^#/, '')))];
+                if (query.length > 64 || queryTerms.length > 8 ||
+                    queryTerms.some(term => !/^[\p{L}\p{N}_-]{1,24}$/u.test(term))) {
+                    if (zlapyRequestController) zlapyRequestController.abort();
+                    zlapyRequestController = null;
+                    zlapyRequestVersion++;
+                    zlapyLoading = false;
+                    zlapyHasMore = false;
+                    zlapyQueryKey = '';
+                    grid.innerHTML = '<div class="sub" style="padding:10px;grid-column:1/-1">Usa hasta 8 etiquetas de 24 letras o números.</div>';
+                    return;
+                }
+                const queryKey = query.toLowerCase();
+                if (append && queryKey !== zlapyQueryKey) append = false;
+                zlapyQueryKey = queryKey;
                 if (append) {
                     if (zlapyLoading || !zlapyHasMore) return;
                 } else {
@@ -11395,11 +11458,11 @@
                 zlapyLoading = true;
                 try {
                     const params = new URLSearchParams({ limit: '24', offset: String(zlapyOffset) });
-                    if (tagKey) params.set('tags', tagKey);
+                    if (query) params.set('q', query);
                     const response = await fetch('/stickers/discover?' + params, { signal: controller.signal });
                     if (!response.ok) throw new Error('HTTP ' + response.status);
                     const result = await response.json();
-                    if (requestVersion !== zlapyRequestVersion || tagKey !== zlapyTags.join(',')) return;
+                    if (requestVersion !== zlapyRequestVersion || queryKey !== zlapyQueryKey) return;
                     const list = Array.isArray(result.stickers) ? result.stickers : [];
                     const html = list.map(item => {
                         if (!item || typeof item.sticker !== 'string') return '';
@@ -11409,7 +11472,7 @@
                         return `<span class="favWrap" title="${escapeHtml(label)}">${stickerImgHTML(url, '', '', ` data-url="${safeUrl}" loading="lazy"`)}</span>`;
                     }).join('');
                     if (append) grid.insertAdjacentHTML('beforeend', html);
-                    else grid.innerHTML = html || '<div class="sub" style="padding:10px;grid-column:1/-1">Todavía no hay strickers publicados con estas etiquetas.</div>';
+                    else grid.innerHTML = html || '<div class="sub" style="padding:10px;grid-column:1/-1">No hay strickers que coincidan con esta búsqueda.</div>';
                     grid.querySelectorAll('img').forEach(image => image.onclick = () => sendSticker(image.dataset.url));
                     zlapyOffset += list.length;
                     zlapyHasMore = !!result.hasMore;
@@ -11430,7 +11493,6 @@
                 if (p.classList.contains('open')) {
                     p.classList.remove('open');
                     stickerEmojiAction = null;
-                    document.getElementById('stickerGrid').classList.remove('bbotStickerGrid');
                     return;
                 }
                 document.getElementById('attachmentPanel').style.display = 'none';
@@ -11443,32 +11505,18 @@
                 document.getElementById('stkSourceBbot').onclick = () => stkTab('bbot');
                 document.getElementById('stkSourceEmoji').onclick = () => stkTab('emoji');
                 const inp = document.getElementById('stickerSearch');
-                inp.onkeydown = event => {
-                    if (event.key !== 'Enter' || stickerSource !== 'zlapy') return;
-                    event.preventDefault();
-                    const value = inp.value.trim().replace(/^#/, '').toLowerCase();
-                    if (!value) return;
-                    if (!/^[\p{L}\p{N}_-]{1,24}$/u.test(value)) {
-                        toast('Usa una etiqueta de hasta 24 letras o números, sin espacios.');
-                        return;
-                    }
-                    if (zlapyTags.length >= 8 && !zlapyTags.includes(value)) {
-                        toast('Puedes filtrar por un máximo de 8 etiquetas.');
-                        return;
-                    }
-                    if (!zlapyTags.includes(value)) zlapyTags.push(value);
-                    inp.value = '';
-                    renderZlapyTagChips();
-                    loadZlapyStickers();
-                };
                 inp.oninput = () => {
                     if (stickerActiveTab === 'emoji') return;
-                    if (stickerSource === 'zlapy') return;
                     clearTimeout(stickerTimer);
+                    if (stickerActiveTab === 'favs') {
+                        renderStickerFavs();
+                        return;
+                    }
                     stickerTimer = setTimeout(() => {
-                        if (stickerSource === 'bbot') loadBbotStickers(inp.value);
+                        if (stickerSource === 'zlapy') loadZlapyStickers();
+                        else if (stickerSource === 'bbot') loadBbotStickers(inp.value);
                         else loadStrikers(inp.value);
-                    }, 450);
+                    }, 400);
                 };
                 document.getElementById('stickerGrid').onscroll = event => {
                     const grid = event.currentTarget;
@@ -11478,10 +11526,7 @@
                     else if (stickerSource === 'zlapy' && zlapyHasMore && !zlapyLoading)
                         loadZlapyStickers(true);
                 };
-                if (!p.dataset.loaded) {
-                    p.dataset.loaded = '1';
-                    renderZlapyTagChips();
-                }
+                if (!p.dataset.loaded) p.dataset.loaded = '1';
                 stkTab('favs');
             }
             function openStickerEmojiTab(onEmoji) {
@@ -22628,7 +22673,7 @@
 
 
     <script src="/js/avatar-editor.js?v=1"></script>
-    <script src="/js/popmenu.js?v=4"></script>
+    <script src="/js/popmenu.js?v=5"></script>
     <script src="/js/emoji-picker.js?v=6"></script>
     <script src="/js/autogrow.js?v=1"></script>
 

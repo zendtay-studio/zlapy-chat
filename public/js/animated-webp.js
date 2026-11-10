@@ -5,6 +5,8 @@
 })(globalThis, function () {
     'use strict';
 
+    const MAX_FRAMES = 300;
+
     function ascii(value) {
         return Uint8Array.from(value, char => char.charCodeAt(0));
     }
@@ -62,8 +64,8 @@
     }
 
     function mux(frames, width, height, loop = 0) {
-        if (!Array.isArray(frames) || !frames.length || frames.length > 100)
-            throw new Error('La animación debe contener entre 1 y 100 fotogramas.');
+        if (!Array.isArray(frames) || !frames.length || frames.length > MAX_FRAMES)
+            throw new Error(`La animación debe contener entre 1 y ${MAX_FRAMES} fotogramas.`);
         if (!Number.isInteger(width) || !Number.isInteger(height) ||
             width < 1 || height < 1 || width > 0x1000000 || height > 0x1000000)
             throw new Error('Las dimensiones de la animación WebP no son válidas.');
@@ -102,5 +104,5 @@
         return concat([header, body]);
     }
 
-    return { mux };
+    return { mux, MAX_FRAMES };
 });

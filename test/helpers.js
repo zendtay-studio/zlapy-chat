@@ -3,7 +3,7 @@
 // WebSocket mínimo (net + framing propio, el mismo del servidor).
 'use strict';
 
-const { spawn } = require('child_process');
+const { execFileSync, spawn } = require('child_process');
 const net = require('net');
 const crypto = require('crypto');
 const fs = require('fs');
@@ -11,6 +11,24 @@ const os = require('os');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
+let generatedStickerPackDir = null;
+
+function getGeneratedStickerPackDir() {
+    if (generatedStickerPackDir) return generatedStickerPackDir;
+    const generatorPath = path.join(ROOT, 'ops', 'scripts', 'generate-animated-bbot-pack.js');
+    generatedStickerPackDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zlapy-test-bbot-'));
+    try {
+        execFileSync(process.execPath, [generatorPath, generatedStickerPackDir], { stdio: 'ignore' });
+        process.once('exit', () => {
+            fs.rmSync(generatedStickerPackDir, { recursive: true, force: true });
+        });
+    } catch (error) {
+        fs.rmSync(generatedStickerPackDir, { recursive: true, force: true });
+        generatedStickerPackDir = null;
+        throw error;
+    }
+    return generatedStickerPackDir;
+}
 
 /* Credencial del propietario que usan los servidores de prueba: la llave
    maestra se deriva de ella, así que los tests que necesiten derivarla (o
@@ -36,6 +54,9 @@ function freePort() {
 async function startServer(options = {}) {
     const port = await freePort();
     const dataDir = options.dataDir || fs.mkdtempSync(path.join(os.tmpdir(), 'zlapy-test-'));
+    const stickerPackDir = options.env && Object.prototype.hasOwnProperty.call(options.env, 'BBOT_STICKER_PACK_DIR')
+        ? options.env.BBOT_STICKER_PACK_DIR
+        : process.env.BBOT_STICKER_PACK_DIR || getGeneratedStickerPackDir();
     const child = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
         /* FORCE_TLS=false por defecto: las pruebas hablan HTTP contra una
            instancia local y desechable. Un test puede PASAR POR ENCIMA (p. ej.
@@ -56,6 +77,7 @@ async function startServer(options = {}) {
                por su ruta (dataDir/zlapy.db). */
             DB_NAME: 'zlapy',
             BLOB_DB_NAME: 'blob',
+            BBOT_STICKER_PACK_DIR: stickerPackDir,
             ...(options.env || {})
         },
         stdio: ['ignore', 'pipe', 'pipe']
@@ -64,14 +86,19 @@ async function startServer(options = {}) {
     child.stdout.on('data', d => { log += d; });
     child.stderr.on('data', d => { log += d; });
     const base = `http://127.0.0.1:${port}`;
-    for (let i = 0; i < 150; i++) {
+    let ready = false;
+    for (let i = 0; i < 3000; i++) {
         if (child.exitCode !== null)
             throw new Error(`el servidor de prueba murió al arrancar:\n${log.slice(-2000)}`);
-        try { const r = await fetch(`${base}/healthz`); if (r.ok) break; } catch { }
+        try {
+            const r = await fetch(`${base}/healthz`);
+            if (r.ok) { ready = true; break; }
+        } catch { }
         await new Promise(r => setTimeout(r, 100));
     }
     if (child.exitCode !== null)
         throw new Error(`el servidor de prueba no arrancó:\n${log.slice(-2000)}`);
+    if (!ready) throw new Error(`el servidor de prueba no estuvo listo a tiempo:\n${log.slice(-2000)}`);
     return {
         child, base, port, dataDir,
         ownsDataDir: !options.dataDir,

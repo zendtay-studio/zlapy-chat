@@ -82,13 +82,11 @@ const Stmt = {
     upsertUserNote: db.prepare('INSERT OR REPLACE INTO user_notes (user_id, data, ts) VALUES (?, ?, ?)'),
     deleteUserNote: db.prepare('DELETE FROM user_notes WHERE user_id = ?'),
 
-    // Stickers favoritos
+    // Favoritos y blobs de stickers propios
     listStickers: db.prepare('SELECT sticker FROM user_stickers WHERE user_id = ? ORDER BY position'),
     insertSticker: db.prepare('INSERT OR REPLACE INTO user_stickers (user_id, position, sticker) VALUES (?, ?, ?)'),
     deleteStickers: db.prepare('DELETE FROM user_stickers WHERE user_id = ?'),
-    listUserStickerBlobs: db.prepare('SELECT hash FROM user_sticker_blobs WHERE user_id = ?'),
     insertUserStickerBlob: db.prepare('INSERT OR IGNORE INTO user_sticker_blobs (user_id, hash) VALUES (?, ?)'),
-    deleteUserStickerBlobs: db.prepare('DELETE FROM user_sticker_blobs WHERE user_id = ?'),
 
     // Grupos vistos
     listGroupSeen: db.prepare('SELECT gid, ts FROM user_group_seen WHERE user_id = ?'),
@@ -154,6 +152,8 @@ const Stmt = {
     getPublicSticker: db.prepare('SELECT 1 FROM public_stickers WHERE hash = ? LIMIT 1'),
     listDefaultStickers: db.prepare(`SELECT hash, expression, label, tags, sticker, position
         FROM default_stickers ORDER BY position ASC`),
+    getDefaultStickerByExpression: db.prepare('SELECT hash FROM default_stickers WHERE expression = ?'),
+    isDefaultStickerHash: db.prepare('SELECT 1 FROM default_stickers WHERE hash = ? LIMIT 1'),
     upsertDefaultSticker: db.prepare(`INSERT INTO default_stickers
         (expression, hash, label, tags, sticker, position) VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(expression) DO UPDATE SET hash = excluded.hash, label = excluded.label,
@@ -176,6 +176,66 @@ const Stmt = {
         HAVING COUNT(DISTINCT pst.tag) = ?
         ORDER BY ps.created_at DESC, ps.hash DESC
         LIMIT ? OFFSET ?`),
+    searchPublicStickersByTagPrefix: db.prepare(`WITH requested_tags AS (
+            SELECT value FROM json_each(?)
+        )
+        SELECT ps.hash, ps.created_at, GROUP_CONCAT(pst.tag, ',') AS tags
+        FROM public_stickers ps
+        JOIN public_sticker_tags pst ON pst.hash = ps.hash
+        WHERE pst.tag IN (SELECT value FROM requested_tags)
+            OR substr(pst.tag, 1, length(?)) = ?
+        GROUP BY ps.hash
+        HAVING COUNT(DISTINCT CASE WHEN pst.tag IN (SELECT value FROM requested_tags)
+            THEN pst.tag END) = ?
+            AND SUM(CASE WHEN substr(pst.tag, 1, length(?)) = ? THEN 1 ELSE 0 END) > 0
+        ORDER BY ps.created_at DESC, ps.hash DESC
+        LIMIT ? OFFSET ?`),
+    searchPublicStickersByTagQuery: db.prepare(`WITH requested_terms AS (
+            SELECT value FROM json_each(?)
+        )
+        SELECT ps.hash, ps.created_at,
+        GROUP_CONCAT(pst.tag, ',') AS tags
+        FROM public_stickers ps
+        JOIN public_sticker_tags pst ON pst.hash = ps.hash
+        JOIN requested_terms rt ON instr(pst.tag, rt.value) > 0
+        GROUP BY ps.hash
+        HAVING COUNT(DISTINCT rt.value) = ?
+        ORDER BY ps.created_at DESC, ps.hash DESC
+        LIMIT ? OFFSET ?`),
+    countPublicStickers: db.prepare('SELECT COUNT(*) AS count FROM public_stickers'),
+    countPublicStickersByTags: db.prepare(`SELECT COUNT(*) AS count FROM (
+        SELECT ps.hash
+        FROM public_stickers ps
+        JOIN public_sticker_tags pst ON pst.hash = ps.hash
+        WHERE pst.tag IN (SELECT value FROM json_each(?))
+        GROUP BY ps.hash
+        HAVING COUNT(DISTINCT pst.tag) = ?
+    )`),
+    countPublicStickersByTagPrefix: db.prepare(`WITH requested_tags AS (
+            SELECT value FROM json_each(?)
+        )
+        SELECT COUNT(*) AS count FROM (
+            SELECT ps.hash
+            FROM public_stickers ps
+            JOIN public_sticker_tags pst ON pst.hash = ps.hash
+            WHERE pst.tag IN (SELECT value FROM requested_tags)
+                OR substr(pst.tag, 1, length(?)) = ?
+            GROUP BY ps.hash
+            HAVING COUNT(DISTINCT CASE WHEN pst.tag IN (SELECT value FROM requested_tags)
+                THEN pst.tag END) = ?
+                AND SUM(CASE WHEN substr(pst.tag, 1, length(?)) = ? THEN 1 ELSE 0 END) > 0
+        )`),
+    countPublicStickersByTagQuery: db.prepare(`WITH requested_terms AS (
+            SELECT value FROM json_each(?)
+        )
+        SELECT COUNT(*) AS count FROM (
+            SELECT ps.hash
+            FROM public_stickers ps
+            JOIN public_sticker_tags pst ON pst.hash = ps.hash
+            JOIN requested_terms rt ON instr(pst.tag, rt.value) > 0
+            GROUP BY ps.hash
+            HAVING COUNT(DISTINCT rt.value) = ?
+        )`),
 
     // Blobs
     getBlob: blobDb.prepare('SELECT data FROM blobs WHERE hash = ?'),
@@ -200,9 +260,11 @@ const Stmt = {
     referencedBlobHashes: db.prepare(`SELECT DISTINCT hash FROM blob_access
         UNION SELECT hash FROM user_sticker_blobs
         UNION SELECT hash FROM public_stickers
+        UNION SELECT hash FROM default_stickers
         UNION SELECT avatar_ref FROM user_profiles WHERE avatar_ref <> ''
         UNION SELECT wallpaper_ref FROM user_chat_settings WHERE wallpaper_ref <> ''
-        UNION SELECT avatar_ref FROM groups WHERE avatar_ref <> ''`),
+        UNION SELECT avatar_ref FROM groups WHERE avatar_ref <> ''
+        UNION SELECT value FROM meta WHERE key = 'media_fallback_hash'`),
     blobSize: blobDb.prepare('SELECT LENGTH(data) AS bytes FROM blobs WHERE hash = ?'),
     blobBytesGlobal: blobDb.prepare('SELECT COALESCE(SUM(LENGTH(data)), 0) AS bytes FROM blobs'),
     deleteBlobByHash: blobDb.prepare('DELETE FROM blobs WHERE hash = ?'),
