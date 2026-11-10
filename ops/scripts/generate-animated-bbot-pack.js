@@ -582,7 +582,7 @@ async function main(outputDirectory) {
 if (require.main === module) {
     const outputDirectory = process.argv[2];
     if (!outputDirectory) {
-        console.error('Indica un directorio temporal de salida; el servidor guarda el paquete en la biblioteca.');
+        console.error('Indica el directorio de salida para los WebP animados del paquete bbot.');
         process.exitCode = 2;
     } else {
         main(outputDirectory).catch(error => {

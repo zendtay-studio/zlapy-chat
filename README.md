@@ -231,6 +231,7 @@ cp .env.example .env   # crea tu configuración local
 | `AUTH_SESSION_TTL_MS` | `2592000000` | Vigencia de la sesión (30 días) |
 | `CHAT_PAGE_CACHE_MAX` / `CHAT_PAGE_CACHE_TTL_MS` | `20` / `10000` | Caché de páginas de chat (0 desactiva) |
 | `SQLITE_CACHE_SIZE_KB` / `SQLITE_BUSY_TIMEOUT_MS` | `64000` / `5000` | Caché y espera de SQLite |
+| `BBOT_STICKER_PACK_DIR` | `data/bbot-stickers` | Carpeta persistente de los WebP animados bbot generados o recuperados al iniciar |
 | `GIPHY_API_KEY` | vacío | Stickers de Giphy (solo la usa el servidor) |
 | `CLOUDFLARE_TUNNEL_TOKEN` | vacío | Token del túnel de Cloudflare |
 | `SUPERVISOR_*` | ver `.env.example` | Intervalo del health check, backoff, tope de reinicios, fichero de PID |

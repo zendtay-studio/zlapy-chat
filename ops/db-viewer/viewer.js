@@ -51,12 +51,13 @@ const state = {
     schema: null,
     graph: null,
     secrets: false,
-    inferred: true,
+    inferred: false,
     query: '',
     focus: null,          // id del nodo aislado
     zoom: 1,
     pan: { x: 60, y: 40 },
     yaw: 0.55, pitch: -0.32, zoom3d: 1,
+    fitAfterSimulation: false,
     table: null, offset: 0, limit: 100
 };
 
@@ -100,7 +101,7 @@ function withReveal(path) {
 
 async function load() {
     const [schema, graph] = await Promise.all([
-        withReveal('/api/schema'),
+        api(withReveal('/api/schema')),
         api('/api/graph')
     ]);
     state.schema = schema;
@@ -119,6 +120,8 @@ async function load() {
         $('#empty').classList.add('hidden');
         layoutGraph();
         render2D();
+        fit2D();
+        state.fitAfterSimulation = true;
         startSim();
     }
     renderStats();
@@ -284,6 +287,10 @@ function reheat() {
 function tick() {
     if (sim.running) {
         step();
+        if (!sim.running && state.fitAfterSimulation) {
+            state.fitAfterSimulation = false;
+            fit2D();
+        }
         if (state.mode === '2d') render2D();
         else if (state.mode === '3d') render3D();
     }
@@ -304,9 +311,19 @@ function render2D() {
     const world = $('#world2d');
     if (world.childElementCount === 0) build2D();
 
+    world.classList.toggle('overview', state.zoom < 0.65);
+    world.classList.toggle('show-labels', state.zoom >= 1.4);
     for (const node of nodesById.values()) {
         const el = nodeEls.get(node.id);
-        if (el) el.setAttribute('transform', `translate(${node.x.toFixed(1)},${node.y.toFixed(1)})`);
+        if (el) {
+            el.setAttribute('transform', `translate(${node.x.toFixed(1)},${node.y.toFixed(1)})`);
+            const radius = nodeRadius(node) / state.zoom;
+            el.querySelector('circle.halo').setAttribute('r', radius + 4 / state.zoom);
+            el.querySelector('circle.core').setAttribute('r', radius);
+            const label = el.querySelector('text');
+            label.setAttribute('x', radius + 5 / state.zoom);
+            label.setAttribute('font-size', 10 / state.zoom);
+        }
     }
     for (const item of edgeEls) {
         const a = nodesById.get(item.edge.from);
@@ -390,6 +407,7 @@ function applyStates() {
     const focus = state.focus ? nodesById.get(state.focus) : null;
     const neighbors = focus ? (neighborsById.get(focus.id) || new Set()) : null;
     const query = state.query.trim().toLowerCase();
+    $('#world2d').classList.toggle('show-labels', state.zoom >= 1.4 || !!focus || !!query);
 
     for (const [id, el] of nodeEls) {
         const node = nodesById.get(id);
@@ -441,6 +459,7 @@ function toggleFocus(id) {
     applyStates();
     if (state.focus) openDetail(id);
     else closeDetail();
+    if (state.mode === '3d') render3D();
 }
 
 /* ---------------- vista 3D ---------------- */
@@ -464,6 +483,9 @@ function resize3D() {
 }
 
 function project3D(x, y, z) {
+    x -= graphCenter.x;
+    y -= graphCenter.y;
+    z -= graphCenter.z;
     const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
     const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
 
@@ -472,13 +494,23 @@ function project3D(x, y, z) {
     const y1 = y * cp - z1 * sp;
     const z2 = y * sp + z1 * cp;
 
-    const focal = 950;
-    const scale = focal / (focal + z2 + 0.0001);
     const view = ctx3d.canvas;
+    const extent = Math.max(1, graphExtent);
+    const sceneScale = Math.min(view.clientWidth, view.clientHeight) * 0.38 / extent;
+    const focal = Math.max(1, Math.min(view.clientWidth, view.clientHeight) * 1.8);
+    const depth = z2 * sceneScale;
+    const scale = focal / Math.max(focal * 0.35, focal + depth);
     const cx = view.clientWidth / 2 || 400;
     const y0 = view.clientHeight / 2 || 300;
-    return { sx: cx + x1 * scale * 260 * state.zoom3d, sy: y0 + y1 * scale * 260 * state.zoom3d, s: scale };
+    return {
+        sx: cx + x1 * sceneScale * scale * state.zoom3d,
+        sy: y0 + y1 * sceneScale * scale * state.zoom3d,
+        s: scale
+    };
 }
+
+let graphExtent = 1;
+let graphCenter = { x: 0, y: 0, z: 0 };
 
 function render3D() {
     if (!ctx3d) return;
@@ -489,6 +521,26 @@ function render3D() {
     const focus = state.focus ? nodesById.get(state.focus) : null;
     const neighbors = focus ? (neighborsById.get(focus.id) || new Set()) : null;
     const query = state.query.trim().toLowerCase();
+    const bounds = { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity, minZ: Infinity, maxZ: -Infinity };
+    for (const node of nodesById.values()) {
+        bounds.minX = Math.min(bounds.minX, node.x);
+        bounds.maxX = Math.max(bounds.maxX, node.x);
+        bounds.minY = Math.min(bounds.minY, node.y);
+        bounds.maxY = Math.max(bounds.maxY, node.y);
+        bounds.minZ = Math.min(bounds.minZ, node.z);
+        bounds.maxZ = Math.max(bounds.maxZ, node.z);
+    }
+    if (nodesById.size) {
+        graphCenter = {
+            x: (bounds.minX + bounds.maxX) / 2,
+            y: (bounds.minY + bounds.maxY) / 2,
+            z: (bounds.minZ + bounds.maxZ) / 2
+        };
+        graphExtent = Math.max(1,
+            (bounds.maxX - bounds.minX) / 2,
+            (bounds.maxY - bounds.minY) / 2,
+            (bounds.maxZ - bounds.minZ) / 2);
+    }
 
     // Proyección de todos los nodos.
     const drawn = [];
@@ -497,7 +549,7 @@ function render3D() {
         node._sx = p.sx; node._sy = p.sy; node._s = p.s;
         drawn.push(node);
     }
-    drawn.sort((a, b) => b._s - a._s); // lejanos primero
+    drawn.sort((a, b) => a._s - b._s); // lejanos primero
 
     const matches = id => {
         const node = nodesById.get(id);
@@ -561,7 +613,7 @@ function render3D() {
         ctx3d.stroke();
 
         // Etiqueta: foco, vecinos o nodos muy al frente.
-        const showLabel = isFocus || (focus && neighbors.has(node.id)) || (!focus && node._s > 0.92);
+        const showLabel = isFocus || (focus && neighbors.has(node.id)) || (!!query && matched);
         if (showLabel) {
             ctx3d.globalAlpha = matched ? 1 : 0.2;
             ctx3d.font = '10px ui-monospace, "SF Mono", Consolas, monospace';
@@ -643,7 +695,7 @@ function zoomAt(clientX, clientY, factor) {
     state.pan.x = px - (px - state.pan.x) * k;
     state.pan.y = py - (py - state.pan.y) * k;
     state.zoom = next;
-    applyWorldTransform();
+    render2D();
 }
 
 /* ---------------- interacción 3D ---------------- */
@@ -919,8 +971,8 @@ function initControls() {
         state.zoom = 1;
         state.zoom3d = 1;
         state.pan = { x: 60, y: 40 };
-        applyWorldTransform();
         if (state.mode === '3d') render3D();
+        else render2D();
     });
     $('#zfit').addEventListener('click', fit);
 
@@ -936,7 +988,10 @@ function initControls() {
     });
 
     window.addEventListener('resize', () => {
-        if (state.mode === '3d') render3D();
+        if (state.mode === '3d') {
+            resize3D();
+            render3D();
+        }
     });
 }
 
@@ -946,19 +1001,26 @@ function fit() {
         render3D();
         return;
     }
-    let maxX = 0, maxY = 0, minX = 0, minY = 0;
+    fit2D();
+}
+
+function fit2D() {
+    if (!nodesById.size) return;
+    let maxX = -Infinity, maxY = -Infinity, minX = Infinity, minY = Infinity;
     for (const node of nodesById.values()) {
         maxX = Math.max(maxX, node.x); maxY = Math.max(maxY, node.y);
         minX = Math.min(minX, node.x); minY = Math.min(minY, node.y);
     }
-    const width = (maxX - minX) + 160;
-    const height = (maxY - minY) + 120;
+    const width = Math.max(1, maxX - minX + 160);
+    const height = Math.max(1, maxY - minY + 120);
     const view = $('#view-2d').getBoundingClientRect();
-    const zoom = Math.max(0.15, Math.min(2, Math.min(view.width / width, view.height / height)));
+    const zoom = Math.max(0.08, Math.min(2.5,
+        Math.min(Math.max(1, view.width - 80) / width, Math.max(1, view.height - 70) / height)));
     state.zoom = zoom;
     state.pan.x = view.width / 2 - (minX + maxX) / 2 * zoom;
     state.pan.y = view.height / 2 - (minY + maxY) / 2 * zoom;
     applyWorldTransform();
+    render2D();
 }
 
 async function reload() {

@@ -262,13 +262,14 @@ body { display: flex; flex-direction: column; }
 /* ---------------- nodos y aristas (2D) ---------------- */
 
 .edge2d { fill: none; stroke-linecap: round; transition: opacity .14s, stroke-width .14s; }
-.edge2d.fk { stroke: var(--cascade); stroke-width: 1.3; }
-.edge2d.setnull { stroke: var(--setnull); stroke-width: 1.4; stroke-dasharray: 5 3; }
-.edge2d.inferred { stroke: var(--logical); stroke-width: 1.2; stroke-dasharray: 2 4; opacity: .75; }
+.edge2d.fk { stroke: var(--cascade); stroke-width: 1.3; opacity: .28; }
+.edge2d.setnull { stroke: var(--setnull); stroke-width: 1.4; stroke-dasharray: 5 3; opacity: .4; }
+.edge2d.inferred { stroke: var(--logical); stroke-width: 1.2; stroke-dasharray: 2 4; opacity: .35; }
 
 .edge2d.hot { stroke: var(--accent); stroke-width: 2.1; opacity: 1; stroke-dasharray: none; }
 .edge2d.hot.inferred { stroke: var(--logical); stroke-dasharray: 4 3; }
 .edge2d.muted { opacity: .07; }
+.edge2d.hot { opacity: 1; }
 .edge2d.hidden { display: none; }
 
 .node2d { cursor: pointer; transition: opacity .16s; }
@@ -293,9 +294,14 @@ body { display: flex; flex-direction: column; }
     stroke: #0b0f14;
     stroke-width: 3;
     pointer-events: none;
+    opacity: 0;
     transition: opacity .16s;
 }
 
+.world2d.show-labels .node2d text { opacity: .88; }
+.node2d:hover text,
+.node2d.focused text,
+.node2d.hit text { opacity: 1; }
 .node2d:hover circle.halo,
 .node2d.focused circle.halo { opacity: .32; }
 .node2d:hover circle.core,
@@ -303,6 +309,9 @@ body { display: flex; flex-direction: column; }
 .node2d.hit circle.core { stroke: var(--pk); }
 .node2d.muted { opacity: .18; }
 .node2d.muted text { opacity: 0; }
+.world2d.overview .edge2d { opacity: .11; }
+.world2d.overview .edge2d.inferred { opacity: .06; }
+.world2d.overview .edge2d.hot { opacity: 1; }
 
 /* ---------------- explorador de tablas ---------------- */
 

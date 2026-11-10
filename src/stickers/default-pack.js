@@ -70,7 +70,31 @@ function runGenerator(generatorPath, outputDirectory) {
     execFileSync(process.execPath, [generatorPath, outputDirectory], { stdio: 'inherit' });
 }
 
+function persistStoredPack(assetDirectory, rowsByExpression) {
+    const { readBlob } = require('../chat/media.js');
+    fs.mkdirSync(assetDirectory, { recursive: true });
+    for (const { expression } of DEFAULT_BBOT_STICKERS) {
+        const hash = rowsByExpression.get(expression).hash.toLowerCase();
+        const filePath = path.join(assetDirectory, `${expression}.webp`);
+        try {
+            const existing = fs.readFileSync(filePath);
+            if (crypto.createHash('sha256').update(existing).digest('hex') === hash) continue;
+        } catch (error) {
+            if (error.code !== 'ENOENT') throw error;
+        }
+        const stored = readBlob(hash);
+        const match = typeof stored === 'string' && stored.match(/^data:image\/webp;base64,([a-z0-9+/]*={0,2})$/i);
+        if (!match) throw new Error(`No se pudo recuperar el sticker bbot "${expression}" de la biblioteca.`);
+        const bytes = Buffer.from(match[1], 'base64');
+        if (crypto.createHash('sha256').update(bytes).digest('hex') !== hash)
+            throw new Error(`El sticker bbot "${expression}" no coincide con su hash en la biblioteca.`);
+        fs.writeFileSync(filePath, bytes);
+    }
+}
+
 function seedDefaultBbotStickers(db, assetDirectory = process.env.BBOT_STICKER_PACK_DIR || null) {
+    assetDirectory = typeof assetDirectory === 'string' && assetDirectory.trim()
+        ? assetDirectory.trim() : null;
     const currentRows = db.prepare('SELECT expression, hash, sticker FROM default_stickers').all();
     const rowsByExpression = new Map(currentRows.map(row => [row.expression, row]));
     const { Stmt } = require('../db/statements.js');
@@ -102,6 +126,10 @@ function seedDefaultBbotStickers(db, assetDirectory = process.env.BBOT_STICKER_P
     };
 
     if (packIsStored) {
+        if (assetDirectory) {
+            const persistentDirectory = path.resolve(__dirname, '../../', assetDirectory);
+            persistStoredPack(persistentDirectory, rowsByExpression);
+        }
         saveCatalog(DEFAULT_BBOT_STICKERS.map(sticker => {
             const hash = rowsByExpression.get(sticker.expression).hash.toLowerCase();
             return { ...sticker, hash, sticker: `/stickers/blob/${hash}` };
@@ -113,9 +141,13 @@ function seedDefaultBbotStickers(db, assetDirectory = process.env.BBOT_STICKER_P
     let generatedDirectory = null;
     if (!assetDirectory)
         generatedDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'zlapy-bbot-pack-'));
-    const packDirectory = assetDirectory || generatedDirectory;
+    const packDirectory = assetDirectory
+        ? path.resolve(__dirname, '../../', assetDirectory)
+        : generatedDirectory;
     try {
-        if (!assetDirectory) {
+        const packFilesExist = DEFAULT_BBOT_STICKERS.every(({ expression }) =>
+            fs.existsSync(path.join(packDirectory, `${expression}.webp`)));
+        if (!packFilesExist) {
             runGenerator(generatorPath, packDirectory);
         }
         const { storeBlob } = require('../chat/media.js');

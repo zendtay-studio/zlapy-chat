@@ -158,6 +158,8 @@ test('creates private stickers, publishes tagged stickers voluntarily, and share
         assert.doesNotMatch(stickerStore, /deleteUserStickerBlobs/);
         assert.match(mediaSource, /function seedMediaFallback\(\)/);
         assert.match(mediaTransactions, /FROM meta WHERE key = 'media_fallback_hash'/);
+        assert.match(fs.readFileSync(path.join(__dirname, '../src/stickers/default-pack.js'), 'utf8'),
+            /function persistStoredPack\(assetDirectory, rowsByExpression\)/);
         assert.match(indexHtml, /const target = tile \|\| image/);
         assert.match(indexHtml, /if \(result\.sendAfterCreate\) sendSticker\(result\.sticker\)/);
         assert.match(indexHtml, /stickerSuppressClick = target/);
@@ -524,12 +526,15 @@ test('creates private stickers, publishes tagged stickers voluntarily, and share
             catalogDb.prepare(`UPDATE default_stickers
                 SET sticker = '/stickers/bbot-v3/' || expression || '.webp'`).run();
         } finally { catalogDb.close(); }
+        const persistentPackDir = path.join(srv.dataDir, 'bbot-stickers');
         const restarted = await startServer({
             dataDir: srv.dataDir,
-            env: { BBOT_STICKER_PACK_DIR: '' }
+            env: { BBOT_STICKER_PACK_DIR: persistentPackDir }
         });
         try {
             assert.doesNotMatch(restarted.log, /Rasterizando 1500 fotogramas/);
+            assert.equal(fs.readdirSync(persistentPackDir).filter(file => file.endsWith('.webp')).length, 30,
+                'the configured pack directory is populated from the blob database on restart');
             const persistedFavorites = await api(restarted.base, 'GET', '/stickers', null, ana.cookie);
             assert.equal(persistedFavorites.status, 200);
             assert.equal(persistedFavorites.json.stickers.includes(created.json.sticker), false,

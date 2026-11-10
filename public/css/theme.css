@@ -24,6 +24,19 @@
   --toolbar-icon-color: var(--text);
 }
 
+body,
+body * {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none
+}
+
+body :is(input, textarea, [contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"]) {
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default
+}
+
 @keyframes public-page-enter {
   from { opacity: 0; transform: translateY(8px) }
   to { opacity: 1; transform: translateY(0) }
