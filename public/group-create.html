@@ -3,15 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-    <meta name="theme-color" content="#090c0f">
+    <meta name="theme-color" content="#111b21">
     <title>Crear grupo — Zlapy</title>
+    <link rel="icon" type="image/webp" href="/image/isotype-308.webp">
     <link rel="stylesheet" href="/css/theme.css">
-    <link rel="stylesheet" href="/css/group-create.css?v=9">
+    <link rel="stylesheet" href="/css/group-create.css?v=10">
     <link rel="stylesheet" href="/css/avatar-editor.css?v=1">
     <script src="/js/appearance.js"></script>
 </head>
 <body class="page-group-create">
     <svg class="svg-sprite" aria-hidden="true" focusable="false">
+        <symbol id="i-arrow-left" viewBox="0 0 24 24">
+            <path d="M19 12H5M11 18l-6-6 6-6"></path>
+        </symbol>
         <symbol id="i-x" viewBox="0 0 24 24">
             <path d="M18 6 6 18M6 6l12 12"></path>
         </symbol>
@@ -57,7 +61,7 @@
 
                 <header class="appbar">
                     <button class="icon-btn" id="closeBtn" type="button" aria-label="Volver a Zlapy" title="Volver">
-                        <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
+                        <svg class="icon" aria-hidden="true"><use href="#i-arrow-left"></use></svg>
                     </button>
                     <div class="appbar-copy">
                         <h1 id="pageTitle">Nuevo grupo</h1>

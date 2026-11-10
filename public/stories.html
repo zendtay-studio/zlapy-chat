@@ -4,10 +4,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#101419">
+  <meta name="theme-color" content="#111b21">
   <title>Historias</title>
+  <link rel="icon" type="image/webp" href="/image/isotype-308.webp">
   <link rel="stylesheet" href="/css/theme.css">
-  <link rel="stylesheet" href="/css/popmenu.css?v=1">
+  <link rel="stylesheet" href="/css/popmenu.css?v=3">
   <script src="/js/transport-crypto.js"></script>
   <script src="/js/transport.js"></script>
   <script src="/js/appearance.js"></script>
@@ -412,7 +413,7 @@
 
     .iconBtn.on {
       background: var(--accent-soft);
-      color: var(--accent)
+      color: var(--accent-readable)
     }
 
     .iconBtn:focus-visible,
@@ -800,7 +801,7 @@
       gap: 3px;
       height: 36px;
       margin-bottom: 14px;
-      color: var(--accent)
+      color: var(--accent-readable)
     }
 
     .audioPlaybackWave span {
@@ -1053,8 +1054,7 @@
       height: 15px;
       fill: none;
       stroke: #fff;
-      stroke-width: 2.5;
-      filter: drop-shadow(0 1px 2px #000)
+      stroke-width: 2.5
     }
 
     .editorBottom {
@@ -1493,7 +1493,7 @@
       border: 1px solid var(--line);
       border-radius: 12px;
       background: var(--surface);
-      color: var(--accent)
+      color: var(--accent-readable)
     }
 
     body.page-stories .createStoryOptions .actionIcon svg {
@@ -1539,7 +1539,7 @@
     body.page-stories .iconBtn.on {
       border-color: #596472;
       background: #d3dbe11a;
-      color: var(--accent)
+      color: var(--accent-readable)
     }
 
     body.page-stories .audioPanel {
@@ -1560,11 +1560,11 @@
 
     body.page-stories .audioMicIcon {
       background: #d3dbe11a;
-      color: var(--accent)
+      color: var(--accent-readable)
     }
 
     body.page-stories .recordWave {
-      color: var(--accent)
+      color: var(--accent-readable)
     }
 
     body.page-stories .recordHold {
@@ -1584,7 +1584,7 @@
 
     body.page-stories .audioPlaybackWave,
     body.page-stories .audioPlaybackPlay {
-      color: var(--accent)
+      color: var(--accent-readable)
     }
 
     body.page-stories .audioPlaybackPlay {
@@ -2375,7 +2375,7 @@
     async function editTextStory(ts) { try { const { stories = [] } = await requestJson('/stories', { cache: 'no-store' }), story = stories.find(item => item.from === me.username && item.ts === ts); if (!story) throw new Error('La historia ya no está disponible.'); const text = prompt('Editar el texto de la historia:', story.text || ''); if (text === null) return; if (Array.from(text).length > storyTextMaxCharacters) throw new Error(`Las historias admiten hasta ${storyTextMaxCharacters} caracteres.`); const bg = story.bg || randomBackgroundColor(); await requestJson('/story/edit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ts, text, bg }) }); await loadStories(); } catch (error) { console.error('[stories] No se pudo editar la historia:', error); notify(error.message); } }
     initialize();
   </script>
-  <script src="/js/popmenu.js?v=2"></script>
+  <script src="/js/popmenu.js?v=4"></script>
 </body>
 
 </html>

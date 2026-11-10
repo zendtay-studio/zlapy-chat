@@ -48,6 +48,7 @@
     };
 
     let current = null;
+    let currentReactions = null;
     let currentAnchor = null;
     let currentOptions = null;
 
@@ -62,12 +63,15 @@
     function close() {
         if (!current) return;
         const menu = current;
+        const reactions = currentReactions;
         const opts = currentOptions;
         current = null;
+        currentReactions = null;
         currentAnchor = null;
         currentOptions = null;
         menu.classList.remove('on');
         menu.hidden = true;
+        if (reactions) reactions.remove();
         document.removeEventListener('pointerdown', onOutside, true);
         document.removeEventListener('keydown', onKey, true);
         window.removeEventListener('resize', close);
@@ -82,6 +86,7 @@
     function onOutside(event) {
         if (!current) return;
         if (current.contains(event.target)) return;
+        if (currentReactions && currentReactions.contains(event.target)) return;
         if (currentAnchor && currentAnchor.contains && currentAnchor.contains(event.target)) return;
         close();
     }
@@ -97,7 +102,9 @@
         const opts = options || {};
         close();
         const items = Array.isArray(opts.items) ? opts.items : [];
-        if (!items.length) return null;
+        const hasReactions = Array.isArray(opts.reactions) && opts.reactions.length > 0 &&
+            (typeof opts.onReact === 'function' || typeof opts.onMore === 'function');
+        if (!items.length && !hasReactions) return null;
         let menu = document.getElementById('zlapyPopMenu');
         if (!menu) {
             menu = document.createElement('div');
@@ -113,6 +120,8 @@
            convertirse en HTML. */
         const attr = value => String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         const text = value => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const reactions = Array.isArray(opts.reactions) ? opts.reactions.filter(value => typeof value === 'string').slice(0, 8) : [];
+        const showReactions = reactions.length && (typeof opts.onReact === 'function' || typeof opts.onMore === 'function');
         menu.innerHTML = `<div class="zlapyMenuList">${items.map(item => `
             <button class="zlapyMenuItem${item.danger ? ' danger' : ''}" type="button" role="menuitem" data-menu-id="${attr(item.id)}">
                 ${iconMarkup(item.icon)}<span class="zlapyMenuLabel">${text(item.label)}</span>
@@ -122,6 +131,17 @@
         current = menu;
         currentAnchor = opts.anchor || null;
         currentOptions = opts;
+        if (showReactions) {
+            const bar = document.createElement('div');
+            bar.className = 'zlapyReactionBar';
+            bar.setAttribute('role', 'group');
+            bar.setAttribute('aria-label', 'Reaccionar al mensaje');
+            bar.innerHTML = `${reactions.map(emoji => `
+                <button class="zlapyMenuReaction" type="button" data-reaction="${attr(emoji)}" aria-label="Reaccionar con ${attr(emoji)}">${text(emoji)}</button>`).join('')}${typeof opts.onMore === 'function'
+                ? '<button class="zlapyMenuReaction zlapyMenuReactionMore" type="button" data-reaction-more aria-label="Ver todos los emojis"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg></button>' : ''}`;
+            document.body.appendChild(bar);
+            currentReactions = bar;
+        }
 
         // Colocarlo junto al ancla (o en el punto pedido), siempre en pantalla.
         const rect = currentAnchor && currentAnchor.getBoundingClientRect
@@ -132,16 +152,34 @@
         menu.style.visibility = 'hidden';
         menu.style.left = '0px';
         menu.style.top = '0px';
+        const reactionBar = currentReactions;
+        if (reactionBar) {
+            reactionBar.style.visibility = 'hidden';
+            reactionBar.style.left = '0px';
+            reactionBar.style.top = '0px';
+            menu.style.maxHeight = `${Math.max(120, innerHeight - reactionBar.offsetHeight - 32)}px`;
+        } else menu.style.maxHeight = '';
         const width = menu.offsetWidth;
         const height = menu.offsetHeight;
+        const reactionHeight = reactionBar ? reactionBar.offsetHeight : 0;
+        const reactionWidth = reactionBar ? reactionBar.offsetWidth : 0;
+        const reactionGap = reactionBar ? 7 : 0;
         let left = x - width;
         let top = y;
         if (opts.align === 'right' || (rect && !opts.x)) left = rect.right - width;
         left = Math.max(8, Math.min(left, innerWidth - width - 8));
-        if (top + height > innerHeight - 8) top = Math.max(8, y - height - 12);
+        const minTop = 8 + reactionHeight + reactionGap;
+        if (top + height > innerHeight - 8) top = y - height - reactionHeight - reactionGap - 6;
+        top = Math.max(minTop, Math.min(top, innerHeight - height - 8));
         menu.style.left = Math.round(left) + 'px';
         menu.style.top = Math.round(top) + 'px';
         menu.style.visibility = '';
+        if (reactionBar) {
+            const reactionLeft = Math.max(8, Math.min(left + width - reactionWidth, innerWidth - reactionWidth - 8));
+            reactionBar.style.left = Math.round(reactionLeft) + 'px';
+            reactionBar.style.top = Math.round(top - reactionHeight - reactionGap) + 'px';
+            reactionBar.style.visibility = '';
+        }
 
         menu.querySelectorAll('[data-menu-id]').forEach(button => {
             button.onclick = event => {
@@ -152,6 +190,22 @@
                 if (typeof opts.onSelect === 'function') opts.onSelect(id, event);
             };
         });
+        if (reactionBar) reactionBar.querySelectorAll('[data-reaction]').forEach(button => {
+            button.onclick = event => {
+                event.preventDefault();
+                event.stopPropagation();
+                const emoji = button.dataset.reaction;
+                close();
+                if (typeof opts.onReact === 'function') opts.onReact(emoji, event);
+            };
+        });
+        const moreButton = reactionBar && reactionBar.querySelector('[data-reaction-more]');
+        if (moreButton) moreButton.onclick = event => {
+            event.preventDefault();
+            event.stopPropagation();
+            close();
+            if (typeof opts.onMore === 'function') opts.onMore(event);
+        };
         document.addEventListener('pointerdown', onOutside, true);
         document.addEventListener('keydown', onKey, true);
         window.addEventListener('resize', close);

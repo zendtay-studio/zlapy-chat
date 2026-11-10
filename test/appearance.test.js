@@ -64,10 +64,16 @@ test('persists the app accent on the server across a restart', async () => {
             senderText: '#4b2835',
             receiverText: '#4b2835',
             autoText: false,
-            image: ''
+            image: 'data:image/jpeg;base64,Zm9v'
         };
         const saved = await api(server.base, 'POST', '/account/chat-settings', { settings }, account.cookie);
         assert.equal(saved.status, 200);
+        const loadedWallpaper = await api(server.base, 'GET', '/account/chat-settings', null, account.cookie);
+        assert.equal(loadedWallpaper.json.settings.image, settings.image);
+        const removed = await api(server.base, 'POST', '/account/chat-settings', {
+            settings: { ...settings, image: '' }
+        }, account.cookie);
+        assert.equal(removed.status, 200);
         await stop(server);
 
         server = await startServer({ dataDir });
@@ -76,6 +82,7 @@ test('persists the app accent on the server across a restart', async () => {
         assert.equal(loaded.json.settings.accent, settings.accent);
         assert.equal(loaded.json.settings.senderText, settings.senderText);
         assert.equal(loaded.json.settings.receiverText, settings.receiverText);
+        assert.equal(loaded.json.settings.image, '');
     } finally {
         await stop(server);
         fs.rmSync(dataDir, { recursive: true, force: true });

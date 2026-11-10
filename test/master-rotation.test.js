@@ -11,7 +11,7 @@ const test = require('node:test');
 const { hasMasterDataAtRest, isMasterEnvelope, rotateMasterKey } = require('../ops/reencrypt-master.js');
 const { createMessageCrypto } = require('../src/crypto/message-crypto.js');
 const { aadOf } = require('../src/crypto/field-crypto.js');
-const { ensureSchema } = require('../src/db/schema.js');
+const { ensureSchema, SCHEMA_VERSION } = require('../src/db/schema.js');
 
 /** Proyecto de juguete: un .env con credencial + data/ con las dos bases. */
 function maqueta(t) {
@@ -96,7 +96,7 @@ test('la migración re-cifra auth_keys, grupos, meta (VAPID), campos y adjuntos'
     assert.equal(vieja.decryptAtRest(nombre, aadOf('groups.name')), null);
 
     // La fila EN CLARO de meta sobrevive sin despeinarse.
-    assert.equal(db.prepare('SELECT value FROM meta WHERE key = ?').get('schema_version').value, '4');
+    assert.equal(db.prepare('SELECT value FROM meta WHERE key = ?').get('schema_version').value, String(SCHEMA_VERSION));
     db.close(); blobDb.close();
 });
 

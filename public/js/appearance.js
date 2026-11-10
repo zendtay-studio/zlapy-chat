@@ -1,8 +1,8 @@
 /* Acento compartido: el MISMO componente en todas las páginas (index,
    perfil, historias, grupos, privacidad y login). El index de la app guarda
    la apariencia del chat en localStorage bajo la llave por usuario
-   (chatlocal_appearance_<id>) y un puntero del dispositivo
-   (chatlocal_appearance_hint); este componente lee esa cache y pinta las
+   (zlapy_appearance_<id>) y un puntero del dispositivo
+   (zlapy_appearance_hint); este componente lee esa cache y pinta las
    variables del tema (--accent, --accent-ink, --accent-secondary y sus
    derivados) para que todas las páginas usen el mismo color sin parpadeo.
    Después lo refina por cuenta: sesión, cache por usuario y servidor.
@@ -10,10 +10,10 @@
 (() => {
     'use strict';
 
-    const HINT_KEY = 'chatlocal_appearance_hint';
+    const HINT_KEY = 'zlapy_appearance_hint';
     /* Los mismos defaults del index (CHAT_APPEARANCE_DEFAULTS), sin el
        fallback de la paleta vieja: sin datos deja el default de theme.css. */
-    const DEFAULTS = { sender: '#005c4b', senderText: '#e9edef', receiver: '#202c33' };
+    const DEFAULTS = { sender: '#25483c', senderText: '#e2f0e9', receiver: '#1c332b' };
     const hex = (value, fallback) => (/^#[0-9a-f]{6}$/i.test(value || '') ? value : fallback);
 
     /* Pinta --accent y derivados con la apariencia dada.
@@ -45,7 +45,7 @@
             receiverText: hex(value.receiverText, DEFAULTS.senderText),
             accent: value.accent || ''
         };
-        try { localStorage.setItem('chatlocal_appearance_' + userId, JSON.stringify(stored)); }
+        try { localStorage.setItem('zlapy_appearance_' + userId, JSON.stringify(stored)); }
         catch (error) { console.error('[appearance] No se pudo guardar la cache del acento:', error); }
         try { localStorage.setItem(HINT_KEY, JSON.stringify({ id: userId, ...stored })); }
         catch (error) { console.error('[appearance] No se pudo guardar el puntero del acento:', error); }
@@ -75,7 +75,7 @@
         }
         const userId = String(user.id || user.username || 'guest');
         try {
-            const cached = JSON.parse(localStorage.getItem('chatlocal_appearance_' + userId) || 'null');
+            const cached = JSON.parse(localStorage.getItem('zlapy_appearance_' + userId) || 'null');
             if (cached) apply(cached);
         } catch (error) { console.error('[appearance] No se pudo leer la cache del acento:', error); }
         try {

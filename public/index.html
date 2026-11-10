@@ -5,8 +5,15 @@
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
     <meta name="viewport"
         content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+    <meta name="theme-color" content="#111b21">
+    <script>
+        const isMobilePlatform = (navigator.userAgentData && navigator.userAgentData.mobile)
+            || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+        if (!isMobilePlatform) document.querySelector('meta[name="theme-color"]').content = '#0b141a';
+    </script>
     <title> Zlapy</title>
     <meta name="description" content="Chats, historias y llamadas. Rápido, privado y siempre contigo.">
+    <link rel="icon" type="image/webp" href="/image/isotype-308.webp">
 
     <meta property="og:title" content="Zlapy">
     <meta property="og:description" content="Chats, historias y llamadas. Rápido, privado y sin depender de terceros.">
@@ -424,7 +431,7 @@
 
         .storyAv.add .in {
             background: #1b2127;
-            color: var(--accent);
+            color: var(--accent-readable);
             font-size: calc(var(--storyRing, 48px)*.43);
             font-weight: 300;
             border: none
@@ -530,7 +537,7 @@
         .groupDiscoverList .discoverGroup .requestButtons button.accept {
             background: color-mix(in srgb, var(--accent) 16%, #1c242b);
             border-color: color-mix(in srgb, var(--accent) 38%, transparent);
-            color: var(--accent)
+            color: var(--accent-readable)
         }
 
         .requestCard .requestButtons button.reject,
@@ -594,8 +601,8 @@
         }
 
         .requestTabs button[aria-selected="true"] {
-            background: color-mix(in srgb, var(--accent) 14%, transparent);
-            color: var(--accent)
+            background: var(--accent);
+            color: var(--accent-ink)
         }
 
         .requestTabs .requestTabCount {
@@ -613,8 +620,8 @@
         }
 
         .requestTabs button[aria-selected="true"] .requestTabCount {
-            background: color-mix(in srgb, var(--accent) 26%, transparent);
-            color: var(--accent)
+            background: color-mix(in srgb, var(--accent-ink) 18%, transparent);
+            color: var(--accent-ink)
         }
 
         /* En la hoja el scroll lo lleva <main>, no una caja aparte como en el
@@ -809,26 +816,14 @@
             line-height: 1.4
         }
 
-        .groupDiscoverList .discoverGroup .mBtn:disabled {
-            opacity: .7;
-            cursor: default
-        }
-
         .groupDiscoverList > [data-group-discover-more] {
             align-self: center;
             margin: 12px 0 20px
         }
 
-        .groupDiscoverList .discoverGroup .discoverGroupAction {
-            flex: 0 0 auto;
-            width: auto !important;
-            min-width: 82px;
-            max-width: none;
-            height: 40px;
-            min-height: 40px;
-            padding: 9px 13px;
-            border-radius: 12px;
-            white-space: nowrap
+        .groupDiscoverList .discoverGroup .requestButtons button:disabled {
+            opacity: .58;
+            cursor: default
         }
 
         #sidebar {
@@ -2310,7 +2305,7 @@
         }
 
         body.in-call #contactPanel {
-            padding-top: 56px
+            padding-top: 68px
         }
 
         /* Portátiles estrechos: panel algo más angosto para no aplastar el chat */
@@ -2473,13 +2468,25 @@
         #settingsSplit {
             flex: 1;
             min-height: 0;
+            min-width: 0;
             display: flex;
             flex-direction: column;
-            position: relative
+            position: relative;
+            overflow: hidden
         }
 
         #settingsHub {
             display: none
+        }
+
+        #settingsMain {
+            min-width: 0;
+            min-height: 0;
+            overflow-x: hidden;
+            overflow-y: auto;
+            overscroll-behavior: contain;
+            touch-action: pan-y;
+            pointer-events: auto
         }
 
         /* Tirador del panel de secciones: hermano de hub y main (los renders
@@ -2487,11 +2494,9 @@
            sobre el borde derecho de la columna con la misma variable. */
         .setResize {
             display: none;
-            position: absolute;
-            top: 0;
-            bottom: 0;
-            left: calc(var(--settings-hub-width, 380px) - 7px);
-            z-index: 3;
+            position: relative;
+            align-self: stretch;
+            flex: none;
             width: 14px;
             background: transparent;
             border: 0;
@@ -2507,7 +2512,8 @@
             left: 6px;
             width: 2px;
             background: #ffffff20;
-            transition: background .15s
+            transition: background .15s;
+            pointer-events: none
         }
 
         .setResize:hover::after {
@@ -2523,6 +2529,16 @@
         }
 
         @media (min-width:769px) {
+            #settingsSheet.split {
+                background: var(--page)
+            }
+
+            #settingsSheet.split > header {
+                height: 48px;
+                min-height: 48px;
+                padding-block: 4px
+            }
+
             #settingsSheet.split #settingsSplit {
                 flex-direction: row
             }
@@ -2532,17 +2548,74 @@
                 flex-direction: column;
                 flex: none;
                 width: var(--settings-hub-width, 380px);
+                min-height: 0;
+                position: relative;
+                z-index: 1;
                 overflow-y: auto;
-                padding: 20px 14px;
-                border-right: 1px solid var(--line)
+                overscroll-behavior: contain;
+                touch-action: pan-y;
+                pointer-events: auto;
+                padding: 20px 14px
             }
 
             #settingsSheet.split #settingsHub .setRow.active {
                 background: var(--surface-hover)
             }
 
+            #settingsSheet.split #settingsMain {
+                position: relative;
+                z-index: 1;
+                flex: 1 1 0;
+                min-width: 0;
+                min-height: 0;
+                box-sizing: border-box;
+                margin: 0 10px 10px 0;
+                overflow-x: hidden;
+                overflow-y: auto;
+                overscroll-behavior: contain;
+                touch-action: pan-y;
+                pointer-events: auto
+            }
+
             #settingsSheet.split .setResize {
                 display: block
+            }
+
+            #settingsSheet.split .setResize::after {
+                top: 50%;
+                bottom: auto;
+                left: 50%;
+                width: 4px;
+                height: 24px;
+                transform: translate(-50%, -50%);
+                background: radial-gradient(circle, var(--muted) 1.2px, transparent 1.7px) 50% 0 / 4px 8px repeat-y
+            }
+
+            #settingsSheet.split .setResize:hover::after,
+            #settingsSheet.split .setResize:focus-visible::after {
+                background: radial-gradient(circle, var(--accent) 1.4px, transparent 1.9px) 50% 0 / 4px 8px repeat-y
+            }
+
+            #settingsSheet.split #settingsMain .accountSettings,
+            #settingsSheet.split #settingsMain .settingsSectionContent {
+                width: 100%;
+                max-width: 900px;
+                box-sizing: border-box;
+                margin: 0 auto;
+                padding: 24px;
+                border: 0;
+                border-radius: 0;
+                background: transparent
+            }
+
+            #settingsSheet.split #settingsMain > #profileSheet.embedded > main {
+                border: 0;
+                border-radius: 0;
+                background: transparent
+            }
+
+            #settingsSheet.split #settingsMain > #profileSheet.embedded {
+                overflow: visible
             }
         }
 
@@ -2627,16 +2700,21 @@
         }
 
         #chatSub.typing {
-            color: var(--accent)
+            color: var(--accent-readable)
         }
 
         #backBtn {
             display: none;
             background: none;
             border: none;
-            color: #e9edef;
+            color: var(--toolbar-icon-color, #e9edef);
             cursor: pointer;
             padding: 4px
+        }
+
+        #backBtn svg {
+            width: var(--toolbar-icon-size, 24px);
+            height: var(--toolbar-icon-size, 24px)
         }
 
         #msgs {
@@ -2996,7 +3074,7 @@
         }
 
         .btn.on {
-            color: var(--accent)
+            color: var(--accent-readable)
         }
 
         #empty {
@@ -4002,7 +4080,7 @@
         }
 
         #typing {
-            color: var(--accent);
+            color: var(--accent-readable);
             font-size: 12px;
             padding: 0 16px 6px;
             display: none
@@ -4047,41 +4125,21 @@
             white-space: nowrap
         }
 
-        #typingBubble {
-            display: none;
-            position: absolute;
-            bottom: 18px;
-            left: 12px;
-            background: #202c33;
-            border-radius: 14px;
-            border-top-left-radius: 4px;
-            padding: 10px 14px;
-            box-shadow: 0 2px 8px #0005;
+        .typingMessage {
+            display: flex;
             align-items: center;
-            gap: 8px;
-            color: #8696a0;
-            font-size: 13px;
-            pointer-events: none
+            gap: 9px;
+            min-height: 38px;
+            color: var(--bubble-them-text, #e9edef);
+            animation: message-enter .16s ease-out both
         }
 
-        #typingBubble.on {
-            display: flex
-        }
-
-        #msgs.typing-reserved {
-            padding-bottom: var(--typing-reserved-space, 76px)
-        }
-
-        #chat #msgs.typing-reserved {
-            padding-bottom: var(--typing-reserved-space, 76px)
-        }
-
-        #typingBubble .dots {
+        .typingMessage .dots {
             display: inline-flex;
             gap: 4px
         }
 
-        #typingBubble .dots i {
+        .typingMessage .dots i {
             width: 6px;
             height: 6px;
             border-radius: 50%;
@@ -4090,43 +4148,43 @@
             animation: blink 1.2s infinite
         }
 
-        #typingBubble .dots i:nth-child(2) {
+        .typingMessage .dots i:nth-child(2) {
             animation-delay: .2s
         }
 
-        #typingBubble .dots i:nth-child(3) {
+        .typingMessage .dots i:nth-child(3) {
             animation-delay: .4s
         }
 
-        #typingBubble .recBars {
+        .typingMessage .recBars {
             display: inline-flex;
             gap: 2px;
             align-items: flex-end;
             height: 16px
         }
 
-        #typingBubble .recBars i {
+        .typingMessage .recBars i {
             width: 3px;
             background: #ef5350;
             border-radius: 2px;
             animation: recb 0.9s infinite
         }
 
-        #typingBubble .recBars i:nth-child(1) {
+        .typingMessage .recBars i:nth-child(1) {
             height: 8px
         }
 
-        #typingBubble .recBars i:nth-child(2) {
+        .typingMessage .recBars i:nth-child(2) {
             height: 14px;
             animation-delay: .15s
         }
 
-        #typingBubble .recBars i:nth-child(3) {
+        .typingMessage .recBars i:nth-child(3) {
             height: 10px;
             animation-delay: .3s
         }
 
-        #typingBubble .recBars i:nth-child(4) {
+        .typingMessage .recBars i:nth-child(4) {
             height: 16px;
             animation-delay: .45s
         }
@@ -4657,6 +4715,7 @@
             display: grid;
             flex: 1 1 auto;
             grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+            grid-auto-rows: max-content;
             gap: 8px;
             padding: 12px 4px 4px;
             min-width: 0;
@@ -4668,16 +4727,21 @@
 
         .stickerSearchBox {
             display: flex;
-            flex: 0 0 42px;
+            flex: 0 0 44px;
             align-items: center;
             gap: 10px;
-            height: 42px;
-            min-height: 42px;
-            padding: 0 12px;
+            height: 44px;
+            min-height: 44px;
+            padding: 0 14px;
             box-sizing: border-box;
-            border-radius: 22px;
+            border: 1px solid var(--line);
+            border-radius: 12px;
             background: var(--surface-raised);
             color: var(--muted)
+        }
+
+        .stickerSearchBox:focus-within {
+            border-color: color-mix(in srgb, var(--accent) 50%, transparent)
         }
 
         .stickerSearchBox svg {
@@ -4690,9 +4754,11 @@
             stroke-linecap: round
         }
 
-        #stickerSearch {
+        #stickerSearch,
+        #emojiPickerSearch {
             flex: 1;
             width: 100%;
+            min-width: 0;
             border: none;
             outline: none;
             background: transparent;
@@ -4701,7 +4767,8 @@
             font-size: 14px
         }
 
-        #stickerSearch::placeholder {
+        #stickerSearch::placeholder,
+        #emojiPickerSearch::placeholder {
             color: var(--muted)
         }
 
@@ -4734,7 +4801,7 @@
 
         .stickerPickerTabs button.on {
             background: color-mix(in srgb, var(--accent) 18%, var(--surface));
-            color: var(--accent)
+            color: var(--accent-readable)
         }
 
         .stickerPickerTabs svg {
@@ -4747,17 +4814,55 @@
             stroke-linejoin: round
         }
 
+        .stickerPickerTabs img {
+            width: 22px;
+            height: 22px;
+            object-fit: contain
+        }
+
+        .stickerPickerTabs .stickerGiphyIcon {
+            fill: currentColor;
+            stroke: none
+        }
+
+        #stkSourceGiphy .stickerGiphyIcon {
+            width: 28px;
+            height: 21px
+        }
+
+        #stkSourceEmoji {
+            font-size: 23px;
+            line-height: 1
+        }
+
+        .stickerGridItem,
         #stickerGrid .favWrap,
         #stickerFavsGrid .favWrap {
             position: relative;
+            align-self: start;
+            display: block;
+            width: 100%;
             min-width: 0;
-            display: block
+            height: auto;
+            aspect-ratio: 1;
+            overflow: hidden
         }
 
+        .stickerGridItem {
+            padding: 0;
+            border: 0;
+            border-radius: 10px;
+            background: var(--surface-raised);
+            cursor: pointer
+        }
+
+        .stickerGridItem img,
         #stickerGrid img,
         #stickerFavsGrid img {
+            position: absolute;
+            inset: 0;
             width: 100%;
-            height: 84px;
+            height: 100%;
             object-fit: cover;
             border-radius: 10px;
             cursor: pointer;
@@ -4800,10 +4905,6 @@
                 -webkit-overflow-scrolling: touch
             }
 
-            #stickerGrid img,
-            #stickerFavsGrid img {
-                height: 72px
-            }
         }
 
         #imageViewerImage {
@@ -5169,7 +5270,7 @@
         #dropOverlay .dropIcon svg {
             width: 26px;
             height: 26px;
-            color: var(--accent)
+            color: var(--accent-readable)
         }
 
         #onceModal {
@@ -5890,19 +5991,7 @@
         }
 
         #storyStickerPicker .stickerSearchBox {
-            flex: 0 0 44px;
-            height: 44px;
-            min-height: 44px;
-            padding: 0 14px;
-            border: 1px solid var(--line);
-            border-radius: 12px;
-            background: var(--surface-raised);
             transition: border-color .16s ease, background .16s ease
-        }
-
-        #storyStickerPicker .stickerSearchBox:focus-within {
-            border-color: color-mix(in srgb, var(--accent) 50%, transparent);
-            background: var(--surface-raised)
         }
 
         #storyStickerSearch {
@@ -5933,7 +6022,7 @@
             display: grid;
             flex: 1 1 auto;
             grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
-            grid-auto-rows: 84px;
+            grid-auto-rows: max-content;
             gap: 8px;
             padding: 12px 4px 4px;
             min-width: 0;
@@ -5945,24 +6034,8 @@
             -webkit-overflow-scrolling: touch
         }
 
-        #storyStickerGrid button {
-            min-width: 0;
-            width: 100%;
-            height: 84px;
-            overflow: hidden;
-            padding: 0;
-            border: 0;
-            border-radius: 12px;
-            background: #172027;
-            cursor: pointer
-        }
-
-        #storyStickerGrid img {
-            width: 100%;
-            height: 84px;
-            border-radius: inherit;
-            object-fit: cover;
-            display: block
+        #storyStickerGrid .stickerGridItem img {
+            border-radius: inherit
         }
 
         #storyStickerGrid .sub {
@@ -5974,13 +6047,7 @@
 
         :root.narrow #storyStickerGrid {
             grid-template-columns: repeat(auto-fill, minmax(68px, 1fr));
-            grid-auto-rows: 72px;
             gap: 6px
-        }
-
-        :root.narrow #storyStickerGrid button,
-        :root.narrow #storyStickerGrid img {
-            height: 72px
         }
 
         #storyViewsSheet {
@@ -7049,7 +7116,7 @@
         }
 
         .callArrow.out svg {
-            stroke: var(--accent)
+            stroke: var(--accent-readable)
         }
 
         .callArrow.red svg {
@@ -7173,14 +7240,15 @@
             top: 0;
             left: 0;
             right: 0;
-            height: 56px;
+            min-height: 68px;
             z-index: 65;
             display: none;
             align-items: center;
             gap: 10px;
             background: #005c4b;
             color: #fff;
-            padding: 0 10px;
+            padding: 14px 18px;
+            box-sizing: border-box;
             box-shadow: 0 2px 10px #0008;
             cursor: pointer
         }
@@ -7193,6 +7261,7 @@
         #banHang {
             width: 40px;
             height: 40px;
+            flex: 0 0 40px;
             border-radius: 50%;
             background: #ea4335;
             color: #fff;
@@ -7204,6 +7273,35 @@
             flex: none
         }
 
+        #callBanner .callQuickBtn {
+            width: 40px;
+            height: 40px;
+            flex: 0 0 40px;
+            display: grid;
+            place-items: center;
+            border: 0;
+            border-radius: 50%;
+            background: var(--surface-raised);
+            color: var(--text);
+            cursor: pointer
+        }
+
+        #callBanner .callQuickBtn.off {
+            background: var(--accent);
+            color: var(--accent-ink)
+        }
+
+        #callBanner .callQuickBtn:disabled {
+            opacity: .6;
+            cursor: wait
+        }
+
+        #callBanner .callQuickBtn svg {
+            width: 21px;
+            height: 21px;
+            fill: currentColor
+        }
+
         #banHang svg {
             width: 20px;
             height: 20px;
@@ -7211,11 +7309,11 @@
         }
 
         body.in-call #sidebar {
-            padding-top: 56px
+            padding-top: 68px
         }
 
         body.in-call #chat {
-            padding-top: 56px
+            padding-top: 68px
         }
 
         /* Ocultar el banner de llamada cuando hay cualquier capa/modal abierto */
@@ -7292,6 +7390,62 @@
         #callRing .callBtns button {
             width: 66px;
             height: 66px
+        }
+
+        #ringMediaControls {
+            display: flex;
+            align-items: flex-start;
+            justify-content: center;
+            gap: 28px;
+            margin-top: -6px
+        }
+
+        #ringMediaControls button {
+            width: 54px;
+            height: 54px;
+            border: 0;
+            border-radius: 50%;
+            display: grid;
+            place-items: center;
+            background: #2a3942;
+            color: #e9edef;
+            cursor: pointer
+        }
+
+        #ringMediaControls button.off {
+            background: var(--accent);
+            color: var(--accent-ink)
+        }
+
+        #ringMediaControls button svg {
+            width: 23px;
+            height: 23px;
+            fill: currentColor
+        }
+
+        #ringMediaControls .iconSlash {
+            display: none;
+            stroke: currentColor;
+            stroke-width: 2;
+            stroke-linecap: round
+        }
+
+        #ringMediaControls button.off .iconSlash {
+            display: block
+        }
+
+        .callBtns button .iconSlash,
+        #callBanner .callQuickBtn .iconSlash {
+            display: none;
+            fill: none;
+            stroke: currentColor;
+            stroke-width: 2;
+            stroke-linecap: round
+        }
+
+        .callBtns button.off .iconSlash,
+        #callBanner .callQuickBtn.off .iconSlash {
+            display: block
         }
 
         .callBtns button {
@@ -7519,17 +7673,21 @@
 
         :root {
             color-scheme: dark;
-            /* Paleta del rediseño: fondos casi negros y acento teal */
+            /* Paleta del rediseño: fondos oscuros y acento bosque */
             --page: #0b141a;
             --surface: #111b21;
+            --toolbar-inline-padding: 16px;
+            --toolbar-item-gap: 12px;
+            --toolbar-control-size: 40px;
             --surface-raised: #202c33;
             --surface-hover: #2a3942;
             --surface-active: #35444d;
             --line: #222d34;
             --text: #e9edef;
             --muted: #97a5ae;
-            --accent: #00a884;
-            --accent-ink: #0b141a;
+            --accent: #25483c;
+            --accent-ink: #e2f0e9;
+            --accent-readable: color-mix(in srgb, var(--accent) 30%, #e2f0e9);
             /* El hover se deriva del acento vivo (applyWall puede
                redefinirlo por cuenta) y no de un color fijo. */
             --accent-hover: color-mix(in srgb, var(--accent) 88%, var(--accent-ink));
@@ -7711,14 +7869,14 @@
         }
 
         #chat {
-            --chat-wall-color: var(--page);
+            --chat-wall-color: #14231f;
             --chat-wall-overlay: rgba(9, 12, 15, .22);
             --chat-wall-image: none;
             --chat-wall-blur: 0px;
-            --bubble-me: #005c4b;
-            --bubble-me-text: #e9edef;
-            --bubble-them: #202c33;
-            --bubble-them-text: #e9edef;
+            --bubble-me: #25483c;
+            --bubble-me-text: #e2f0e9;
+            --bubble-them: #1c332b;
+            --bubble-them-text: #e2f0e9;
             --chat-font-size: 15px;
             position: relative;
             isolation: isolate;
@@ -7734,6 +7892,11 @@
            reaparecen tal cual (capa 'panel-*' intacta). */
         #chat:has(.sheetPage.on) {
             z-index: 60
+        }
+
+        #chat:has(#callLayer.on),
+        #chat:has(#callRing.on) {
+            z-index: 90
         }
 
         @media (min-width:769px) {
@@ -7972,7 +8135,7 @@
             padding: 0;
             border: 0;
             background: none;
-            color: var(--accent);
+            color: var(--accent-readable);
             font: inherit;
             font-size: .92em;
             font-weight: 600;
@@ -8032,7 +8195,7 @@
         }
 
         #empty {
-            background: var(--page);
+            background: var(--surface);
             color: var(--muted)
         }
 
@@ -8271,6 +8434,11 @@
             min-height: var(--public-header-height, 64px)
         }
 
+        #settingsSheet > header {
+            background: transparent;
+            border-bottom: 0
+        }
+
         .sheetPage header .iconBtn {
             color: var(--text);
             transition: background .15s
@@ -8368,7 +8536,7 @@
             height: 42px;
             border-radius: 13px;
             background: var(--surface-hover);
-            color: var(--accent)
+            color: var(--accent-readable)
         }
 
         .storiesMgrSummary .summaryIcon svg {
@@ -8905,7 +9073,7 @@
         }
 
         .chatColorTheme[aria-pressed="true"] .chatColorThemeName {
-            color: var(--accent)
+            color: var(--accent-readable)
         }
 
         .chatColorThemeSwatches {
@@ -9145,7 +9313,7 @@
         }
 
         #fileDraft .btn[onclick*="sendDraft"] {
-            color: var(--accent) !important
+            color: var(--accent-readable) !important
         }
 
         #blockedBtn {
@@ -9166,7 +9334,10 @@
             max-width: 620px;
             min-width: 0;
             margin: 0 auto;
-            padding: 8px 0 20px
+            padding: 20px;
+            border: 1px solid color-mix(in srgb, var(--line) 70%, var(--muted));
+            border-radius: 18px;
+            background: var(--surface)
         }
 
         #settingsMain .settingsSectionContent {
@@ -9177,7 +9348,10 @@
             max-width: 620px;
             min-width: 0;
             margin: 0 auto;
-            padding: 8px 0 20px
+            padding: 20px;
+            border: 1px solid color-mix(in srgb, var(--line) 70%, var(--muted));
+            border-radius: 18px;
+            background: var(--surface)
         }
 
         #settingsMain .settingsSectionContent.chatAppearanceGrid {
@@ -9356,7 +9530,6 @@
             background: var(--surface, #101419) !important;
             color: var(--text, #d5dce2) !important;
             border-bottom: 1px solid var(--line, #292f38) !important;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3) !important;
         }
 
         #callBanner .sub,
@@ -9462,13 +9635,18 @@
                 width: auto;
                 min-width: 0;
                 max-width: none;
-                margin: 0;
+                box-sizing: border-box;
+                margin: 0 10px 10px 0;
                 padding: 24px;
                 align-items: stretch;
-                container-type: inline-size
+                container-type: inline-size;
+                border: 1px solid var(--line);
+                border-radius: 18px;
+                background: var(--surface)
             }
 
-            #profileSheet.embedded > main {
+            #settingsSheet.split #settingsMain > #profileSheet.embedded > main {
+                flex: 0 1 auto;
                 width: min(100%, 620px);
                 max-width: 620px;
                 box-sizing: border-box;
@@ -9597,10 +9775,248 @@
                 display: flex;
             }
         }
+
+        @media (min-width:769px) {
+            #backBtn {
+                display: flex
+            }
+
+            .sheetPage {
+                background-color: var(--surface);
+                background-image: none
+            }
+
+            #sidebar > .topbar {
+                margin-right: 8px;
+                background: transparent;
+                border: 0;
+                border-radius: 0 0px 18px 0
+            }
+
+            #sidebarResizeHandle {
+                flex: 0 0 14px;
+                width: 14px
+            }
+
+            #sidebarResizeHandle::after {
+                top: 50%;
+                bottom: auto;
+                left: 50%;
+                width: 4px;
+                height: 24px;
+                transform: translate(-50%, -50%);
+                border-radius: 999px;
+                background: radial-gradient(circle, #97a5ae 1.2px, transparent 1.7px) 50% 0 / 4px 8px repeat-y;
+                pointer-events: none
+            }
+
+            #sidebarResizeHandle:hover::after,
+            #sidebarResizeHandle:focus-visible::after {
+                background: radial-gradient(circle, var(--accent-readable) 1.4px, transparent 1.9px) 50% 0 / 4px 8px repeat-y;
+                box-shadow: 0 0 0 7px color-mix(in srgb, var(--accent) 12%, transparent)
+            }
+
+            #sidebarResizeHandle.dragging::after {
+                background: radial-gradient(circle, var(--accent-readable) 1.5px, transparent 2px) 50% 0 / 4px 8px repeat-y;
+                box-shadow: 0 0 0 7px color-mix(in srgb, var(--accent) 18%, transparent)
+            }
+
+            #chat {
+                margin: 10px 12px 10px 0;
+                border: 0;
+                border-radius: 20px;
+                box-shadow: 0 12px 32px #0003
+            }
+
+            #contactPanel.on,
+            #groupPanel.on,
+            #stickerCreatorLayer.on {
+                margin-block: 10px;
+                border: 0;
+                border-radius: 20px;
+                box-shadow: 0 12px 32px #0003
+            }
+
+            #contactPanel,
+            #groupPanel,
+            #stickerCreatorLayer {
+                background: var(--surface)
+            }
+
+            #contactPanel.on {
+                margin-left: 0;
+                margin-right: 12px
+            }
+
+            #contactPanel .cpInner {
+                width: var(--info-width, 400px)
+            }
+
+            #groupPanel.on {
+                margin-left: 0;
+                margin-right: 12px
+            }
+
+            #stickerCreatorLayer.on {
+                margin-left: 0;
+                margin-right: 12px
+            }
+
+            #groupPanel .gpInner {
+                width: min(var(--info-width, 400px), 320px)
+            }
+
+            #chat:has(~ #contactPanel.on),
+            #chat:has(~ #groupPanel.on),
+            #chat:has(~ #stickerCreatorLayer.on) {
+                margin-right: 8px
+            }
+
+            #chat:has(.sheetPage.on) .sheetPage {
+                position: absolute;
+                inset: 0;
+                border-radius: inherit;
+                overflow: hidden
+            }
+
+            #chat:has(#settingsSheet.on) #settingsSheet {
+                position: fixed;
+                inset: 0;
+                width: 100vw;
+                height: 100vh;
+                height: 100dvh;
+                border-radius: 0;
+                overflow: auto
+            }
+
+            .infoResize::after {
+                top: 50%;
+                bottom: auto;
+                left: 50%;
+                width: 4px;
+                height: 24px;
+                transform: translate(-50%, -50%);
+                border-radius: 999px;
+                background: radial-gradient(circle, #97a5ae 1.2px, transparent 1.7px) 50% 0 / 4px 8px repeat-y
+            }
+
+            .infoResize:hover::after,
+            .infoResize:focus-visible::after {
+                background: radial-gradient(circle, var(--accent-readable) 1.4px, transparent 1.9px) 50% 0 / 4px 8px repeat-y;
+                box-shadow: 0 0 0 7px color-mix(in srgb, var(--accent) 12%, transparent)
+            }
+
+            .infoResize.dragging::after {
+                background: radial-gradient(circle, var(--accent-readable) 1.5px, transparent 2px) 50% 0 / 4px 8px repeat-y;
+                box-shadow: 0 0 0 7px color-mix(in srgb, var(--accent) 18%, transparent)
+            }
+        }
+
+        :root.narrow #chat,
+        :root.narrow #sidebar,
+        :root.narrow #contactPanel.on,
+        :root.narrow #groupPanel.on,
+        :root.narrow #stickerCreatorLayer.on {
+            margin: 0;
+            border: 0;
+            border-radius: 0;
+            box-shadow: none
+        }
+
+        :root.narrow #contactPanel .cpInner {
+            width: 100%
+        }
+
+        :root.narrow #sidebarResizeHandle {
+            width: 0;
+            flex-basis: 0
+        }
+
+        :root.narrow #chat:has(.sheetPage.on) .sheetPage {
+            position: fixed;
+            border-radius: 0
+        }
+
+        @media (max-width:768px) {
+            #chat,
+            #sidebar,
+            #contactPanel.on,
+            #groupPanel.on,
+            #stickerCreatorLayer.on {
+                margin: 0;
+                border: 0;
+                border-radius: 0;
+                box-shadow: none
+            }
+
+            #contactPanel .cpInner {
+                width: 100%
+            }
+
+            #chat:has(.sheetPage.on) .sheetPage {
+                position: fixed;
+                border-radius: 0
+            }
+        }
+
+        #chatHeader {
+            gap: var(--toolbar-item-gap);
+            padding-inline: var(--toolbar-inline-padding)
+        }
+
+        #backBtn {
+            width: var(--toolbar-control-size);
+            height: var(--toolbar-control-size);
+            flex: none;
+            padding: 0;
+            align-items: center;
+            justify-content: center
+        }
+
+        .sheetPage header {
+            gap: var(--toolbar-item-gap);
+            padding-inline: var(--toolbar-inline-padding)
+        }
+
+        #contactPanel header .iconBtn,
+        .sheetPage > header .iconBtn,
+        #backBtn {
+            width: var(--toolbar-control-size);
+            height: var(--toolbar-control-size);
+            color: var(--toolbar-icon-color, var(--text))
+        }
+
+        #contactPanel header .iconBtn svg,
+        .sheetPage > header .iconBtn svg,
+        #backBtn svg {
+            width: var(--toolbar-icon-size, 24px);
+            height: var(--toolbar-icon-size, 24px)
+        }
+
+        @media (max-width:768px) {
+            #settingsSheet > header {
+                background: var(--surface);
+                border-bottom: 1px solid var(--line)
+            }
+
+            #settingsMain .accountSettings,
+            #settingsMain .settingsSectionContent {
+                width: 100%;
+                max-width: none;
+                box-sizing: border-box;
+                margin: 0;
+                padding: 0;
+                border: 0;
+                border-radius: 0;
+                background: transparent
+            }
+        }
     </style>
     <link rel="stylesheet" href="/css/theme.css">
     <link rel="stylesheet" href="/css/avatar-editor.css?v=1">
-    <link rel="stylesheet" href="/css/popmenu.css?v=1">
+    <link rel="stylesheet" href="/css/sticker-editor.css?v=22">
+    <link rel="stylesheet" href="/css/popmenu.css?v=3">
+    <link rel="stylesheet" href="/css/emoji-picker.css?v=4">
 </head>
 
 <body>
@@ -9681,7 +10097,6 @@
         <div id="msgs" style="display:none"></div>
         <div id="floatZone">
             <div id="noteCard" style="display:none"></div>
-            <div id="typingBubble"><span class="dots"><i></i><i></i><i></i></span></div>
         </div>
         <div id="fileDraft" style="display:none;align-items:center;gap:10px;padding:8px 12px;background:#202c33">
             <img id="fdThumb" style="display:none;width:44px;height:44px;object-fit:cover;border-radius:6px">
@@ -9690,12 +10105,12 @@
             </div>
             <div style="flex:1;min-width:0"><b id="fdName" style="color:#e9edef;font-size:14px"></b></div>
             <button class="btn" onclick="cancelDraft()" style="color:#e9edef">✕</button>
-            <button class="btn" style="color:var(--accent)" onclick="sendDraft()"><svg viewBox="0 0 24 24">
+            <button class="btn" style="color:var(--accent-readable)" onclick="sendDraft()"><svg viewBox="0 0 24 24">
                     <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"></path>
                 </svg></button>
         </div>
         <div id="replyBar">
-            <div style="flex:1;min-width:0"><b style="color:var(--accent)" id="replyName"></b>
+            <div style="flex:1;min-width:0"><b style="color:var(--accent-readable)" id="replyName"></b>
                 <div class="sub" id="replyPrev" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></div>
             </div><button class="btn" onclick="clearReply()">✕</button>
         </div>
@@ -9706,7 +10121,7 @@
                 style="background:var(--accent);border:none;color:var(--accent-ink);padding:9px 14px;border-radius:8px;cursor:pointer;white-space:nowrap"></button>
         </div>
         <div id="inputbar" style="display:none">
-            <button class="btn" id="stickerBtn" title="Stickers" aria-label="Abrir stickers" onclick="toggleStrikers()"><svg viewBox="0 0 24 24"
+            <button class="btn" id="stickerBtn" title="Strickers" aria-label="Abrir strickers" onclick="toggleStrikers()"><svg viewBox="0 0 24 24"
                     fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round">
                     <path d="M5 3.75h14a1.75 1.75 0 011.75 1.75v8.25L13.75 20H5a1.75 1.75 0 01-1.75-1.75V5.5A1.75 1.75 0 015 3.75Z"></path>
                     <path d="M13.5 20v-6.5H20"></path>
@@ -9806,21 +10221,42 @@
             </div>
         </div>
         <div id="stickerPanel">
-            <label class="stickerSearchBox" for="stickerSearch">
+            <label class="stickerSearchBox" id="stickerSearchBox" for="stickerSearch">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"></circle><path d="m16 16 5 5"></path></svg>
                 <input id="stickerSearch" placeholder="Buscar stickers" autocomplete="off" autocorrect="off"
                     autocapitalize="off" spellcheck="false">
             </label>
-            <div class="stickerPickerTabs" aria-label="Vistas de stickers">
-                <button id="stkTabSearch" class="on" type="button" title="Explorar stickers" aria-label="Explorar stickers">
-                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a1.5 1.5 0 011.5 1.5v8L13.5 20h-8A1.5 1.5 0 014 18.5v-13A1.5 1.5 0 015.5 4Z"></path><path d="M13 20v-6.5h7.5"></path></svg>
-                </button>
-                <button id="stkTabFavs" type="button" title="Favoritos" aria-label="Favoritos">
+            <div class="stickerPickerTabs" role="tablist" aria-label="Favoritos y fuentes de strickers">
+                <button id="stkTabFavs" class="on" type="button" role="tab" aria-selected="true" title="Favoritos" aria-label="Favoritos">
                     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9L12 3Z"></path></svg>
                 </button>
+                <button id="stkSourceZlapy" type="button" role="tab" aria-selected="false" title="Zlapy" aria-label="Buscar en Zlapy">
+                    <img src="/image/isotype-308.webp" alt="" aria-hidden="true">
+                </button>
+                <button id="stkSourceGiphy" type="button" role="tab" aria-selected="false" title="Giphy" aria-label="Buscar en Giphy">
+                    <svg class="stickerGiphyIcon" viewBox="0 0 32 24" aria-hidden="true">
+                        <text x="1" y="15" font-size="9" font-weight="900" letter-spacing="-.5">GIPHY</text>
+                        <path d="M2 19h6v3H2z" fill="#00ccff"></path>
+                        <path d="M8 19h6v3H8z" fill="#6157ff"></path>
+                        <path d="M14 19h6v3h-6z" fill="#f33"></path>
+                        <path d="M20 19h6v3h-6z" fill="#ffb400"></path>
+                    </svg>
+                </button>
+                <button id="stkSourceBbot" type="button" role="tab" aria-selected="false" title="Caras bbot" aria-label="Stickers de caras bbot">
+                    <svg class="bbotFaceIcon" viewBox="0 0 24 24" aria-hidden="true">
+                        <circle class="bbotFaceHead" cx="12" cy="12" r="10"></circle>
+                        <ellipse class="bbotFaceEye" cx="8.3" cy="11" rx="2.2" ry="2.7"></ellipse>
+                        <ellipse class="bbotFaceEye" cx="15.7" cy="11" rx="2.2" ry="2.7"></ellipse>
+                    </svg>
+                </button>
+                <button id="stkSourceEmoji" type="button" role="tab" aria-selected="false" title="Emojis" aria-label="Emojis">😀</button>
+            </div>
+            <div id="stickerTagFilter" class="stickerTagFilter">
+                <div id="stickerTagChips" class="stickerTagChips"></div>
             </div>
             <div id="stickerGrid"></div>
             <div id="stickerFavsGrid" style="display:none"></div>
+            <div id="stickerEmojiPicker" class="stickerEmojiPicker" role="tabpanel" aria-label="Seleccionar emoji" hidden></div>
         </div>
         <div id="attachmentPanel" style="display:none" aria-label="Adjuntos">
             <div id="attachmentPanelContent"></div>
@@ -9904,14 +10340,14 @@
                 style="width:100%;height:100%;display:flex;align-items:center;justify-content:center">
             </div>
             <div id="storyViewsSheet"></div>
-            <div id="storyStickerPicker" style="display:none" aria-label="Elige un sticker para reaccionar">
+            <div id="storyStickerPicker" style="display:none" aria-label="Elige un stricker para reaccionar">
                 <label class="stickerSearchBox" for="storyStickerSearch">
                     <svg viewBox="0 0 24 24" aria-hidden="true">
                         <circle cx="10.8" cy="10.8" r="6.8"></circle>
                         <path d="m16 16 5 5"></path>
                     </svg>
-                    <input id="storyStickerSearch" type="search" placeholder="Buscar stickers"
-                        aria-label="Buscar stickers" autocomplete="off" autocorrect="off" autocapitalize="off"
+                    <input id="storyStickerSearch" type="search" placeholder="Buscar strickers"
+                        aria-label="Buscar strickers" autocomplete="off" autocorrect="off" autocapitalize="off"
                         spellcheck="false">
                 </label>
                 <div class="stickerPickerTabs" role="tablist" aria-label="Stickers">
@@ -9933,7 +10369,7 @@
             </div>
             <div id="storyFoot">
                 <button class="storyAction" id="storyStickerBtn" type="button" onclick="toggleStoryStickerPicker()"
-                    title="Reaccionar con sticker" aria-label="Reaccionar con sticker"><svg viewBox="0 0 24 24"
+                    title="Reaccionar con stricker" aria-label="Reaccionar con stricker"><svg viewBox="0 0 24 24"
                         aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8"
                         stroke-linejoin="round">
                         <path d="M5 3.75h14a1.75 1.75 0 011.75 1.75v8.25L13.75 20H5a1.75 1.75 0 01-1.75-1.75V5.5A1.75 1.75 0 015 3.75Z"></path>
@@ -10217,6 +10653,7 @@
                         <rect x="3" y="6" width="12" height="12" rx="2.5" fill="none" stroke="currentColor"
                             stroke-width="1.8"></rect>
                         <path d="M15 11l6-3.5v9L15 13z"></path>
+                        <path class="iconSlash" d="M3 3l18 18"></path>
                     </svg></button>
                 <button id="btnSpeaker" onclick="toggleSpeaker()" title="Altavoz / bocina interna"
                     style="display:none"><svg viewBox="0 0 24 24">
@@ -10241,6 +10678,7 @@
             <b id="ringName" style="font-size:22px"></b>
             <div class="callNote" id="ringNote"></div>
             <div class="callBtns" id="ringActions"></div>
+            <div id="ringMediaControls"></div>
         </div>
 
         <script src="/js/transport-crypto.js"></script>
@@ -10290,7 +10728,7 @@
             const avatarUrl = (username, uid) => '/avatar/' + encodeURIComponent(uid || profilesCache[username]?.id || (me && me.username === username ? me.id : username)) + '.svg?v=3';
             function accountStorageKey(key) {
                 const account = me && (me.id || me.username);
-                return account ? `chatlocal_account_${encodeURIComponent(account)}_${key}` : null;
+                return account ? `zlapy_account_${encodeURIComponent(account)}_${key}` : null;
             }
             function readAccountStorage(key, legacyKey) {
                 const scopedKey = accountStorageKey(key);
@@ -10496,12 +10934,15 @@
                 const raw = String(url == null ? '' : url);
                 if (!stickerUrlAllowed(raw)) {
                     const blocked = [className, 'stickerBlocked'].filter(Boolean).join(' ');
-                    return `<span class="${escapeHtml(blocked)}" role="img" aria-label="Sticker no disponible" title="Sticker de un origen no permitido">sticker no disponible</span>`;
+                    return `<span class="${escapeHtml(blocked)}" role="img" aria-label="Stricker no disponible" title="Stricker de un origen no permitido">stricker no disponible</span>`;
                 }
                 const cls = className ? ` class="${escapeHtml(className)}"` : '';
                 return `<img${cls} src="${escapeHtml(raw)}" alt="${escapeHtml(alt || '')}"${attributes || ''}>`;
             }
             let stickerTimer = null, stickerOffset = 0, stickerQuery = '', stickerLoading = false, stickerHasMore = true;
+            let stickerSource = 'zlapy', stickerActiveTab = 'favs', zlapyTags = [], zlapyOffset = 0, zlapyHasMore = true, zlapyLoading = false;
+            let stickerEmojiAction = null;
+            let zlapyRequestVersion = 0, zlapyRequestController = null;
             let stickerRequestVersion = 0, stickerRequestController = null;
             let stickerSeenUrls = new Set();
             let stickerFavsCache = [];
@@ -10672,46 +11113,381 @@
                 if (i >= 0) { l.splice(i, 1); await saveStickerFavs(l); if (!silent) toast('Stricker quitado de favoritos'); }
                 else { l.push(url); await saveStickerFavs(l); if (!silent) toast('Stricker agregado a favoritos'); }
                 renderStickerFavs();
+                if (stickerActiveTab === 'bbot')
+                    loadBbotStickers(document.getElementById('stickerSearch').value);
+            }
+            function openStickerCreator(file, bbotExpression, bbotSettings, bbotAutoCreate = false) {
+                const layer = document.getElementById('stickerCreatorLayer');
+                const frame = document.getElementById('stickerCreatorFrame');
+                if (!layer || !frame) {
+                    toast('No se pudo abrir el creador de strickers.');
+                    return;
+                }
+                if (cpTarget !== null) dismissLayer('panel-contact');
+                if (gpTarget !== null) dismissLayer('panel-group');
+                const wasOpen = layer.classList.contains('on');
+                layer.classList.add('on');
+                layer.setAttribute('aria-hidden', 'false');
+                if (file instanceof Blob || typeof bbotExpression === 'string') {
+                    frame.addEventListener('load', () => {
+                        const message = file instanceof Blob
+                            ? { type: 'zlapy-sticker-edit-image', file }
+                            : {
+                                type: 'zlapy-sticker-create-bbot',
+                                expression: bbotExpression,
+                                settings: bbotSettings || {},
+                                sendAfterCreate: true,
+                                autoCreate: bbotAutoCreate
+                            };
+                        frame.contentWindow.postMessage(message, location.origin);
+                    }, { once: true });
+                }
+                const params = new URLSearchParams();
+                if (file instanceof Blob) params.set('edit', String(Date.now()));
+                else if (typeof bbotExpression === 'string') params.set('bbot', bbotExpression);
+                if (window.innerWidth > 768) params.set('surface', '1');
+                const query = params.toString();
+                frame.src = '/sticker-creator.html' + (query ? '?' + query : '');
+                if (!wasOpen) Layer.push('panel-sticker-creator');
             }
             function renderStickerFavs() {
                 const box = document.getElementById('stickerFavsGrid');
                 if (!box) return;
                 const l = sortStickersByUsage(stickerFavs().reverse());
-                box.innerHTML = l.length ? l.map((url, index) => `<span class="favWrap" data-added-order="${l.length - index}">${stickerImgHTML(url, '', '', ` data-url="${escapeHtml(url)}" loading="lazy" title="Opciones del sticker"`)}</span>`).join('') : '<div class="sub" style="padding:12px;grid-column:1/-1">Sin favoritos todavía: mantén presionado un sticker en el chat y elige Favorito.</div>';
+                const createTile = '<button class="stickerCreateTile" type="button" aria-label="Crear stricker" title="Crear stricker"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 5 5 5M4 20l4.3-.9L19 8.4a2.1 2.1 0 0 0-3-3L5.3 16.1 4 20Z"></path><path d="M14 20h6"></path></svg><span>Crear</span></button>';
+                box.innerHTML = createTile + (l.length
+                    ? l.map((url, index) => `<span class="favWrap" data-added-order="${l.length - index}">${stickerImgHTML(url, '', '', ` data-url="${escapeHtml(url)}" loading="lazy" title="Opciones del sticker"`)}</span>`).join('')
+                    : '<div class="sub" style="padding:12px;grid-column:1/-1">Sin favoritos todavía: mantén presionado un sticker en el chat y elige Favorito.</div>');
+                box.querySelector('.stickerCreateTile').onclick = openStickerCreator;
                 box.querySelectorAll('img').forEach(image => image.onclick = event => {
                     event.stopPropagation();
                     sendSticker(image.dataset.url || image.currentSrc || image.src);
                 });
             }
-            function stkTab(which) {
-                document.getElementById('stkTabSearch').classList.toggle('on', which === 'search');
-                document.getElementById('stkTabFavs').classList.toggle('on', which === 'favs');
-                document.getElementById('stickerGrid').style.display = which === 'search' ? 'grid' : 'none';
-                document.getElementById('stickerFavsGrid').style.display = which === 'favs' ? 'grid' : 'none';
-                if (which === 'favs') renderStickerFavs();
+            function closeStickerCreator(fromPop = false) {
+                const layer = document.getElementById('stickerCreatorLayer');
+                const frame = document.getElementById('stickerCreatorFrame');
+                layer.classList.remove('on');
+                layer.setAttribute('aria-hidden', 'true');
+                frame.src = 'about:blank';
+                if (!fromPop) Layer.pop('panel-sticker-creator');
+            }
+            window.addEventListener('message', event => {
+                const frame = document.getElementById('stickerCreatorFrame');
+                if (event.origin !== location.origin || event.source !== frame.contentWindow ||
+                    !event.data || typeof event.data !== 'object') return;
+                if (event.data.type === 'zlapy-sticker-creator-close') {
+                    dismissLayer('panel-sticker-creator');
+                    return;
+                }
+                if (event.data.type !== 'zlapy-sticker-created' || !event.data.result) return;
+                const result = event.data.result;
+                const accountId = currentStickerAccountId();
+                if (!accountId || !Array.isArray(result.stickers) || typeof result.sticker !== 'string') {
+                    console.error('[stickers] El servidor devolvió datos incompletos al crear el stricker:', result);
+                    toast('El stricker se creó, pero no se pudo actualizar la biblioteca. Recarga tus favoritos.');
+                    return;
+                }
+                stickerFavsLoadVersion++;
+                stickerFavsSaveVersion++;
+                stickerFavsAccountId = accountId;
+                stickerFavsCache = normalizeStickerFavorites(result.stickers);
+                saveStickerCache(accountId, stickerFavsCache);
+                if (result.bbot && /^[a-z]+$/.test(result.bbot.expression || '')) {
+                    const saved = savedBbotFaces();
+                    saved[result.bbot.expression] = {
+                        sticker: result.sticker,
+                        settings: result.bbot
+                    };
+                    writeAccountStorage('bbot_stickers', JSON.stringify(saved));
+                }
+                renderStickerFavs();
+                if (stickerActiveTab === 'bbot')
+                    loadBbotStickers(document.getElementById('stickerSearch').value);
+                toast(result.published
+                    ? 'Stricker creado, guardado en favoritos y publicado en Zlapy.'
+                    : 'Stricker creado y guardado en favoritos.');
+                dismissLayer('panel-sticker-creator');
+                if (result.sendAfterCreate) sendSticker(result.sticker);
+            });
+            let bbotRenderVersion = 0;
+            async function loadBbotStickers(query = '') {
+                const grid = document.getElementById('stickerGrid');
+                const renderVersion = ++bbotRenderVersion;
+                grid.classList.add('bbotStickerGrid');
+                grid.innerHTML = '<div class="sub" style="padding:10px;grid-column:1/-1">Cargando caras…</div>';
+                try {
+                    const response = await fetch('/stickers/discover?tags=bbot&limit=48');
+                    const result = await response.json();
+                    if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+                    if (stickerActiveTab !== 'bbot' || renderVersion !== bbotRenderVersion) return;
+                    const normalized = query.trim().toLowerCase();
+                    const stickers = (Array.isArray(result.stickers) ? result.stickers : []).filter(sticker =>
+                        sticker && typeof sticker.expression === 'string' &&
+                        typeof sticker.label === 'string' && typeof sticker.sticker === 'string' &&
+                        (!normalized || [sticker.expression, sticker.label, ...(sticker.tags || [])]
+                            .some(value => String(value).toLowerCase().includes(normalized))));
+                    grid.replaceChildren();
+                    const createTile = document.createElement('button');
+                    createTile.type = 'button';
+                    createTile.className = 'stickerCreateTile bbotStickerCreateTile';
+                    createTile.setAttribute('aria-label', 'Crear cara');
+                    createTile.title = 'Crear cara';
+                    createTile.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 5 5 5M4 20l4.3-.9L19 8.4a2.1 2.1 0 0 0-3-3L5.3 16.1 4 20Z"></path><path d="M14 20h6"></path></svg><span>Crear</span>';
+                    createTile.onclick = () => openStickerCreator(null, 'idle', {}, false);
+                    grid.appendChild(createTile);
+                    if (!stickers.length) {
+                        const empty = document.createElement('div');
+                        empty.className = 'sub';
+                        empty.style.cssText = 'padding:10px;grid-column:1/-1';
+                        empty.textContent = 'No se encontraron caras.';
+                        grid.appendChild(empty);
+                        return;
+                    }
+                    for (const sticker of stickers) {
+                        const tile = document.createElement('button');
+                        tile.type = 'button';
+                        tile.className = 'bbotStickerTile';
+                        tile.setAttribute('aria-label', `Enviar cara ${sticker.label}`);
+                        const image = document.createElement('img');
+                        image.src = sticker.sticker;
+                        image.alt = '';
+                        image.dataset.url = sticker.sticker;
+                        image.dataset.bbotExpression = sticker.expression;
+                        image.className = 'bbotStickerPreview bbotStickerSavedImage';
+                        tile.dataset.bbotExpression = sticker.expression;
+                        tile.dataset.bbotPack = 'true';
+                        tile.dataset.url = sticker.sticker;
+                        tile.append(image);
+                        grid.appendChild(tile);
+                        tile.onclick = () => sendSticker(sticker.sticker);
+                    }
+                } catch (failure) {
+                    if (renderVersion !== bbotRenderVersion) return;
+                    console.error('[stickers] No se pudo cargar la biblioteca de caras:', failure);
+                    grid.innerHTML = '<div class="sub" style="padding:10px;grid-column:1/-1">No se pudo cargar la biblioteca de caras.</div>';
+                }
+            }
+            function stkTab(which, onEmoji) {
+                if (!['favs', 'zlapy', 'giphy', 'bbot', 'emoji'].includes(which)) return;
+                const isFavs = which === 'favs';
+                const isEmoji = which === 'emoji';
+                const enteringSource = stickerActiveTab !== which;
+                const leavingEmoji = stickerActiveTab === 'emoji' && !isEmoji;
+                const sourceChanged = !isFavs && !isEmoji && stickerSource !== which;
+                stickerEmojiAction = isEmoji && typeof onEmoji === 'function' ? onEmoji : null;
+                if (which !== 'bbot') {
+                    document.getElementById('stickerGrid').classList.remove('bbotStickerGrid');
+                }
+                if (isFavs) {
+                    stickerRequestController?.abort();
+                    zlapyRequestController?.abort();
+                    stickerRequestController = null;
+                    zlapyRequestController = null;
+                    stickerRequestVersion++;
+                    zlapyRequestVersion++;
+                    stickerLoading = false;
+                    zlapyLoading = false;
+                }
+                if (sourceChanged && stickerSource === 'giphy' && stickerRequestController) {
+                    stickerRequestController.abort();
+                    stickerRequestController = null;
+                    stickerRequestVersion++;
+                    stickerLoading = false;
+                }
+                if (sourceChanged && stickerSource === 'zlapy' && zlapyRequestController) {
+                    zlapyRequestController.abort();
+                    zlapyRequestController = null;
+                    zlapyRequestVersion++;
+                    zlapyLoading = false;
+                }
+                if (!isFavs && !isEmoji) {
+                    if (sourceChanged || leavingEmoji) document.getElementById('stickerSearch').value = '';
+                    stickerSource = which;
+                }
+                if (isEmoji && enteringSource) document.getElementById('stickerSearch').value = '';
+                stickerActiveTab = which;
+                for (const [id, selected] of [
+                    ['stkTabFavs', isFavs],
+                    ['stkSourceZlapy', !isFavs && which === 'zlapy'],
+                    ['stkSourceGiphy', !isFavs && which === 'giphy'],
+                    ['stkSourceBbot', !isFavs && which === 'bbot'],
+                    ['stkSourceEmoji', isEmoji]
+                ]) {
+                    const button = document.getElementById(id);
+                    button.classList.toggle('on', selected);
+                    button.setAttribute('aria-selected', String(selected));
+                }
+                document.getElementById('stickerSearchBox').hidden = isFavs;
+                document.getElementById('stickerTagFilter').hidden = isFavs || isEmoji || stickerSource !== 'zlapy';
+                document.getElementById('stickerGrid').style.display = isFavs || isEmoji ? 'none' : 'grid';
+                document.getElementById('stickerFavsGrid').style.display = isFavs ? 'grid' : 'none';
+                const emojiPicker = document.getElementById('stickerEmojiPicker');
+                emojiPicker.hidden = !isEmoji;
+                if (isEmoji) {
+                    if (!window.ZlapyEmojiPicker) {
+                        throw new Error('No se pudo inicializar el selector de emojis.');
+                    }
+                    document.getElementById('stickerSearch').placeholder = 'Buscar emojis';
+                    window.ZlapyEmojiPicker.mount(emojiPicker, document.getElementById('stickerSearch'), emoji => {
+                        const action = stickerEmojiAction;
+                        if (action) {
+                            stickerEmojiAction = null;
+                            document.getElementById('stickerPanel').classList.remove('open');
+                            action(emoji);
+                            return;
+                        }
+                        sendText(emoji).catch(error => {
+                            console.error('[emoji] No se pudo enviar el emoji:', error);
+                            debugToast(error.message || 'No se pudo enviar el emoji.');
+                        });
+                    });
+                    return;
+                }
+                document.getElementById('stickerSearch').placeholder = stickerSource === 'zlapy'
+                    ? 'Buscar stickers'
+                    : stickerSource === 'bbot' ? 'Buscar expresiones' : 'Buscar en Giphy';
+                if (isFavs) renderStickerFavs();
+                else if (enteringSource || sourceChanged || !document.getElementById('stickerGrid').dataset.loaded) {
+                    document.getElementById('stickerGrid').dataset.loaded = '1';
+                    if (stickerSource === 'zlapy') loadZlapyStickers();
+                    else if (stickerSource === 'bbot') loadBbotStickers(document.getElementById('stickerSearch').value);
+                    else loadStrikers(document.getElementById('stickerSearch').value);
+                }
+            }
+            function renderZlapyTagChips() {
+                const chips = document.getElementById('stickerTagChips');
+                chips.replaceChildren();
+                for (const tag of zlapyTags) {
+                    const chip = document.createElement('span');
+                    chip.className = 'stickerTagChip';
+                    chip.textContent = '#' + tag;
+                    const remove = document.createElement('button');
+                    remove.type = 'button';
+                    remove.setAttribute('aria-label', 'Quitar etiqueta ' + tag);
+                    remove.textContent = '×';
+                    remove.onclick = () => {
+                        zlapyTags = zlapyTags.filter(item => item !== tag);
+                        renderZlapyTagChips();
+                        loadZlapyStickers();
+                    };
+                    chip.appendChild(remove);
+                    chips.appendChild(chip);
+                }
+            }
+            async function loadZlapyStickers(append = false) {
+                const grid = document.getElementById('stickerGrid');
+                if (!grid) return;
+                const tagKey = zlapyTags.join(',');
+                if (append) {
+                    if (zlapyLoading || !zlapyHasMore) return;
+                } else {
+                    if (zlapyRequestController) zlapyRequestController.abort();
+                    zlapyRequestVersion++;
+                    zlapyOffset = 0;
+                    zlapyHasMore = true;
+                    grid.innerHTML = '<div class="sub" style="padding:10px;grid-column:1/-1">Buscando en Zlapy…</div>';
+                    grid.scrollTop = 0;
+                }
+                const requestVersion = zlapyRequestVersion;
+                const controller = new AbortController();
+                zlapyRequestController = controller;
+                zlapyLoading = true;
+                try {
+                    const params = new URLSearchParams({ limit: '24', offset: String(zlapyOffset) });
+                    if (tagKey) params.set('tags', tagKey);
+                    const response = await fetch('/stickers/discover?' + params, { signal: controller.signal });
+                    if (!response.ok) throw new Error('HTTP ' + response.status);
+                    const result = await response.json();
+                    if (requestVersion !== zlapyRequestVersion || tagKey !== zlapyTags.join(',')) return;
+                    const list = Array.isArray(result.stickers) ? result.stickers : [];
+                    const html = list.map(item => {
+                        if (!item || typeof item.sticker !== 'string') return '';
+                        const url = item.sticker;
+                        const safeUrl = escapeHtml(url);
+                        const label = Array.isArray(item.tags) ? item.tags.map(tag => '#' + tag).join(' ') : '';
+                        return `<span class="favWrap" title="${escapeHtml(label)}">${stickerImgHTML(url, '', '', ` data-url="${safeUrl}" loading="lazy"`)}</span>`;
+                    }).join('');
+                    if (append) grid.insertAdjacentHTML('beforeend', html);
+                    else grid.innerHTML = html || '<div class="sub" style="padding:10px;grid-column:1/-1">Todavía no hay strickers publicados con estas etiquetas.</div>';
+                    grid.querySelectorAll('img').forEach(image => image.onclick = () => sendSticker(image.dataset.url));
+                    zlapyOffset += list.length;
+                    zlapyHasMore = !!result.hasMore;
+                } catch (error) {
+                    if (requestVersion !== zlapyRequestVersion || error.name === 'AbortError') return;
+                    console.error('[stickers] No se pudo cargar la biblioteca de Zlapy:', error);
+                    if (!append) grid.innerHTML = '<div class="sub" style="padding:10px;grid-column:1/-1">No se pudo cargar la biblioteca de Zlapy.</div>';
+                    else toast('No se pudieron cargar más strickers.');
+                } finally {
+                    if (requestVersion === zlapyRequestVersion) {
+                        zlapyLoading = false;
+                        zlapyRequestController = null;
+                    }
+                }
             }
             function toggleStrikers() {
                 const p = document.getElementById('stickerPanel');
-                if (p.classList.contains('open')) { p.classList.remove('open'); return; }
+                if (p.classList.contains('open')) {
+                    p.classList.remove('open');
+                    stickerEmojiAction = null;
+                    document.getElementById('stickerGrid').classList.remove('bbotStickerGrid');
+                    return;
+                }
                 document.getElementById('attachmentPanel').style.display = 'none';
                 attachmentDestination = null;
                 if (attachmentPopOpen && window.ZlapyPopMenu) ZlapyPopMenu.close();
                 p.classList.add('open');
-                document.getElementById('stkTabSearch').onclick = () => stkTab('search');
                 document.getElementById('stkTabFavs').onclick = () => stkTab('favs');
+                document.getElementById('stkSourceZlapy').onclick = () => stkTab('zlapy');
+                document.getElementById('stkSourceGiphy').onclick = () => stkTab('giphy');
+                document.getElementById('stkSourceBbot').onclick = () => stkTab('bbot');
+                document.getElementById('stkSourceEmoji').onclick = () => stkTab('emoji');
                 const inp = document.getElementById('stickerSearch');
+                inp.onkeydown = event => {
+                    if (event.key !== 'Enter' || stickerSource !== 'zlapy') return;
+                    event.preventDefault();
+                    const value = inp.value.trim().replace(/^#/, '').toLowerCase();
+                    if (!value) return;
+                    if (!/^[\p{L}\p{N}_-]{1,24}$/u.test(value)) {
+                        toast('Usa una etiqueta de hasta 24 letras o números, sin espacios.');
+                        return;
+                    }
+                    if (zlapyTags.length >= 8 && !zlapyTags.includes(value)) {
+                        toast('Puedes filtrar por un máximo de 8 etiquetas.');
+                        return;
+                    }
+                    if (!zlapyTags.includes(value)) zlapyTags.push(value);
+                    inp.value = '';
+                    renderZlapyTagChips();
+                    loadZlapyStickers();
+                };
                 inp.oninput = () => {
-                    if (!document.getElementById('stkTabSearch').classList.contains('on')) stkTab('search');
+                    if (stickerActiveTab === 'emoji') return;
+                    if (stickerSource === 'zlapy') return;
                     clearTimeout(stickerTimer);
-                    stickerTimer = setTimeout(() => loadStrikers(inp.value), 450);
+                    stickerTimer = setTimeout(() => {
+                        if (stickerSource === 'bbot') loadBbotStickers(inp.value);
+                        else loadStrikers(inp.value);
+                    }, 450);
                 };
                 document.getElementById('stickerGrid').onscroll = event => {
                     const grid = event.currentTarget;
-                    if (document.getElementById('stkTabSearch').classList.contains('on') &&
-                        stickerHasMore && !stickerLoading && grid.scrollTop + grid.clientHeight >= grid.scrollHeight - 100)
+                    if (grid.scrollTop + grid.clientHeight < grid.scrollHeight - 100) return;
+                    if (stickerSource === 'giphy' && stickerHasMore && !stickerLoading)
                         loadStrikers(stickerQuery, true);
+                    else if (stickerSource === 'zlapy' && zlapyHasMore && !zlapyLoading)
+                        loadZlapyStickers(true);
                 };
-                if (!p.dataset.loaded) { p.dataset.loaded = '1'; loadStrikers(''); }
+                if (!p.dataset.loaded) {
+                    p.dataset.loaded = '1';
+                    renderZlapyTagChips();
+                }
+                stkTab('favs');
+            }
+            function openStickerEmojiTab(onEmoji) {
+                const panel = document.getElementById('stickerPanel');
+                if (!panel.classList.contains('open')) toggleStrikers();
+                stkTab('emoji', onEmoji);
             }
             async function loadStrikers(q, append = false) {
                 const grid = document.getElementById('stickerGrid');
@@ -10726,7 +11502,7 @@
                     stickerOffset = 0;
                     stickerHasMore = true;
                     stickerSeenUrls = new Set();
-                    grid.innerHTML = '<div class="sub" style="padding:10px;grid-column:1/-1">Cargando stickers…</div>';
+                    grid.innerHTML = '<div class="sub" style="padding:10px;grid-column:1/-1">Cargando strickers de Giphy…</div>';
                     grid.scrollTop = 0;
                 }
                 if (!stickerHasMore) return;
@@ -10757,9 +11533,9 @@
                     reorderStickerGrid();
                 } catch (error) {
                     if (requestVersion !== stickerRequestVersion || error.name === 'AbortError') return;
-                    console.error('[stickers] No se pudieron cargar más stickers:', error);
+                    console.error('[stickers] No se pudieron cargar más strickers:', error);
                     if (!append) grid.innerHTML = '<div class="sub" style="padding:10px;grid-column:1/-1">No se pudo conectar con Giphy (¿hay internet?)</div>';
-                    else toast('No se pudieron cargar más stickers.');
+                    else toast('No se pudieron cargar más strickers.');
                 } finally {
                     if (requestVersion === stickerRequestVersion) {
                         stickerLoading = false;
@@ -10780,14 +11556,14 @@
                         recordStickerUsage(url);
                     } catch (error) {
                         console.error('[stickers] No se pudo enviar el sticker al grupo:', error);
-                        debugToast(error.message || 'No se pudo enviar el sticker.');
+                        debugToast(error.message || 'No se pudo enviar el stricker.');
                     }
                     return;
                 }
                 try {
                     const response = await fetch('/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: me.username, to: recipient, kind: 'sticker', data: url, reply }) });
                     const r = await response.json();
-                    if (!response.ok) throw new Error(r.error || 'No se pudo enviar el sticker.');
+                    if (!response.ok) throw new Error(r.error || 'No se pudo enviar el stricker.');
                     if (r.blocked) { debugToast('No se pudo enviar: te tiene bloqueado.'); return; }
                     if (r.denied) { debugToast(recipient + ' no permite mensajes tuyos.'); return; }
                     recordStickerUsage(url);
@@ -10799,7 +11575,7 @@
                     reportPushDelivery(r, recipient);
                 } catch (error) {
                     console.error('[stickers] No se pudo enviar el sticker:', error);
-                    debugToast(error.message || 'No se pudo enviar el sticker.');
+                    debugToast(error.message || 'No se pudo enviar el stricker.');
                 }
             }
             function reportPushDelivery(result, recipient) {
@@ -10813,41 +11589,83 @@
                     debugToast('Mensaje enviado, pero falló el push: ' + failed.map(item => item.status + (item.error ? ' ' + item.error : '')).join(', '));
                 }
             }
-            /* long-press en los strikers del panel: Enviar / Favorito.
+            /* long-press en los strikers del panel: Enviar / Favorito / Editar.
                Usa el mismo pop-menu que el resto de la app. */
             let stkCtxUrl = '';
             function hideStickerMenu() { if (window.ZlapyPopMenu) ZlapyPopMenu.close(); }
-            function showStickerMenu(url, x, y) {
-                if (!url) return;
+            function showStickerMenu(url, x, y, bbot) {
+                if (!url && !bbot) return;
                 stkCtxUrl = url;
                 const esFav = stickerFavs().includes(url);
+                const items = url ? [
+                    { id: 'send', label: 'Enviar', icon: 'send' },
+                    { id: 'fav', label: esFav ? 'Quitar de favoritos' : 'Agregar a favoritos', icon: 'star' }
+                ] : [{ id: 'create-bbot', label: 'Crear y enviar', icon: 'send' }];
+                if (bbot && !bbot.packaged) items.push({ id: 'edit-bbot', label: 'Editar cara', icon: 'edit' });
                 ZlapyPopMenu.open({
                     x, y,
-                    items: [
-                        { id: 'send', label: 'Enviar', icon: 'send' },
-                        { id: 'fav', label: esFav ? 'Quitar de favoritos' : 'Agregar a favoritos', icon: 'star' }
-                    ],
+                    items,
                     onSelect: action => {
                         if (action === 'send') { if (stkCtxUrl) sendSticker(stkCtxUrl); }
                         else if (action === 'fav') { if (stkCtxUrl) toggleStickerFav(stkCtxUrl); }
+                        else if (action === 'create-bbot' && bbot)
+                            openStickerCreator(null, bbot.expression, bbot.settings, true);
+                        else if (action === 'edit-bbot' && bbot)
+                            openStickerCreator(null, bbot.expression, bbot.settings);
                     }
                 });
             }
             document.addEventListener('contextmenu', e => {
+                const tile = e.target.closest && e.target.closest('#stickerGrid .bbotStickerTile');
                 const im = e.target.closest && e.target.closest('#stickerGrid img, #stickerFavsGrid img');
-                if (!im) return;
+                if (!tile && !im) return;
                 e.preventDefault();
-                showStickerMenu(im.dataset.url || im.src, e.clientX, e.clientY);
+                const expression = (tile && tile.dataset.bbotExpression) || (im && im.dataset.bbotExpression);
+                const url = (tile && tile.dataset.url) || (im && (im.dataset.url || im.src));
+                showStickerMenu(url, e.clientX, e.clientY, expression ? {
+                    expression,
+                    settings: tile && tile.bbotSettings,
+                    packaged: !!(tile && tile.dataset.bbotPack === 'true')
+                } : null);
             });
             let stickerPressTimer = null;
+            let stickerSuppressClick = null;
             document.addEventListener('pointerdown', event => {
+                const tile = event.target.closest && event.target.closest('#stickerGrid .bbotStickerTile');
                 const image = event.target.closest && event.target.closest('#stickerGrid img, #stickerFavsGrid img');
-                if (!image || event.pointerType === 'mouse') return;
+                const target = tile || image;
+                if (!target || event.pointerType === 'mouse') return;
+                const expression = (tile && tile.dataset.bbotExpression) || (image && image.dataset.bbotExpression);
+                const bbot = expression ? {
+                    expression,
+                    settings: tile && tile.bbotSettings || {},
+                    packaged: !!(tile && tile.dataset.bbotPack === 'true')
+                } : null;
                 clearTimeout(stickerPressTimer);
-                stickerPressTimer = setTimeout(() => showStickerMenu(image.dataset.url || image.src, event.clientX, event.clientY), 500);
+                stickerPressTimer = setTimeout(() => {
+                    stickerSuppressClick = target;
+                    showStickerMenu(
+                        (tile && tile.dataset.url) || (image && (image.dataset.url || image.src)),
+                        event.clientX,
+                        event.clientY,
+                        bbot
+                    );
+                }, 500);
             });
+            document.addEventListener('click', event => {
+                if (!stickerSuppressClick || !event.target.closest) return;
+                const tile = event.target.closest('.bbotStickerTile');
+                const image = event.target.closest('img');
+                if (tile !== stickerSuppressClick && image !== stickerSuppressClick) return;
+                event.preventDefault();
+                event.stopImmediatePropagation();
+                stickerSuppressClick = null;
+            }, true);
             document.addEventListener('pointerup', () => clearTimeout(stickerPressTimer));
-            document.addEventListener('pointercancel', () => clearTimeout(stickerPressTimer));
+            document.addEventListener('pointercancel', () => {
+                clearTimeout(stickerPressTimer);
+                stickerSuppressClick = null;
+            });
 
             // fuera de nuestros menús, el menú contextual de Chrome no aparece en ningún lado
             document.addEventListener('contextmenu', e => {
@@ -10878,7 +11696,7 @@
             function abrirPrivacidad() { location.href = '/privacy.html'; }
             function avisoPrivacidadInicial() { return; }
 
-            const LINKED_ACCOUNTS_KEY = 'chatlocal_linked_accounts';
+            const LINKED_ACCOUNTS_KEY = 'zlapy_linked_accounts';
             function linkedAccounts() {
                 try {
                     const list = JSON.parse(localStorage.getItem(LINKED_ACCOUNTS_KEY) || '[]');
@@ -10911,28 +11729,28 @@
                     // Se migran primero a su clave con scope de cuenta (para no
                     // perder la preferencia) y luego se eliminan.
                     if (username) {
-                        const legacy = [['security_notifications', 'chatlocal_secnotif_'], ['debug_toasts', 'chatlocal_debug_toasts_']];
+                        const legacy = [['security_notifications', 'zlapy_secnotif_'], ['debug_toasts', 'zlapy_debug_toasts_']];
                         for (const [key, prefix] of legacy) {
                             const legacyKey = prefix + username;
                             readAccountStorage(key, legacyKey);
                             localStorage.removeItem(legacyKey);
                         }
-                        readAccountStorage('story_seen', 'chatlocal_storyseen');
-                        localStorage.removeItem('chatlocal_storyseen');
+                        readAccountStorage('story_seen', 'zlapy_storyseen');
+                        localStorage.removeItem('zlapy_storyseen');
                     }
                     // El puntero de apariencia guarda el id de la última cuenta:
                     // se quita el id (identidad) y se conservan los colores.
-                    const hint = localStorage.getItem('chatlocal_appearance_hint');
+                    const hint = localStorage.getItem('zlapy_appearance_hint');
                     if (hint) {
                         try {
                             const parsed = JSON.parse(hint);
                             if (parsed && typeof parsed === 'object' && parsed.id) {
                                 delete parsed.id;
-                                localStorage.setItem('chatlocal_appearance_hint', JSON.stringify(parsed));
+                                localStorage.setItem('zlapy_appearance_hint', JSON.stringify(parsed));
                             }
                         } catch (error) {
                             console.error('[account] No se pudo limpiar el puntero de apariencia:', error);
-                            localStorage.removeItem('chatlocal_appearance_hint');
+                            localStorage.removeItem('zlapy_appearance_hint');
                         }
                     }
                 } catch (error) {
@@ -11079,7 +11897,7 @@
             function setupSidebarResize() {
                 const handle = document.getElementById('sidebarResizeHandle');
                 if (!handle) return;
-                const storedWidth = Number(localStorage.getItem('chatlocal_sidebar_width'));
+                const storedWidth = Number(localStorage.getItem('zlapy_sidebar_width'));
                 const maxWidth = () => Math.max(260, Math.min(560, Math.floor(viewWidth() * .5)));
                 const clampWidth = value => Math.round(Math.max(260, Math.min(maxWidth(), value)));
                 const applyWidth = value => {
@@ -11108,7 +11926,7 @@
                     if (!handle.hasPointerCapture(event.pointerId)) return;
                     handle.releasePointerCapture(event.pointerId);
                     handle.classList.remove('dragging');
-                    localStorage.setItem('chatlocal_sidebar_width', String(document.getElementById('sidebar').getBoundingClientRect().width));
+                    localStorage.setItem('zlapy_sidebar_width', String(document.getElementById('sidebar').getBoundingClientRect().width));
                 };
                 handle.addEventListener('pointerup', finishResize);
                 handle.addEventListener('pointercancel', finishResize);
@@ -11117,10 +11935,10 @@
                         event.preventDefault();
                         const direction = event.key === 'ArrowRight' ? 1 : -1;
                         const width = applyWidth(document.getElementById('sidebar').getBoundingClientRect().width + direction * (event.shiftKey ? 40 : 16));
-                        localStorage.setItem('chatlocal_sidebar_width', String(width));
+                        localStorage.setItem('zlapy_sidebar_width', String(width));
                     } else if (event.key === 'Home') {
                         event.preventDefault();
-                        localStorage.setItem('chatlocal_sidebar_width', String(applyWidth(360)));
+                        localStorage.setItem('zlapy_sidebar_width', String(applyWidth(360)));
                     }
                 });
                 let vpRaf = 0;
@@ -11146,7 +11964,7 @@
                     });
                     return infoWidth;
                 };
-                const stored = parseFloat(localStorage.getItem('chatlocal_info_width'));
+                const stored = parseFloat(localStorage.getItem('zlapy_info_width'));
                 apply(Number.isFinite(stored) && stored >= minW ? stored : defaultW);
                 handles.forEach(handle => {
                     handle.addEventListener('pointerdown', event => {
@@ -11167,7 +11985,7 @@
                             if (!handle.hasPointerCapture(ev.pointerId)) return;
                             handle.releasePointerCapture(ev.pointerId);
                             handle.classList.remove('dragging');
-                            localStorage.setItem('chatlocal_info_width', String(infoWidth));
+                            localStorage.setItem('zlapy_info_width', String(infoWidth));
                         };
                         handle.addEventListener('pointermove', move);
                         handle.addEventListener('pointerup', finish);
@@ -11178,10 +11996,10 @@
                             event.preventDefault();
                             const step = event.key === 'ArrowRight' ? 1 : -1;
                             const width = apply(infoWidth + step * (event.shiftKey ? 40 : 16));
-                            localStorage.setItem('chatlocal_info_width', String(width));
+                            localStorage.setItem('zlapy_info_width', String(width));
                         } else if (event.key === 'Home') {
                             event.preventDefault();
-                            localStorage.setItem('chatlocal_info_width', String(apply(defaultW)));
+                            localStorage.setItem('zlapy_info_width', String(apply(defaultW)));
                         }
                     });
                 });
@@ -11212,7 +12030,7 @@
                     handle.setAttribute('aria-valuenow', String(hubWidth));
                     return hubWidth;
                 };
-                const stored = parseFloat(localStorage.getItem('chatlocal_settings_hub_width'));
+                const stored = parseFloat(localStorage.getItem('zlapy_settings_hub_width'));
                 apply(Number.isFinite(stored) && stored >= minW ? stored : defaultW);
                 handle.addEventListener('pointerdown', event => {
                     if (window.innerWidth <= 768) return;
@@ -11229,7 +12047,7 @@
                         if (!handle.hasPointerCapture(ev.pointerId)) return;
                         handle.releasePointerCapture(ev.pointerId);
                         handle.classList.remove('dragging');
-                        localStorage.setItem('chatlocal_settings_hub_width', String(hubWidth));
+                        localStorage.setItem('zlapy_settings_hub_width', String(hubWidth));
                     };
                     handle.addEventListener('pointermove', move);
                     handle.addEventListener('pointerup', finish);
@@ -11240,10 +12058,10 @@
                         event.preventDefault();
                         const step = event.key === 'ArrowRight' ? 1 : -1;
                         const width = apply(hubWidth + step * (event.shiftKey ? 40 : 16));
-                        localStorage.setItem('chatlocal_settings_hub_width', String(width));
+                        localStorage.setItem('zlapy_settings_hub_width', String(width));
                     } else if (event.key === 'Home') {
                         event.preventDefault();
-                        localStorage.setItem('chatlocal_settings_hub_width', String(apply(defaultW)));
+                        localStorage.setItem('zlapy_settings_hub_width', String(apply(defaultW)));
                     }
                 });
             }
@@ -11429,6 +12247,15 @@
                     return;
                 }
                 if (msg.type === 'group-message') return addGroupMessage(msg.groupId, msg.message);
+                if (msg.type === 'message-reactions') {
+                    const entry = conversationMessageById.get(msg.messageId);
+                    if (entry && Array.isArray(msg.reactions)) {
+                        entry.message.reactions = msg.reactions;
+                        if ((activeKind === 'group' && activeGroup && activeGroup.id === entry.key) ||
+                            (activeKind === 'dm' && active === entry.key)) renderAll();
+                    }
+                    return;
+                }
                 if (msg.type === 'poll-update') {
                     const entry = conversationMessageById.get(msg.message.id);
                     if (entry) {
@@ -11578,6 +12405,7 @@
                 if (msg.type === 'call-sdp') return onCallSdp(msg);
                 if (msg.type === 'call-ice') return onCallIce(msg);
                 if (msg.type === 'call-mute') return onCallMute(msg);
+                if (msg.type === 'call-video') return onCallVideo(msg);
 
                 if (msg.type === 'history') {
                     (async () => {
@@ -11595,7 +12423,7 @@
                         const peer = peerOf(m);
                         const isActiveChat = activeKind === 'dm' && active === peer;
                         if (m.from !== me.username) {
-                            if (!keepArchivedChats) unarchiveChatLocally(dmPrefKey(m.from));
+                            if (!keepArchivedChats) unarchivezlapyly(dmPrefKey(m.from));
                             fetch('/receipt', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: me.username, to: m.from, ids: [m.id], status: 'delivered' }) }).catch(() => { });
                             const chatVisible = isActiveChat && (window.innerWidth > 768 || document.body.classList.contains('chat-open'));
                             if (chatVisible) sendRead(m.from, [m.id]);
@@ -12121,10 +12949,29 @@
             function closeGroupCreatePage() {
                 if (!groupCreateRouteFrame || groupCreateClosing) return;
                 groupCreateClosing = true;
-                history.back();
+                if (history.state && history.state.appRoute === 'group-create') {
+                    history.back();
+                    return;
+                }
+                finishGroupCreateClose();
+            }
+            function finishGroupCreateClose() {
+                if (groupCreateRouteFrame) {
+                    groupCreateRouteFrame.remove();
+                    groupCreateRouteFrame = null;
+                }
+                groupCreateClosing = false;
+                if (groupCreatePreviousChatOpen !== null) {
+                    document.body.classList.toggle('chat-open', groupCreatePreviousChatOpen);
+                    groupCreatePreviousChatOpen = null;
+                }
+                const afterClose = groupCreateAfterClose;
+                groupCreateAfterClose = null;
+                if (afterClose) afterClose();
             }
             window.addEventListener('message', event => {
-                if (event.origin !== location.origin || !groupCreateRouteFrame || groupCreateClosing) return;
+                if (event.origin !== location.origin || !groupCreateRouteFrame ||
+                    event.source !== groupCreateRouteFrame.contentWindow || groupCreateClosing) return;
                 const data = event.data;
                 if (!data || typeof data !== 'object') return;
                 if (data.type === 'zlapy:group-created' && typeof data.groupId === 'string' && data.groupId) {
@@ -12158,7 +13005,9 @@
             let groupDetailsAfterClose = null;
             let groupDetailsClosing = false;
             function groupDetailsUrl(id) {
-                return '/group-details.html?' + new URLSearchParams({ embedded: '1', id }).toString();
+                const params = new URLSearchParams({ embedded: '1', id });
+                if (window.innerWidth > 768) params.set('surface', '1');
+                return '/group-details.html?' + params.toString();
             }
             function applyGroupFromDetails(group) {
                 if (!group || typeof group.id !== 'string' || !group.id) return;
@@ -12949,7 +13798,7 @@
             }
             /* El servidor ya quitó el archivado al entrar el mensaje; esta
                copia local se actualiza sin esperar a recargar la lista. */
-            function unarchiveChatLocally(key) {
+            function unarchivezlapyly(key) {
                 const pref = chatPrefs[key];
                 if (pref) {
                     pref.archived = false;
@@ -13103,10 +13952,9 @@
                 const initialMsgs = document.getElementById('msgs');
                 initialMsgs.style.display = 'block';
                 initialMsgs.innerHTML = '';
-                initialMsgs.classList.remove('typing-reserved');
                 if (conversationFor(id).messages.length) renderAll(true);
                 else showMessageLoadState('initial');
-                document.getElementById('typingBubble').classList.remove('on');
+                paintTypingBubble();
                 document.getElementById('chatHeaderWrap').style.display = 'block';
                 document.getElementById('chatHeader').style.display = 'flex';
                 document.getElementById('chatHeader').classList.remove('saved-chat');
@@ -13311,7 +14159,7 @@
                     unread[groupId] = (unread[groupId] || 0) + 1;
                     beep();
                 }
-                if (!hydrated.mine && !keepArchivedChats) unarchiveChatLocally(groupPrefKey(groupId));
+                if (!hydrated.mine && !keepArchivedChats) unarchivezlapyly(groupPrefKey(groupId));
                 renderContacts();
             }
             async function mergeGroupMessages(g) {
@@ -13446,15 +14294,17 @@
                     const requested = !!group.requested;
                     const joined = !!group.joined;
                     const closed = group.joinPolicy === 'closed';
-                    const action = requested ? 'cancel' : group.joinPolicy === 'request' ? 'request' : '';
-                    const label = joined ? 'Unido' : closed ? 'Cerrado'
-                        : group.joinPolicy === 'request' ? 'Solicitar' : 'Unirse';
-                    const disabled = joined || closed;
+                    const buttonClass = requested || closed ? 'reject' : 'accept';
+                    const icon = requested ? requestActionIcon('cancel')
+                        : joined ? requestActionIcon('accept')
+                            : closed ? '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>'
+                                : requestActionIcon('add');
                     const accessibleLabel = requested ? 'Cancelar solicitud para unirse a ' + (group.name || 'grupo')
-                        : action === 'request' ? 'Solicitar unirse a ' + (group.name || 'grupo') : label + ' a ' + (group.name || 'grupo');
-                    const actionButton = action
-                        ? `<div class="requestButtons"><button type="button" class="${action === 'request' ? 'accept' : 'reject'}" data-group-join="${escapeHtml(group.id)}" title="${escapeHtml(accessibleLabel)}" aria-label="${escapeHtml(accessibleLabel)}">${requestActionIcon(action === 'request' ? 'add' : 'cancel')}</button></div>`
-                        : `<button class="mBtn discoverGroupAction" type="button" data-group-join="${escapeHtml(group.id)}" title="${escapeHtml(accessibleLabel)}" aria-label="${escapeHtml(accessibleLabel)}" ${disabled ? 'disabled' : ''}>${escapeHtml(label)}</button>`;
+                        : joined ? 'Ya eres miembro de ' + (group.name || 'grupo')
+                            : closed ? 'Grupo cerrado: ' + (group.name || 'grupo')
+                                : group.joinPolicy === 'request' ? 'Solicitar unirse a ' + (group.name || 'grupo')
+                                    : 'Unirse a ' + (group.name || 'grupo');
+                    const actionButton = `<div class="requestButtons"><button type="button" class="${buttonClass}" data-group-join="${escapeHtml(group.id)}" title="${escapeHtml(accessibleLabel)}" aria-label="${escapeHtml(accessibleLabel)}" ${joined || closed ? 'disabled' : ''}>${icon}</button></div>`;
                     const memberCount = Number.isFinite(Number(group.members)) ? Number(group.members) : 0;
                     return `<div class="discoverGroup" role="listitem">
       <div class="avatar groupGrid">${groupAvHTML(group)}</div>
@@ -13750,7 +14600,7 @@
         <path d="M15 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Zm0-6a2 2 0 1 1 0 4 2 2 0 0 1 0-4Zm-8.5 8a4.5 4.5 0 0 0-4.5 4.5V21h10v-2H4v-.5A2.5 2.5 0 0 1 6.5 16H10v-2Zm12-1v3h-3v2h3v3h2v-3h3v-2h-3v-3Z"/>
       </svg>
     </div>
-    <div class="meta"><div class="name">Solicitudes</div><div class="requestSummary"><span>Enviadas: ${requestSent}</span><span>Recibidas: ${requestIncoming}</span></div></div>
+    <div class="meta"><div class="name">Solicitudes</div><div class="requestSummary">Solicitudes pendientes</div></div>
     <div class="unread">${requestTotal > 99 ? '99+' : requestTotal}</div>
   </div>` : ''}
 ` : '';
@@ -13847,7 +14697,6 @@
                 document.getElementById('empty').style.display = 'none';
                 const msgsEl = document.getElementById('msgs');
                 msgsEl.style.display = 'block';
-                msgsEl.classList.remove('typing-reserved');
                 /* limpia de inmediato: hasta que llegue el historial NUNCA se
                    deben ver los mensajes del chat anterior bajo la cabecera nueva */
                 msgsEl.innerHTML = '';
@@ -13859,7 +14708,6 @@
                 document.getElementById('stickerPanel').classList.remove('open');
                 document.getElementById('attachmentPanel').style.display = 'none';
                 attachmentDestination = null;
-                document.getElementById('typingBubble').classList.remove('on');
                 document.getElementById('chatHeaderWrap').style.display = 'block';
                 document.getElementById('chatHeader').style.display = 'flex';
                 document.getElementById('chatHeader').classList.toggle('saved-chat', u === '__saved__');
@@ -13882,6 +14730,7 @@
                 } else if (u !== '__saved__' && !isBlocked(name) && !blockedByThem(name)) {
                     showMessageLoadState('initial');
                 }
+                paintTypingBubble();
                 const profilePromise = (async () => {
                     let p = profilesCache[name] || {};
                     try { p = await getProfile(name); }
@@ -14121,7 +14970,7 @@
                 setTimeout(() => t.remove(), 4200);
             }
             function debugToast(text) {
-                if (me && userSetting('debug_toasts', '0', 'chatlocal_debug_toasts_' + me.username) === '1') toast(text);
+                if (me && userSetting('debug_toasts', '0', 'zlapy_debug_toasts_' + me.username) === '1') toast(text);
             }
             function applyBlockedUI() {
                 const bar = document.getElementById('blockedBar');
@@ -14239,7 +15088,15 @@
                 if (gpTarget !== null) dismissLayer('panel-group');
                 document.body.classList.remove('chat-open');
                 active = null; activeKind = 'dm'; activeGroup = null;
-                document.getElementById('msgs').innerHTML = '';   // salir deja la vista limpia
+                const empty = document.getElementById('empty');
+                if (empty) empty.style.removeProperty('display');
+                const msgs = document.getElementById('msgs');
+                if (msgs) {
+                    msgs.innerHTML = '';
+                    msgs.style.display = 'none';
+                }
+                document.getElementById('inputbar').style.display = 'none';
+                document.getElementById('blockedBar').style.display = 'none';
                 renderContacts();
                 const nf = document.getElementById('noteFloat'); if (nf) nf.style.display = 'none';
                 const wh = document.getElementById('chatHeaderWrap'); if (wh) wh.style.display = 'none';
@@ -14806,8 +15663,15 @@
                             : esSticker && m.reply
                                 ? `${nombre}${body}<span class="stickerReplyMeta">${displayMeta.hide ? '' : `<span class="time">${t}</span>${m.inGroup ? '' : TICK(m)}`}</span>`
                                 : `${nombre}${body}${meta}`;
+                const reactions = !m.once && m.kind !== 'seen' && Array.isArray(m.reactions)
+                    ? m.reactions.filter(reaction => reaction && typeof reaction.emoji === 'string' && reaction.count > 0)
+                    : [];
+                const reactionsMarkup = reactions.length
+                    ? `<div class="messageReactions" role="group" aria-label="Reacciones al mensaje">${reactions.map(reaction =>
+                        `<button class="messageReaction${reaction.mine ? ' mine' : ''}" type="button" data-reaction-message="${escapeHtml(m.id)}" data-reaction-emoji="${escapeHtml(reaction.emoji)}" aria-label="${escapeHtml(reaction.emoji)} ${reaction.count} reacciones${reaction.mine ? ', tu reacción' : ''}"><span>${escapeHtml(reaction.emoji)}</span><span class="messageReactionCount">${reaction.count}</span></button>`
+                    ).join('')}</div>` : '';
                 const sinMeta = displayMeta.hide ? ' noMeta' : '';
-                return `<div class="bubble ${m.mine ? 'me' : 'them'}${onceView ? ' onceViewBubble' : ''}${m.kind === 'contact' ? ' contactBubble' : ''}${m.kind === 'audio' ? ' audioBubble' : ''}${(m.kind === 'image' || m.kind === 'file') && !m.once ? ' mediaBubble' : ''}${imageTextBubble ? ' imageTextBubble' : ''}${galleryTextBubble ? ' galleryTextBubble' : ''}${m.kind === 'image' ? ' imageBubble' : ''}${m.kind === 'poll' ? ' pollBubble' : ''}${esSticker ? ' stickerB' : ''}${esSticker && m.reply ? ' stickerReplyB' : ''}${sinMeta}${m.inGroup ? ' groupBubbleAction' : ''}" id="b${escapeHtml(m.id)}" data-message-id="${escapeHtml(m.id)}">${m.inGroup ? '' : m.kind === 'contact' ? '' : `<span class="replyBtn" onclick="event.stopPropagation();setReply('${jsArg(m.id)}')"><svg viewBox="0 0 24 24"><path d="M10 9V5l-7 7 7 7v-4.1c5 0 8.5 1.6 11 5.1-1-5-4-10-11-11z"/></svg></span>`}${content}</div>`;
+                return `<div class="bubble ${m.mine ? 'me' : 'them'}${onceView ? ' onceViewBubble' : ''}${m.kind === 'contact' ? ' contactBubble' : ''}${m.kind === 'audio' ? ' audioBubble' : ''}${(m.kind === 'image' || m.kind === 'file') && !m.once ? ' mediaBubble' : ''}${imageTextBubble ? ' imageTextBubble' : ''}${galleryTextBubble ? ' galleryTextBubble' : ''}${m.kind === 'image' ? ' imageBubble' : ''}${m.kind === 'poll' ? ' pollBubble' : ''}${esSticker ? ' stickerB' : ''}${esSticker && m.reply ? ' stickerReplyB' : ''}${sinMeta}${m.inGroup ? ' groupBubbleAction' : ''}" id="b${escapeHtml(m.id)}" data-message-id="${escapeHtml(m.id)}">${m.inGroup ? '' : m.kind === 'contact' ? '' : `<span class="replyBtn" onclick="event.stopPropagation();setReply('${jsArg(m.id)}')"><svg viewBox="0 0 24 24"><path d="M10 9V5l-7 7 7 7v-4.1c5 0 8.5 1.6 11 5.1-1-5-4-10-11-11z"/></svg></span>`}${content}${reactionsMarkup}</div>`;
             }
             function groupedMessageMetadata(messages) {
                 const display = new Map();
@@ -15434,30 +16298,9 @@
             const typingState = {};
             const recState = {};
             const MIC_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" fill="#ef5350"><path d="M12 14a3 3 0 003-3V5a3 3 0 00-6 0v6a3 3 0 003 3zm5-3a5 5 0 01-10 0H5a7 7 0 006 6.92V21h2v-3.08A7 7 0 0019 11h-2z"/></svg>';
-            function setTypingBubbleVisible(bubble, visible, reserveSpace = false) {
-                const messages = document.getElementById('msgs');
-                const wasAtBottom = messages && messages.scrollHeight - messages.scrollTop - messages.clientHeight < 80;
-                bubble.classList.toggle('on', visible);
-                if (!messages) return;
-                const shouldReserve = visible && reserveSpace;
-                messages.classList.toggle('typing-reserved', shouldReserve);
-                if (!shouldReserve) {
-                    messages.style.removeProperty('--typing-reserved-space');
-                    if (wasAtBottom) requestAnimationFrame(() => { messages.scrollTop = messages.scrollHeight; });
-                    return;
-                }
-                requestAnimationFrame(() => {
-                    if (!bubble.isConnected || !messages.classList.contains('typing-reserved')) return;
-                    const gap = 12;
-                    const space = Math.max(0, messages.getBoundingClientRect().bottom -
-                        bubble.getBoundingClientRect().top + gap);
-                    messages.style.setProperty('--typing-reserved-space', `${space}px`);
-                    if (wasAtBottom) messages.scrollTop = messages.scrollHeight;
-                });
-            }
             function paintTypingBubble() {
-                const b = document.getElementById('typingBubble');
-                if (!b) return;
+                const messages = document.getElementById('msgs');
+                if (!messages) return;
                 let who = null, mode = null;
                 if (activeKind === 'dm' && active) {
                     if (recState['dm:' + active]) { who = active; mode = 'rec'; }
@@ -15468,16 +16311,32 @@
                     const t = members.find(m => typingState['g:' + activeGroup.id + ':' + m]);
                     if (r) { who = r; mode = 'rec'; } else if (t) { who = t; mode = 'typing'; }
                 }
+                let indicator = messages.querySelector('.typingMessage');
                 if (!who) {
-                    setTypingBubbleVisible(b, false);
-                    b.innerHTML = '<span class="dots"><i></i><i></i><i></i></span>';
+                    if (indicator) {
+                        const wasAtBottom = messages.scrollHeight - messages.scrollTop - messages.clientHeight < 80;
+                        indicator.remove();
+                        if (wasAtBottom) requestAnimationFrame(() => { messages.scrollTop = messages.scrollHeight; });
+                    }
                     return;
                 }
-                const messages = convList();
-                const lastMessage = messages.length ? messages[messages.length - 1] : null;
-                setTypingBubbleVisible(b, true, !!lastMessage && !lastMessage.mine);
-                if (mode === 'rec') b.innerHTML = '<span class="recBars"><i></i><i></i><i></i><i></i></span>';
-                else b.innerHTML = '<span class="dots"><i></i><i></i><i></i></span>';
+                const wasAtBottom = messages.scrollHeight - messages.scrollTop - messages.clientHeight < 80;
+                const name = replyQuien({ from: who });
+                const activity = mode === 'rec'
+                    ? `<span class="recBars" aria-hidden="true"><i></i><i></i><i></i><i></i></span>`
+                    : `<span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>`;
+                if (!indicator) {
+                    indicator = document.createElement('div');
+                    indicator.className = 'bubble them typingMessage';
+                    indicator.setAttribute('role', 'status');
+                    indicator.setAttribute('aria-live', 'polite');
+                }
+                indicator.innerHTML = activity;
+                messages.appendChild(indicator);
+                if (wasAtBottom) requestAnimationFrame(() => {
+                    if (indicator.isConnected && indicator.parentElement === messages)
+                        messages.scrollTop = messages.scrollHeight;
+                });
             }
             function setTyping(who, on, groupId) {
                 const key = groupId ? 'g:' + groupId + ':' + who : 'dm:' + who;
@@ -15524,10 +16383,42 @@
 
             let replyTo = null, menuMsg = null;
             const convList = () => (activeKind === 'group' && activeGroup ? conv[activeGroup.id] : conv[active]) || [];
+            async function setMessageReaction(messageId, emoji) {
+                try {
+                    const response = await fetch('/message/reaction', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ messageId, emoji })
+                    });
+                    let result;
+                    try { result = await response.json(); }
+                    catch {
+                        if (!response.ok) throw new Error(`No se pudo guardar la reacción (HTTP ${response.status}).`);
+                        throw new Error('El servidor devolvió una respuesta no válida al guardar la reacción.');
+                    }
+                    if (!response.ok) throw new Error(result.error || 'No se pudo guardar la reacción.');
+                    const entry = conversationMessageById.get(messageId);
+                    if (entry && Array.isArray(result.reactions)) {
+                        entry.message.reactions = result.reactions;
+                        if ((activeKind === 'group' && activeGroup && activeGroup.id === entry.key) ||
+                            (activeKind === 'dm' && active === entry.key)) renderAll();
+                    }
+                } catch (error) {
+                    console.error('[reactions] No se pudo guardar la reacción:', error);
+                    toast(error.message || 'No se pudo guardar la reacción.');
+                }
+            }
             (function () {
                 const box = document.getElementById('msgs');
                 if (!box) return;
                 let st = null;
+                box.addEventListener('click', event => {
+                    const button = event.target.closest && event.target.closest('.messageReaction');
+                    if (!button) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setMessageReaction(button.dataset.reactionMessage, button.dataset.reactionEmoji);
+                });
                 box.addEventListener('touchstart', e => {
                     if (st || !e.touches || e.touches.length !== 1) return;
                     const t = e.touches[0];
@@ -15577,8 +16468,11 @@
                 const inGroup = activeKind === 'group' && activeGroup;
                 const isAdmin = inGroup && activeGroup.admins.includes(me.username);
                 const m0 = convList().find(x => x.id === menuMsg);
+                const reactionTargetId = menuMsg;
                 const permsPeer = (profilesCache[m0 ? m0.peer : ''] || {}).permisos || {};
                 const collage = m0 && m0.kind === 'image' && !m0.once && Array.isArray(m0.gallery) && m0.gallery.length > 1;
+                const stickerImageAvailable = m0 && m0.kind === 'image' && !m0.once &&
+                    (collage ? m0.gallery.some(item => item && item.plain instanceof Blob) : m0.plain instanceof Blob);
                 const pollDownloadable = m0 && m0.kind === 'poll' && !m0.once;
                 const descArgable = m0 && m0.kind !== 'contact' && m0.kind !== 'text' && m0.kind !== 'seen' && m0.kind !== 'sticker' && m0.kind !== 'group-invite' && m0.kind !== 'poll' && !m0.once && m0.plain;
                 const esStriker = m0 && m0.kind === 'sticker' && m0.plain;
@@ -15586,6 +16480,7 @@
                 // El menu del mensaje es el mismo pop-menu que el resto de la app.
                 const items = [];
                 if (!inGroup || groupCanSend('text')) items.push({ id: 'reply', label: 'Responder', icon: 'reply' });
+                if (stickerImageAvailable) items.push({ id: 'create-sticker', label: 'Crear stricker', icon: 'edit' });
                 if (m0 && m0.kind === 'text' && m0.plain) items.push({ id: 'copy', label: 'Copiar', icon: 'copy' });
                 if (esStriker) items.push({ id: 'fav', label: yaFav ? 'Quitar de favoritos' : 'Agregar a favoritos', icon: 'star' });
                 if (collage || descArgable || pollDownloadable)
@@ -15598,6 +16493,13 @@
                 ZlapyPopMenu.open({
                     x: e.clientX, y: e.clientY,
                     items,
+                    reactions: m0 && !m0.once && m0.kind !== 'seen'
+                        ? ['❤️', '👍', '👎', '🔥', '🥰', '👏']
+                        : [],
+                    onReact: emoji => setMessageReaction(reactionTargetId, emoji),
+                    onMore: () => {
+                        openStickerEmojiTab(emoji => setMessageReaction(reactionTargetId, emoji));
+                    },
                     onSelect: action => menuAction(action)
                 });
             });
@@ -15606,6 +16508,31 @@
                 const m = convList().find(x => x.id === menuMsg);
                 if (!m) return;
                 if (a === 'reply') setReply(m.id);
+                else if (a === 'create-sticker' && m.kind === 'image' && !m.once) {
+                    const images = Array.isArray(m.gallery) && m.gallery.length > 1
+                        ? m.gallery.map((item, index) => ({ item, index })).filter(({ item }) => item && item.plain instanceof Blob)
+                        : m.plain instanceof Blob ? [{ item: { plain: m.plain, mime: m.mime }, index: 0 }] : [];
+                    if (!images.length) {
+                        toast('No se pudo cargar la imagen para crear el stricker.');
+                    } else if (images.length === 1) {
+                        openStickerCreator(images[0].item.plain);
+                    } else {
+                        ZlapyPopMenu.open({
+                            x: window.innerWidth / 2,
+                            y: window.innerHeight / 2,
+                            items: images.map(({ index }) => ({
+                                id: 'sticker-image-' + index,
+                                label: `Imagen ${index + 1}`,
+                                icon: 'gallery'
+                            })),
+                            onSelect: choice => {
+                                const selectedIndex = Number(String(choice).replace('sticker-image-', ''));
+                                const selected = images.find(({ index }) => index === selectedIndex);
+                                if (selected) openStickerCreator(selected.item.plain);
+                            }
+                        });
+                    }
+                }
                 else if (a === 'copy') {
                     const txt = String(m.plain != null ? m.plain : (m.data || ''));
                     const ok = () => toast('Copiado');
@@ -16022,10 +16949,12 @@
                     throw error;
                 }
             }
-            async function sendText() {
-                if (pendingDrafts.length) return sendDraft();
+            async function sendText(textOverride) {
+                const hasTextOverride = typeof textOverride === 'string';
+                if (!hasTextOverride && pendingDrafts.length) return sendDraft();
                 if (sendText.inFlight) return; // Enter con auto-repeat o clic+Enter
-                const v = document.getElementById('msgInput').value.trim();
+                const input = document.getElementById('msgInput');
+                const v = (hasTextOverride ? textOverride : input.value).trim();
                 if (!v || !active) return;
                 const limit = activeKind === 'group' ? CHAT_TEXT_LIMITS.group : CHAT_TEXT_LIMITS.dm;
                 if (countCharacters(v) > limit) {
@@ -16039,11 +16968,11 @@
                         ? await sendGroupMessage(v)
                         : await sendPayload('text', '', '', new TextEncoder().encode(v));
                     if (!sent) return;
-                    document.getElementById('msgInput').value = '';
+                    if (!hasTextOverride) input.value = '';
                     hideMentionPanel();
                     updateSendBtn();
                     scrollToBottom(true);
-                    document.getElementById('msgInput').focus();
+                    if (!hasTextOverride) input.focus();
                 } finally { sendText.inFlight = false; }
             }
             function pickFile() {
@@ -17456,7 +18385,7 @@
                 if (storySeenAccountId === accountId) return;
                 storySeenAccountId = accountId;
                 try {
-                    const parsed = JSON.parse(readAccountStorage(SEEN_KEY, 'chatlocal_storyseen') || '{}');
+                    const parsed = JSON.parse(readAccountStorage(SEEN_KEY, 'zlapy_storyseen') || '{}');
                     // Se reindexa sin prototipo: la clave es el nombre de
                     // usuario y `__proto__` es un nombre de usuario válido.
                     storySeenMap = (parsed && typeof parsed === 'object' && !Array.isArray(parsed))
@@ -17790,7 +18719,7 @@
                 const unique = [...new Set((stickers || []).filter(url => typeof url === 'string' && /^https:\/\/[^\s]+$/i.test(url) && stickerUrlAllowed(url)))];
                 const fresh = unique.filter(url => !storyStickerUrls.has(url));
                 fresh.forEach(url => storyStickerUrls.add(url));
-                const markup = fresh.map(url => `<button type="button" data-sticker-url="${escapeHtml(url)}" data-added-order="${storyStickerDisplaySequence++}" aria-label="Enviar sticker">${stickerImgHTML(url, '', '', ' loading="lazy"')}</button>`).join('');
+                const markup = fresh.map(url => `<button class="stickerGridItem" type="button" data-sticker-url="${escapeHtml(url)}" data-added-order="${storyStickerDisplaySequence++}" aria-label="Enviar stricker">${stickerImgHTML(url, '', '', ' loading="lazy"')}</button>`).join('');
                 if (!append) grid.innerHTML = '';
                 grid.querySelector('.sub[data-sticker-empty]')?.remove();
                 if (markup) grid.insertAdjacentHTML('beforeend', markup);
@@ -17961,10 +18890,10 @@
                     if (!response.ok) throw new Error(result.error || 'HTTP ' + response.status);
                     recordStickerUsage(url);
                     closeStoryStickerPicker();
-                    toast('Sticker enviado como reacción');
+                    toast('Stricker enviado como reacción');
                 } catch (error) {
                     console.error('[stories] No se pudo enviar la reacción con sticker:', error);
-                    toast(error.message || 'No se pudo enviar el sticker. Comprueba tu conexión.');
+                    toast(error.message || 'No se pudo enviar el stricker. Comprueba tu conexión.');
                     if (picker && storyList[storyIdx] === story) picker.style.display = 'flex';
                 }
             }
@@ -18101,6 +19030,7 @@
                 if (name === 'chat') return closeChat(true);
                 if (name === 'panel-contact') return closeContactPanel();
                 if (name === 'panel-group') return closeGroupPanel();
+                if (name === 'panel-sticker-creator') return closeStickerCreator(true);
                 if (name === 'sheet-profile' || name === 'sheet-contact' || name === 'sheet-stories' || name === 'sheet-requests' || name === 'sheet-group-discover' || name === 'sheet-archived' || name === 'sheet-settings') return closeSheet(name === 'sheet-profile' ? 'profileSheet' : name === 'sheet-contact' ? 'contactSheet' : name === 'sheet-stories' ? 'storiesMgrSheet' : name === 'sheet-requests' ? 'requestsSheet' : name === 'sheet-group-discover' ? 'groupDiscoverSheet' : name === 'sheet-archived' ? 'archivedSheet' : 'settingsSheet', true);
             }
             /* En userCloseLayer/dismissLayer manda la ENTRADA ACTUAL del
@@ -18151,16 +19081,7 @@
                     return;
                 }
                 if (groupCreateRouteFrame) {
-                    groupCreateRouteFrame.remove();
-                    groupCreateRouteFrame = null;
-                    groupCreateClosing = false;
-                    if (groupCreatePreviousChatOpen !== null) {
-                        document.body.classList.toggle('chat-open', groupCreatePreviousChatOpen);
-                        groupCreatePreviousChatOpen = null;
-                    }
-                    const afterClose = groupCreateAfterClose;
-                    groupCreateAfterClose = null;
-                    if (afterClose) afterClose();
+                    finishGroupCreateClose();
                     return;
                 }
                 if (event.state && event.state.appRoute === 'group-details') {
@@ -18409,8 +19330,8 @@
                             me = renameResult.user;
                             rememberAccount(me);
                             for (const suffix of ['secnotif_', 'debug_toasts_']) {
-                                const oldKey = 'chatlocal_' + suffix + previousUsername;
-                                const newKey = 'chatlocal_' + suffix + me.username;
+                                const oldKey = 'zlapy_' + suffix + previousUsername;
+                                const newKey = 'zlapy_' + suffix + me.username;
                                 if (localStorage.getItem(oldKey) !== null && localStorage.getItem(newKey) === null)
                                     localStorage.setItem(newKey, localStorage.getItem(oldKey));
                                 localStorage.removeItem(oldKey);
@@ -18929,15 +19850,15 @@
             ];
             const CHAT_APPEARANCE_DEFAULTS = {
                 autoText: true,
-                wall: '#0b141a',
+                wall: '#14231f',
                 image: '',
                 opacity: 22,
                 blur: 0,
-                sender: '#005c4b',
-                receiver: '#202c33',
-                senderText: '#e9edef',
-                receiverText: '#e9edef',
-                accent: '#00a884',
+                sender: '#25483c',
+                receiver: '#1c332b',
+                senderText: '#e2f0e9',
+                receiverText: '#e2f0e9',
+                accent: '#25483c',
                 fontSize: 15
             };
             /* Colores del diseño anterior: quien no los haya cambiado
@@ -18973,10 +19894,10 @@
             let chatAccountAppearance = null;
             let chatAppearanceSync = Promise.resolve();
             let chatAppearanceSaveTimer = null;
-            function chatAppearanceKey() { return 'chatlocal_appearance_' + (me && (me.id || me.username) ? (me.id || me.username) : 'guest'); }
-            function legacyChatAppearanceKey() { return 'chatlocal_appearance_' + (me && me.username ? me.username : 'guest'); }
-            function chatWallpaperLocalKey() { return 'chatlocal_wallpaper_' + (me && (me.id || me.username) ? (me.id || me.username) : 'guest'); }
-            function chatAccentMigratedKey() { return 'chatlocal_accent_migrated_' + (me && (me.id || me.username) ? (me.id || me.username) : 'guest'); }
+            function chatAppearanceKey() { return 'zlapy_appearance_' + (me && (me.id || me.username) ? (me.id || me.username) : 'guest'); }
+            function legacyChatAppearanceKey() { return 'zlapy_appearance_' + (me && me.username ? me.username : 'guest'); }
+            function chatWallpaperLocalKey() { return 'zlapy_wallpaper_' + (me && (me.id || me.username) ? (me.id || me.username) : 'guest'); }
+            function chatAccentMigratedKey() { return 'zlapy_accent_migrated_' + (me && (me.id || me.username) ? (me.id || me.username) : 'guest'); }
             function accountAppearanceFields(appearance) {
                 return {
                     autoText: appearance.autoText !== false,
@@ -19054,7 +19975,7 @@
                         const legacy = localStorage.getItem(chatAppearanceKey()) ||
                             (legacyChatAppearanceKey() !== chatAppearanceKey() ? localStorage.getItem(legacyChatAppearanceKey()) : null);
                         if (legacy) stored = { ...stored, ...JSON.parse(legacy) };
-                        const legacyWall = readAccountStorage('chat_legacy_wall', 'chatlocal_wall');
+                        const legacyWall = readAccountStorage('chat_legacy_wall', 'zlapy_wall');
                         if (!stored.wall && legacyWall) stored.wall = legacyWall;
                     }
                 } catch (error) {
@@ -19157,7 +20078,7 @@
                     if ((image && !serverImage) || serverImage !== compactedServerImage || (!serverHasAccent && legacyAccent))
                         await persistChatAppearanceAccount(accountAppearanceFields(chatAccountAppearance));
                 } else {
-                    const legacyWall = readAccountStorage('chat_legacy_wall', 'chatlocal_wall');
+                    const legacyWall = readAccountStorage('chat_legacy_wall', 'zlapy_wall');
                     const migrated = { ...legacy };
                     migrated.image = image;
                     if (!migrated.wall && legacyWall) migrated.wall = legacyWall;
@@ -19185,7 +20106,7 @@
                     if (legacyChatAppearanceKey() !== chatAppearanceKey())
                         localStorage.removeItem(legacyChatAppearanceKey());
                     localStorage.removeItem(chatWallpaperLocalKey());
-                    localStorage.removeItem('chatlocal_wall');
+                    localStorage.removeItem('zlapy_wall');
                     const scopedLegacyWall = accountStorageKey('chat_legacy_wall');
                     if (scopedLegacyWall) localStorage.removeItem(scopedLegacyWall);
                 } catch (error) {
@@ -19308,7 +20229,7 @@
                 };
                 try {
                     localStorage.setItem(chatAppearanceKey(), JSON.stringify(accent));
-                    localStorage.setItem('chatlocal_appearance_hint', JSON.stringify({ id: (me && (me.id || me.username)) || 'guest', ...accent }));
+                    localStorage.setItem('zlapy_appearance_hint', JSON.stringify({ id: (me && (me.id || me.username)) || 'guest', ...accent }));
                 } catch (error) {
                     console.error('[appearance] No se pudo guardar el acento en este dispositivo:', error);
                 }
@@ -19451,7 +20372,6 @@
                     description.value = full.desc || '';
                     description.oninput = () => resizeProfileDescription(description);
                     resizeProfileDescription(description);
-                    if (window.ZlapyAutoGrow) ZlapyAutoGrow.grow(description, { maxHeight: 180 });
                 } catch { }
                 document.getElementById('psNoteFloat').textContent = p.note || '';
                 psAvatarData = '';
@@ -19461,6 +20381,7 @@
             async function openProfileSheet(fromPop = false) {
                 await fillProfileFields();
                 openSheet('profileSheet', 'sheet-profile', fromPop);
+                requestAnimationFrame(() => resizeProfileDescription(document.getElementById('psDesc')));
             }
             async function paintSettings() {
                 const sh = document.getElementById('settingsSheet');
@@ -19819,10 +20740,10 @@
                 }
                 if (settingsSection === 'notif') {
                     const snd = soundOn();
-                    const debugToasts = userSetting('debug_toasts', '0', 'chatlocal_debug_toasts_' + me.username) === '1';
+                    const debugToasts = userSetting('debug_toasts', '0', 'zlapy_debug_toasts_' + me.username) === '1';
                     main.innerHTML =
                         `<div class="settingsSectionContent"><div class="switchRow"><div class="meta"><b>Notificaciones push</b><span>"Nuevo mensaje de ..." fuera de la web</span></div><button class="tgl" id="swPush2" disabled aria-label="Consultando estado de notificaciones"></button></div>
-      <div class="switchRow"><div class="meta"><b>Avisos de inicio de sesión</b><span>Confirma tu sesión al entrar</span></div><button class="tgl${userSetting('security_notifications', '0', 'chatlocal_secnotif_' + me.username) === '1' ? ' on' : ''}" id="swSec"></button></div>
+      <div class="switchRow"><div class="meta"><b>Avisos de inicio de sesión</b><span>Confirma tu sesión al entrar</span></div><button class="tgl${userSetting('security_notifications', '0', 'zlapy_secnotif_' + me.username) === '1' ? ' on' : ''}" id="swSec"></button></div>
       <div class="switchRow"><div class="meta"><b>Sonidos en la app</b><span>Tonos al recibir mensajes</span></div><button class="tgl${snd ? ' on' : ''}" id="swSnd"></button></div>
       <div class="switchRow"><div class="meta"><b>Toasts de depuración</b><span>Mostrar errores y avisos técnicos en pantalla</span></div><button class="tgl${debugToasts ? ' on' : ''}" id="swDebugToasts"></button></div>
       <div class="sub" id="pushState" style="padding:8px 10px">Consultando estado…</div>
@@ -20397,6 +21318,41 @@
                 ],
                 iceCandidatePoolSize: 4
             };
+            const CALL_AUDIO_CONSTRAINTS = {
+                latency: { ideal: 0.02 },
+                echoCancellation: { ideal: true },
+                noiseSuppression: { ideal: false },
+                autoGainControl: { ideal: false }
+            };
+            function callMediaErrorMessage(error, video) {
+                const name = error && error.name;
+                if (name === 'NotAllowedError' || name === 'SecurityError') {
+                    return `El navegador bloqueó el acceso a ${video ? 'la cámara o el micrófono' : 'el micrófono'}. Permite el acceso al dispositivo en los ajustes de este sitio.`;
+                }
+                if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+                    return video
+                        ? 'No se encontró una cámara o un micrófono disponible en este dispositivo.'
+                        : 'No se encontró un micrófono disponible en este dispositivo.';
+                }
+                if (name === 'NotReadableError' || name === 'TrackStartError') {
+                    return `No se pudo abrir ${video ? 'la cámara o el micrófono' : 'el micrófono'}. Cierra otras aplicaciones que puedan estar usando el dispositivo e inténtalo de nuevo.`;
+                }
+                if (name === 'OverconstrainedError' || name === 'ConstraintNotSatisfiedError') {
+                    return 'El navegador no pudo iniciar la cámara con la configuración disponible. Comprueba los permisos e inténtalo de nuevo.';
+                }
+                return `No se pudo iniciar la ${video ? 'videollamada' : 'llamada'}${error && error.message ? ': ' + error.message : '.'}`;
+            }
+            function callCaptureConstraints(audio, video) {
+                const android = /Android/i.test(navigator.userAgent);
+                return {
+                    audio: audio ? (android ? true : CALL_AUDIO_CONSTRAINTS) : false,
+                    video: !!video
+                };
+            }
+            async function getCallMedia(audio, video) {
+                if (!audio && !video) return new MediaStream();
+                return navigator.mediaDevices.getUserMedia(callCaptureConstraints(audio, video));
+            }
             let call = null;
             let ringTimer = null, audioCtx = null, ringOsc = null, ringGain = null;
 
@@ -20416,8 +21372,8 @@
                     t += dur + gap;
                 }
             }
-            function soundOn() { return userSetting('sounds', '1', 'chatlocal_sounds') !== '0'; }
-            function autoPlayNextOn() { return userSetting('autoplay_audio', '1', 'chatlocal_autoplay_audio') !== '0'; }
+            function soundOn() { return userSetting('sounds', '1', 'zlapy_sounds') !== '0'; }
+            function autoPlayNextOn() { return userSetting('autoplay_audio', '1', 'zlapy_autoplay_audio') !== '0'; }
             function beep() { if (!soundOn()) return; try { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); tone([880], .09, 0, .06); } catch { } }
             function endTone() {
                 try {
@@ -20585,7 +21541,7 @@
       <span class="callArrow${red ? ' red' : (out ? ' out' : '')}">${arrow}</span>
       <div class="meta"><div class="name" style="${red ? 'color:#ef5350' : ''}">${lab}${durPill}</div>
       <div class="sub">${new Date(c.ts).toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</div></div>
-      <button class="btn" title="Llamar de vuelta" onclick="callBack('${jsArg(quien)}',${!!c.video})" style="color:var(--accent)"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M6 3h3l2 5-2.5 1.5a11 11 0 006 6L16 13l5 2v3a2 2 0 01-2.2 2A16 16 0 014 5.2 2 2 0 016 3z"/></svg></button></div>`;
+      <button class="btn" title="Llamar de vuelta" onclick="callBack('${jsArg(quien)}',${!!c.video})" style="color:var(--accent-readable)"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M6 3h3l2 5-2.5 1.5a11 11 0 006 6L16 13l5 2v3a2 2 0 01-2.2 2A16 16 0 014 5.2 2 2 0 016 3z"/></svg></button></div>`;
                 }).join('') : '<div class="mText" style="text-align:center;padding:20px">Todavía no hay llamadas con este chat.</div>';
                 Modal.hoja({ titulo: 'Llamadas', html: `<div class="mList">${filas}</div>` });
             }
@@ -20606,13 +21562,13 @@
                 const tieneVideo = video === true || (st.getVideoTracks && st.getVideoTracks().length > 0) || (trackOrStream && trackOrStream.kind === 'video');
                 if (tieneVideo) {
                     call && (call.video = true);
+                    if (call) call.remoteVideoAvailable = true;
                     rv.srcObject = st; rv.muted = false; rv.style.display = 'block'; ra.srcObject = null; ra.muted = true;
                     rv.play().catch(error => {
                         callDebug('No se pudo reproducir el medio remoto', { name: error.name, message: error.message, muted: rv.muted, volume: rv.volume });
                         debugToast('El medio remoto llegó, pero Chrome no lo pudo reproducir. Activa Toasts de depuración para ver detalles.');
                     });
-                    if (info) info.style.display = 'none';
-                    if (bg) bg.style.display = 'none';
+                    setRemoteVideoEnabled(!call || call.remoteVideoEnabled !== false);
                 } else {
                     ra.srcObject = st;
                     ra.muted = false;
@@ -20634,7 +21590,7 @@
                 startCallTimer();
             }
             function callDebug(message, details) {
-                if (!me || userSetting('debug_toasts', '0', 'chatlocal_debug_toasts_' + me.username) !== '1') return;
+                if (!me || userSetting('debug_toasts', '0', 'zlapy_debug_toasts_' + me.username) !== '1') return;
                 console.info('[call-debug]', message, details || '');
             }
             function startCallDiagnostics(c) {
@@ -20646,7 +21602,18 @@
                         const audio = [];
                         for (const item of stats.values()) {
                             if (item.type === 'inbound-rtp' && item.kind === 'audio')
-                                audio.push({ direction: 'received', packets: item.packetsReceived, bytes: item.bytesReceived, audioLevel: item.audioLevel, lost: item.packetsLost });
+                                audio.push({
+                                    direction: 'received',
+                                    packets: item.packetsReceived,
+                                    bytes: item.bytesReceived,
+                                    audioLevel: item.audioLevel,
+                                    lost: item.packetsLost,
+                                    jitter: item.jitter,
+                                    jitterBufferTarget: item.jitterBufferTarget,
+                                    averageJitterBufferDelay: item.jitterBufferEmittedCount
+                                        ? item.jitterBufferDelay / item.jitterBufferEmittedCount
+                                        : undefined
+                                });
                             if (item.type === 'outbound-rtp' && item.kind === 'audio')
                                 audio.push({ direction: 'sent', packets: item.packetsSent, bytes: item.bytesSent, audioLevel: item.audioLevel });
                         }
@@ -20678,6 +21645,13 @@
                 pc.ontrack = event => {
                     try {
                         callDebug('Evento ontrack', { kind: event.track.kind, streams: event.streams.length, state: event.track.readyState });
+                        if ('jitterBufferTarget' in event.receiver) {
+                            event.receiver.jitterBufferTarget = event.track.kind === 'audio' ? 60 : 120;
+                            callDebug('Objetivo del búfer de jitter', {
+                                kind: event.track.kind,
+                                targetMs: event.receiver.jitterBufferTarget
+                            });
+                        }
                         event.track.onmute = () => callDebug('Pista remota silenciada', { kind: event.track.kind });
                         event.track.onunmute = () => callDebug('Pista remota activa', { kind: event.track.kind });
                         event.track.onended = () => callDebug('Pista remota terminada', { kind: event.track.kind });
@@ -20740,15 +21714,27 @@
                 if (blockedByThem(peer)) { debugToast(peer + ' te ha bloqueado: no puedes llamarle.'); return; }
                 const perms = (profilesCache[peer] || {}).permisos || {};
                 if (perms.llamar === false) { Modal.aviso(peer + ' no tiene activadas las llamadas.'); return; }
-                let c = null;
+                if (!window.isSecureContext) {
+                    toast('El navegador no permite usar cámara y micrófono en una conexión HTTP. Abre Zlapy con HTTPS.');
+                    return;
+                }
+                if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+                    toast('Este navegador no es compatible con llamadas de audio y video. Prueba con Chrome actualizado.');
+                    return;
+                }
+                let c = null, stream = null;
                 try {
-                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video });
+                    stream = await getCallMedia(true, video);
                     if (call) { stream.getTracks().forEach(t => t.stop()); return; }
                     const id = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
                     c = { id, peer, video, stream, pc: new RTCPeerConnection(RTC_CFG), pendingIce: [], pendingSdp: null, state: 'calling' };
                     call = c;
                     configureCallPeerConnection(c);
-                    stream.getTracks().forEach(t => c.pc.addTrack(t, stream));
+                    stream.getTracks().forEach(track => {
+                        const sender = c.pc.addTrack(track, stream);
+                        if (track.kind === 'video') c.videoSender = sender;
+                        if (track.kind === 'audio') c.audioSender = sender;
+                    });
                     callDebug('Micrófono local listo', { tracks: c.stream.getAudioTracks().map(track => ({ enabled: track.enabled, state: track.readyState, muted: track.muted, label: track.label })) });
                     startCallDiagnostics(c);
                     showCallUI(peer, video, 'Llamando…');
@@ -20762,7 +21748,12 @@
                     c.timeout = setTimeout(() => {
                         if (call === c && c.state === 'calling') { send({ type: 'call-cancel', to: peer, callId: id }); stopCallLocal(); }
                     }, 30000);
-                } catch (e) { debugToast('No se pudo iniciar la llamada: ' + e.message); stopCallLocal(); }
+                } catch (error) {
+                    console.error('[call] No se pudo iniciar la llamada:', error);
+                    if (c && call === c) stopCallLocal();
+                    else if (stream) stream.getTracks().forEach(track => track.stop());
+                    toast(callMediaErrorMessage(error, video));
+                }
             }
 
             function onCallIncoming(m) {
@@ -20775,9 +21766,19 @@
                 const av = document.getElementById('ringAvatar');
                 const paint = p => av.innerHTML = `<img src="${escapeHtml(p && p.avatar ? p.avatar : avatarUrl(m.from, p && p.id))}" alt="">`;
                 paint(profilesCache[m.from]);
-                (async () => { if (!profilesCache[m.from]) { try { paint(await getProfile(m.from)); } catch { } } })();
-                document.getElementById('ringName').textContent = m.from;
+                (async () => {
+                    if (!profilesCache[m.from]) {
+                        try {
+                            paint(await getProfile(m.from));
+                            if (call && call.id === m.callId)
+                                document.getElementById('ringName').textContent = callUsernameLabel(m.from);
+                        } catch { }
+                    }
+                })();
+                document.getElementById('ringName').textContent = callUsernameLabel(m.from);
                 document.getElementById('ringNote').textContent = m.video ? 'Llamada de video entrante' : 'Llamada de voz entrante';
+                call.ringAudioEnabled = true;
+                call.ringVideoEnabled = !!m.video;
                 const rbg = document.getElementById('ringBg');
                 const setRingBg = p => { if (rbg) rbg.style.backgroundImage = 'url("' + escapeHtml(p && p.avatar ? p.avatar : avatarUrl(m.from, p && p.id)) + '")'; };
                 setRingBg(profilesCache[m.from]);
@@ -20786,12 +21787,33 @@
     <button onclick="acceptCall()" style="background:var(--accent);color:var(--accent-ink)" title="Contestar"><svg viewBox="0 0 24 24"><path d="M6 3h3l2 5-2.5 1.5a11 11 0 006 6L16 13l5 2v3a2 2 0 01-2.2 2A16 16 0 014 5.2 2 2 0 016 3z"/></svg></button>
     <button onclick="minimizeIncoming()" title="Dejar en segundo plano" style="background:#2a3942;color:#e9edef"><svg viewBox="0 0 24 24"><path d="M7.4 8.6L12 13.2l4.6-4.6L18 10l-6 6-6-6z"/></svg></button>
     <button onclick="rejectCall()" class="hang" title="Rechazar"><svg viewBox="0 0 24 24"><path d="M6 3h3l2 5-2.5 1.5a11 11 0 006 6L16 13l5 2v3a2 2 0 01-2.2 2A16 16 0 014 5.2 2 2 0 016 3z"/></svg></button>`;
+                document.getElementById('ringMediaControls').innerHTML = `
+    <button id="ringMute" type="button" aria-label="Silenciar micrófono antes de contestar" aria-pressed="false" title="Silenciar micrófono" onclick="toggleIncomingMedia('audio')"><svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 003-3V5a3 3 0 00-6 0v6a3 3 0 003 3zm5-3a5 5 0 01-10 0H5a7 7 0 006 6.92V21h2v-3.08A7 7 0 0019 11h-2z"/><path class="iconSlash" d="M3 3l18 18"/></svg></button>
+    <button id="ringCam" class="${m.video ? '' : 'off'}" type="button" aria-label="Apagar cámara antes de contestar" aria-pressed="${m.video ? 'false' : 'true'}" title="${m.video ? 'Apagar cámara' : 'Encender cámara al contestar'}" style="${m.video ? '' : 'display:none'}" onclick="toggleIncomingMedia('video')"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="12" height="12" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.8"></rect><path d="M15 11l6-3.5v9L15 13z"/><path class="iconSlash" d="M3 3l18 18"/></svg></button>`;
                 document.getElementById('callRing').classList.add('on');
                 void document.getElementById('callRing').offsetHeight;
                 ringStart();
                 call.timeout = setTimeout(() => {
                     if (call && call.id === m.callId && call.state === 'ringing') { send({ type: 'call-cancel', to: m.from, callId: m.callId }); stopCallLocal(); }
                 }, 30000);
+            }
+
+            function toggleIncomingMedia(kind) {
+                if (!call || call.state !== 'ringing') return;
+                const isAudio = kind === 'audio';
+                const enabledKey = isAudio ? 'ringAudioEnabled' : 'ringVideoEnabled';
+                if (!isAudio && !call.video) return;
+                call[enabledKey] = !call[enabledKey];
+                const enabled = call[enabledKey];
+                const button = document.getElementById(isAudio ? 'ringMute' : 'ringCam');
+                if (!button) return;
+                button.classList.toggle('off', !enabled);
+                button.setAttribute('aria-pressed', String(!enabled));
+                const label = isAudio
+                    ? (enabled ? 'Silenciar micrófono antes de contestar' : 'Activar micrófono al contestar')
+                    : (enabled ? 'Apagar cámara antes de contestar' : 'Encender cámara al contestar');
+                button.setAttribute('aria-label', label);
+                button.setAttribute('title', label);
             }
 
             async function acceptCall() {
@@ -20801,16 +21823,22 @@
                 ringStop();
                 document.getElementById('callRing').classList.remove('on');
                 c.state = 'connecting';
+                const audioEnabled = c.ringAudioEnabled !== false;
+                const videoEnabled = c.video && c.ringVideoEnabled !== false;
                 try {
-                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: c.video });
+                    const stream = await getCallMedia(audioEnabled, videoEnabled);
                     if (call !== c) { stream.getTracks().forEach(t => t.stop()); return; }
                     c.stream = stream;
-                    stream.getTracks().forEach(t => c.pc.addTrack(t, stream));
+                    stream.getTracks().forEach(track => {
+                        const sender = c.pc.addTrack(track, stream);
+                        if (track.kind === 'video') c.videoSender = sender;
+                        if (track.kind === 'audio') c.audioSender = sender;
+                    });
                     setupAudioRoute();
                 } catch (e) {
                     callDebug('No se pudo abrir el micrófono al contestar', { name: e.name, message: e.message });
-                    console.warn('[call] No se pudo abrir el micrófono al contestar:', e);
-                    debugToast('No se pudo abrir el micrófono; no se puede iniciar audio en la llamada.');
+                    console.warn('[call] No se pudo abrir el medio al contestar:', e);
+                    toast(callMediaErrorMessage(e, videoEnabled));
                     rejectCall();
                     return;
                 }
@@ -20899,11 +21927,14 @@
                 const bt = document.getElementById('banTime');
                 if (bt) bt.textContent = t;
             }
+            function callUsernameLabel(username) {
+                return displayNameOf(username);
+            }
             function minimizeCall() {
                 if (!call) return;
                 const p = profilesCache[call.peer] || {};
                 document.getElementById('banAvatar').innerHTML = `<img src="${escapeHtml(p.avatar || avatarUrl(call.peer))}" alt="">`;
-                document.getElementById('banName').textContent = p.name || call.peer;
+                document.getElementById('banName').textContent = callUsernameLabel(call.peer);
                 setCallStatus(document.getElementById('callState').textContent || 'En llamada');
                 document.getElementById('callLayer').classList.remove('on');
                 document.getElementById('callRing').classList.remove('on');
@@ -20921,11 +21952,13 @@
                 if (!call) return;
                 const p = profilesCache[call.peer] || {};
                 document.getElementById('banAvatar').innerHTML = `<img src="${escapeHtml(p.avatar || avatarUrl(call.peer))}" alt="">`;
-                document.getElementById('banName').textContent = p.name || call.peer;
+                document.getElementById('banName').textContent = callUsernameLabel(call.peer);
                 setCallStatus(call.video ? 'Videollamada entrante' : 'Llamada entrante');
                 document.getElementById('callRing').classList.remove('on');
                 document.getElementById('callBanner').style.display = 'flex';
                 document.body.classList.add('in-call');
+                setCallControlBusy('audio', true);
+                setCallControlBusy('video', true);
             }
             function hideBanner() {
                 document.getElementById('callBanner').style.display = 'none';
@@ -20943,19 +21976,49 @@
             function clearMediaSession() { try { if ('mediaSession' in navigator) { navigator.mediaSession.playbackState = 'none'; navigator.mediaSession.metadata = null; } } catch { } }
             function requestWakeLock() { try { if ('wakeLock' in navigator) navigator.wakeLock.request('screen').then(l => { window.callWakeLock = l; }).catch(() => { }); } catch { } }
             function releaseWakeLock() { try { if (window.callWakeLock) { window.callWakeLock.release(); window.callWakeLock = null; } } catch { } }
+            function setCallControlState(kind, enabled) {
+                const controls = kind === 'audio'
+                    ? ['btnMute', 'banMute']
+                    : ['btnCam', 'banCam'];
+                const label = kind === 'audio'
+                    ? (enabled ? 'Silenciar micrófono' : 'Activar micrófono')
+                    : (enabled ? 'Ocultar cámara' : 'Mostrar cámara');
+                for (const id of controls) {
+                    const button = document.getElementById(id);
+                    if (!button) continue;
+                    button.classList.toggle('off', !enabled);
+                    button.setAttribute('aria-label', label);
+                    button.setAttribute('title', label);
+                    button.setAttribute('aria-pressed', String(!enabled));
+                }
+            }
+            function setCallControlBusy(kind, busy) {
+                const controls = kind === 'audio'
+                    ? ['btnMute', 'banMute']
+                    : ['btnCam', 'banCam'];
+                for (const id of controls) {
+                    const button = document.getElementById(id);
+                    if (button) button.disabled = busy;
+                }
+            }
             function showCallUI(peer, video, state) {
                 document.getElementById('callLayer').classList.add('on');
                 void document.getElementById('callLayer').offsetHeight;
-                document.getElementById('callName').textContent = peer;
+                document.getElementById('callName').textContent = callUsernameLabel(peer);
                 setCallStatus(state);
                 document.getElementById('callAvatar').style.display = video ? 'none' : 'flex';
                 document.getElementById('btnCam').style.display = 'flex';
-                document.getElementById('btnMute').classList.remove('off');
+                const audioEnabled = !!(call && call.stream && call.stream.getAudioTracks().some(track => track.readyState !== 'ended'));
+                const videoEnabled = !!(call && call.stream && call.stream.getVideoTracks().some(track => track.readyState !== 'ended'));
+                setCallControlState('audio', audioEnabled);
+                setCallControlState('video', videoEnabled);
+                setCallControlBusy('audio', false);
+                setCallControlBusy('video', false);
                 const p = profilesCache[peer] || {};
                 const av = `<img src="${escapeHtml(p.avatar || avatarUrl(peer, p.id))}" alt="">`;
                 document.getElementById('callAvatar').innerHTML = av;
                 document.getElementById('stageAvatar').innerHTML = av;
-                document.getElementById('stageName').textContent = p.name || peer;
+                document.getElementById('stageName').textContent = callUsernameLabel(peer);
                 document.getElementById('stageState').textContent = state;
                 document.getElementById('remoteMute').style.display = 'none';
                 document.getElementById('stageInfo').style.display = 'flex';
@@ -20964,7 +22027,24 @@
                 document.getElementById('stageInfo').style.background = p.avatar ? 'rgba(11,20,26,.5)' : 'radial-gradient(circle at 50% 32%,#1d2f37,#0b141a 72%)';
                 setMediaSession(peer);
                 requestWakeLock();
-                (async () => { if (!p.avatar) { try { const q = await getProfile(peer); if (q.avatar) { document.getElementById('callAvatar').innerHTML = `<img src="${escapeHtml(q.avatar)}">`; document.getElementById('stageAvatar').innerHTML = `<img src="${escapeHtml(q.avatar)}">`; } } catch { } } })();
+                (async () => {
+                    if (p.name && p.avatar) return;
+                    try {
+                        const q = await getProfile(peer);
+                        if (!call || call.peer !== peer) return;
+                        const name = callUsernameLabel(peer);
+                        document.getElementById('callName').textContent = name;
+                        document.getElementById('stageName').textContent = name;
+                        document.getElementById('ringName').textContent = name;
+                        document.getElementById('banName').textContent = name;
+                        if (q.avatar) {
+                            document.getElementById('callAvatar').innerHTML = `<img src="${escapeHtml(q.avatar)}">`;
+                            document.getElementById('stageAvatar').innerHTML = `<img src="${escapeHtml(q.avatar)}">`;
+                        }
+                    } catch (error) {
+                        console.error('[call] No se pudo cargar el perfil del participante:', error);
+                    }
+                })();
                 if (call && call.stream) {
                     document.getElementById('localVideo').srcObject = call.stream;
                     document.getElementById('localVideo').style.display = video ? 'block' : 'none';
@@ -20974,44 +22054,136 @@
                     document.getElementById('remoteVideo').style.display = 'none';
                 }
             }
-            function toggleMute() {
-                if (!call || !call.stream) return;
-                const t = call.stream.getAudioTracks()[0];
-                if (!t) return;
-                t.enabled = !t.enabled;
-                document.getElementById('btnMute').classList.toggle('off', !t.enabled);
-                if (call.peer) send({ type: 'call-mute', to: call.peer, callId: call.id, muted: !t.enabled });
+            async function toggleMute() {
+                const c = call;
+                const button = document.getElementById('btnMute');
+                if (!c || !c.pc || !c.stream || !button || button.disabled) return;
+                setCallControlBusy('audio', true);
+                let newTrack = null;
+                try {
+                    const currentTrack = c.stream.getAudioTracks().find(track => track.readyState !== 'ended');
+                    if (currentTrack) {
+                        const sender = c.audioSender || c.pc.getSenders().find(item => item.track === currentTrack);
+                        let replaceError = null;
+                        if (sender) {
+                            try { await sender.replaceTrack(null); }
+                            catch (error) { replaceError = error; }
+                        }
+                        c.audioSender = sender || c.audioSender;
+                        c.stream.removeTrack(currentTrack);
+                        currentTrack.stop();
+                        setCallControlState('audio', false);
+                        send({ type: 'call-mute', to: c.peer, callId: c.id, muted: true });
+                        if (replaceError) throw replaceError;
+                        return;
+                    }
+
+                    const microphoneStream = await getCallMedia(true, false);
+                    newTrack = microphoneStream.getAudioTracks()[0];
+                    if (!newTrack) throw new Error('No se encontró una pista de audio en el micrófono.');
+                    if (call !== c) { newTrack.stop(); return; }
+
+                    const sender = c.audioSender || c.pc.getSenders().find(item => item.track && item.track.kind === 'audio');
+                    if (sender) {
+                        await sender.replaceTrack(newTrack);
+                        c.audioSender = sender;
+                    } else {
+                        c.audioSender = c.pc.addTrack(newTrack, c.stream);
+                        const offer = await c.pc.createOffer();
+                        await c.pc.setLocalDescription(offer);
+                        send({ type: 'call-sdp', to: c.peer, callId: c.id, sdp: { type: offer.type, sdp: offer.sdp } });
+                    }
+                    c.stream.addTrack(newTrack);
+                    setCallControlState('audio', true);
+                    send({ type: 'call-mute', to: c.peer, callId: c.id, muted: false });
+                } catch (error) {
+                    if (newTrack && newTrack.readyState !== 'ended' && !c.stream.getTracks().includes(newTrack))
+                        newTrack.stop();
+                    console.error('[call] No se pudo cambiar el estado del micrófono:', error);
+                    debugToast(error.message || 'No se pudo cambiar el estado del micrófono.');
+                } finally {
+                    if (call === c) setCallControlBusy('audio', false);
+                }
             }
             function onCallMute(m) {
                 if (!call || call.id !== m.callId) return;
                 document.getElementById('remoteMute').style.display = m.muted ? 'flex' : 'none';
             }
-            function toggleCam() {
-                if (!call || !call.pc) return;
-                const t = call.stream && call.stream.getVideoTracks()[0];
-                if (t) {
-                    t.enabled = !t.enabled;
-                    document.getElementById('btnCam').classList.toggle('off', !t.enabled);
-                    document.getElementById('localVideo').classList.toggle('off', !t.enabled);
-                    return;
+            function setRemoteVideoEnabled(enabled) {
+                const rv = document.getElementById('remoteVideo');
+                const info = document.getElementById('stageInfo');
+                const bg = document.getElementById('stageBg');
+                if (!rv || !info || !bg) return;
+                const showVideo = !!enabled && !!(call && call.remoteVideoAvailable);
+                rv.style.visibility = showVideo ? 'visible' : 'hidden';
+                info.style.display = showVideo ? 'none' : 'flex';
+                bg.style.display = showVideo ? 'none' : 'block';
+            }
+            function onCallVideo(m) {
+                if (!call || call.id !== m.callId || typeof m.videoEnabled !== 'boolean') return;
+                call.remoteVideoEnabled = m.videoEnabled;
+                setRemoteVideoEnabled(m.videoEnabled);
+            }
+            async function toggleCam() {
+                const c = call;
+                const button = document.getElementById('btnCam');
+                if (!c || !c.pc || !c.stream || !button || button.disabled) return;
+                setCallControlBusy('video', true);
+                let newTrack = null;
+                try {
+                    const currentTrack = c.stream.getVideoTracks().find(track => track.readyState !== 'ended');
+                    if (currentTrack) {
+                        const sender = c.videoSender || c.pc.getSenders().find(item => item.track === currentTrack);
+                        let replaceError = null;
+                        if (sender) {
+                            try { await sender.replaceTrack(null); }
+                            catch (error) { replaceError = error; }
+                        }
+                        c.videoSender = sender || c.videoSender;
+                        c.stream.removeTrack(currentTrack);
+                        currentTrack.stop();
+                        const localVideo = document.getElementById('localVideo');
+                        localVideo.srcObject = null;
+                        localVideo.style.display = 'none';
+                        localVideo.classList.add('off');
+                        setCallControlState('video', false);
+                        c.video = false;
+                        send({ type: 'call-video', to: c.peer, callId: c.id, videoEnabled: false });
+                        if (replaceError) throw replaceError;
+                        return;
+                    }
+
+                    const cameraStream = await getCallMedia(false, true);
+                    newTrack = cameraStream.getVideoTracks()[0];
+                    if (!newTrack) throw new Error('No se encontró una pista de video en la cámara.');
+                    if (call !== c) { newTrack.stop(); return; }
+
+                    const sender = c.videoSender || c.pc.getSenders().find(item => item.track && item.track.kind === 'video');
+                    if (sender) {
+                        await sender.replaceTrack(newTrack);
+                        c.videoSender = sender;
+                    } else {
+                        c.videoSender = c.pc.addTrack(newTrack, c.stream);
+                        const offer = await c.pc.createOffer();
+                        await c.pc.setLocalDescription(offer);
+                        send({ type: 'call-sdp', to: c.peer, callId: c.id, sdp: { type: offer.type, sdp: offer.sdp } });
+                    }
+                    c.stream.addTrack(newTrack);
+                    c.video = true;
+                    const localVideo = document.getElementById('localVideo');
+                    localVideo.srcObject = c.stream;
+                    localVideo.style.display = 'block';
+                    localVideo.classList.remove('off');
+                    setCallControlState('video', true);
+                    send({ type: 'call-video', to: c.peer, callId: c.id, videoEnabled: true });
+                } catch (error) {
+                    if (newTrack && newTrack.readyState !== 'ended' && (!c.stream || !c.stream.getTracks().includes(newTrack)))
+                        newTrack.stop();
+                    console.error('[call] No se pudo cambiar el estado de la cámara:', error);
+                    debugToast(error.message || 'No se pudo cambiar el estado de la cámara.');
+                } finally {
+                    if (call === c) setCallControlBusy('video', false);
                 }
-                (async () => {
-                    try {
-                        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-                        if (!call || !call.pc) { stream.getTracks().forEach(x => x.stop()); return; }
-                        call.video = true;
-                        call.stream.addTrack(stream.getVideoTracks()[0]);
-                        const lv = document.getElementById('localVideo');
-                        lv.srcObject = call.stream;
-                        lv.style.display = 'block';
-                        document.getElementById('remoteVideo').style.display = 'block';
-                        call.pc.addTrack(stream.getVideoTracks()[0], call.stream);
-                        const offer = await call.pc.createOffer();
-                        await call.pc.setLocalDescription(offer);
-                        send({ type: 'call-sdp', to: call.peer, callId: call.id, sdp: { type: offer.type, sdp: offer.sdp } });
-                        document.getElementById('btnCam').classList.remove('off');
-                    } catch { debugToast('Sin acceso a la cámara'); }
-                })();
             }
 
             let proxSensor = null, earpieceId = '', usingEarpiece = false, manualShade = false;
@@ -21291,7 +22463,7 @@
                     console.error('[auth] Could not restore session:', error);
                     location.replace('/login.html');
                 });
-                if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js?v=39', { scope: '/', updateViaCache: 'none' }).catch(error => console.error('[service worker] No se pudo actualizar:', error));
+                if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js?v=41', { scope: '/', updateViaCache: 'none' }).catch(error => console.error('[service worker] No se pudo actualizar:', error));
                 console.info(`[build] zlapy v${APP_BUILD_VERSION} · refresco de metadatos y layout móvil`);
                 window.addEventListener('pageshow', e => {
                     if (!e.persisted || !me) return;
@@ -21418,6 +22590,14 @@
         <div class="gpInner"></div>
     </aside>
 
+    <aside id="stickerCreatorLayer" aria-hidden="true">
+        <div class="infoResize" role="separator" aria-orientation="vertical" aria-label="Cambiar ancho del panel"
+            aria-valuemin="300" aria-valuemax="640" aria-valuenow="400" tabindex="0"></div>
+        <div class="stickerCreatorPanelInner">
+            <iframe id="stickerCreatorFrame" title="Crear stricker"></iframe>
+        </div>
+    </aside>
+
     <div id="proxShade" title="Pantalla oscurecida"></div>
 
     <div id="callBanner" onclick="maximizeCall()">
@@ -21425,6 +22605,21 @@
         <div style="flex:1;min-width:0"><b id="banName">—</b>
             <div class="sub" id="banTime">00:00</div>
         </div>
+        <button id="banMute" class="callQuickBtn" type="button" aria-label="Silenciar micrófono"
+            title="Silenciar micrófono" aria-pressed="false"
+            onclick="event.stopPropagation();toggleMute()"><svg viewBox="0 0 24 24">
+                <path
+                    d="M12 14a3 3 0 003-3V5a3 3 0 00-6 0v6a3 3 0 003 3zm5-3a5 5 0 01-10 0H5a7 7 0 006 6.92V21h2v-3.08A7 7 0 0019 11h-2z">
+                </path>
+            </svg></button>
+        <button id="banCam" class="callQuickBtn" type="button" aria-label="Ocultar cámara"
+            title="Ocultar cámara" aria-pressed="false"
+            onclick="event.stopPropagation();toggleCam()"><svg viewBox="0 0 24 24">
+                <rect x="3" y="6" width="12" height="12" rx="2.5" fill="none" stroke="currentColor"
+                    stroke-width="1.8"></rect>
+                <path d="M15 11l6-3.5v9L15 13z"></path>
+                <path class="iconSlash" d="M3 3l18 18"></path>
+            </svg></button>
         <button id="banHang" onclick="event.stopPropagation();endCall('hangup')"><svg viewBox="0 0 24 24">
                 <path d="M6 3h3l2 5-2.5 1.5a11 11 0 006 6L16 13l5 2v3a2 2 0 01-2.2 2A16 16 0 014 5.2 2 2 0 016 3z">
                 </path>
@@ -21433,7 +22628,8 @@
 
 
     <script src="/js/avatar-editor.js?v=1"></script>
-    <script src="/js/popmenu.js?v=2"></script>
+    <script src="/js/popmenu.js?v=4"></script>
+    <script src="/js/emoji-picker.js?v=6"></script>
     <script src="/js/autogrow.js?v=1"></script>
 
 </body>

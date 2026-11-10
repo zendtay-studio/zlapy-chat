@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { startServer, stop, api, register, rawRequest, sessionCookieFrom } = require('./helpers.js');
+const { SCHEMA_VERSION } = require('../src/db/schema.js');
 
 test('request-targets malformados devuelven 400 y no tumban el proceso', async () => {
     const srv = await startServer();
@@ -26,7 +27,7 @@ test('/healthz responde ok con la versión de esquema', async () => {
     try {
         const health = await api(srv.base, 'GET', '/healthz');
         assert.equal(health.json.ok, true);
-        assert.equal(health.json.schema, 4);
+        assert.equal(health.json.schema, SCHEMA_VERSION);
         assert.equal(health.json.cryptoVersion, 2);
         assert.ok(health.json.uptime >= 0);
     } finally { await stop(srv); }

@@ -98,6 +98,12 @@ img {
     outline-offset: 2px
 }
 
+html.surface-mode,
+html.surface-mode body {
+    background-color: var(--surface);
+    background-image: none
+}
+
 /* ---------- Barra superior ---------- */
 
 .topbar {
@@ -428,7 +434,7 @@ img {
     border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--line-strong));
     border-radius: 99px;
     background: color-mix(in srgb, var(--accent) 9%, transparent);
-    color: color-mix(in srgb, var(--accent) 82%, #cdd7dc);
+    color: var(--accent-readable);
     font-size: 11px;
     font-weight: 700;
     letter-spacing: .6px;
@@ -571,7 +577,7 @@ img {
     padding: 0 6px;
     border-radius: 99px;
     background: color-mix(in srgb, var(--accent) 12%, transparent);
-    color: var(--accent);
+    color: var(--accent-readable);
     font-size: 11px;
     font-weight: 700;
     font-variant-numeric: tabular-nums
@@ -582,7 +588,7 @@ img {
     align-items: center;
     flex: none;
     min-height: 32px;
-    color: var(--accent);
+    color: var(--accent-readable);
     font-size: 12.5px;
     font-weight: 650;
     line-height: 1.3
@@ -631,7 +637,7 @@ img {
 
 .link-more {
     margin-top: 6px;
-    color: var(--accent);
+    color: var(--accent-readable);
     font-size: 12.5px;
     font-weight: 650;
     line-height: 1.3
@@ -674,7 +680,7 @@ img {
     flex: none;
     border-radius: 50%;
     background: color-mix(in srgb, var(--accent) 10%, transparent);
-    color: var(--accent)
+    color: var(--accent-readable)
 }
 
 .info-icon .icon {
@@ -796,8 +802,8 @@ img {
 }
 
 .info-card .seg button.on {
-    background: color-mix(in srgb, var(--accent) 14%, transparent);
-    color: var(--accent)
+    background: var(--accent);
+    color: var(--accent-ink)
 }
 
 .info-card .seg button:disabled {
@@ -1046,7 +1052,7 @@ button.contact:hover {
 .tag.admin {
     border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line-strong));
     background: color-mix(in srgb, var(--accent) 10%, transparent);
-    color: var(--accent)
+    color: var(--accent-readable)
 }
 
 .tag.you {

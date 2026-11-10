@@ -18,11 +18,35 @@ const { db } = require('../db/database.js');
 const { SCHEMA_VERSION } = require('../db/schema.js');
 const { Stmt } = require('../db/statements.js');
 const { pruneBlobHashes, tx } = require('../db/transactions.js');
+const { invalidateBlobQuota } = require('../chat/media.js');
 const { messageRateLimiter } = require('../http/rate-limit.js');
 const { readImage, storeImage } = require('../profile/images.js');
 const { push } = require('../realtime/notify.js');
 const { blockedSet, callFiles, chatPageCache, groupCache, notesMap, pendingOffers, profiles, pushSubs, sessionCache, stories, usernameIndex, users, setStories } = require('../state.js');
 const { byId, byName, mutedChatPeers, parseJsonSafe } = require('./helpers.js');
+
+const LOCAL_STICKER_RE = /^\/stickers\/blob\/([a-f0-9]{64})$/i;
+
+function persistStickers(user) {
+    const stickers = (Array.isArray(user.stickers) ? user.stickers : []).slice(-30);
+    const previousHashes = Stmt.listUserStickerBlobs.all(user.id).map(row => row.hash);
+    const stickerHashes = new Set(stickers.map(sticker => {
+        const match = typeof sticker === 'string' ? sticker.match(LOCAL_STICKER_RE) : null;
+        return match ? match[1].toLowerCase() : '';
+    }).filter(Boolean));
+
+    Stmt.deleteStickers.run(user.id);
+    stickers.forEach((sticker, index) => {
+        if (typeof sticker === 'string')
+            Stmt.insertSticker.run(user.id, index, encField('user_stickers.sticker', sticker));
+    });
+    Stmt.deleteUserStickerBlobs.run(user.id);
+    for (const hash of stickerHashes) Stmt.insertUserStickerBlob.run(user.id, hash);
+
+    const removedHashes = previousHashes.filter(hash => !stickerHashes.has(hash));
+    if (removedHashes.length) pruneBlobHashes(removedHashes);
+    invalidateBlobQuota(user.id);
+}
 
 function hydrateUserFromDb(acc) {
     // Perfil público (reutiliza la entrada existente y la refresca)
@@ -436,8 +460,10 @@ function writeUserRows(user) {
        silencioso sería peor que quedarse con la vieja. */
     const avatarRef = storeImage(typeof profile.avatar === 'string' ? profile.avatar : '', { userId: user.id })
         || (prevProfile ? prevProfile.avatar_ref : '');
-    const wallpaperRef = storeImage(typeof apariencia.image === 'string' ? apariencia.image : '', { userId: user.id })
-        || (prevChat ? prevChat.wallpaper_ref : '');
+    const wallpaperRef = apariencia.image === ''
+        ? ''
+        : storeImage(typeof apariencia.image === 'string' ? apariencia.image : '', { userId: user.id })
+            || (prevChat ? prevChat.wallpaper_ref : '');
     Stmt.upsertProfile.run(
         user.id,
         // Nombre, bio y nota se cifran en reposo (PCE3, con la clave del
@@ -497,11 +523,7 @@ function writeUserRows(user) {
     // La nota personal se cifra en reposo.
     if (note && typeof note === 'object') Stmt.upsertUserNote.run(user.id, encryptForUser(user.id, JSON.stringify(note)), note.ts || 0);
     else Stmt.deleteUserNote.run(user.id);
-    // Stickers favoritos
-    Stmt.deleteStickers.run(user.id);
-    (Array.isArray(user.stickers) ? user.stickers : []).slice(-30).forEach((sticker, index) => {
-        if (typeof sticker === 'string') Stmt.insertSticker.run(user.id, index, encField('user_stickers.sticker', sticker));
-    });
+    persistStickers(user);
     // Grupos vistos
     Stmt.deleteGroupSeenByUser.run(user.id);
     const groupSeen = user.groupSeen && typeof user.groupSeen === 'object' ? user.groupSeen : {};
@@ -524,10 +546,10 @@ function writeUserRows(user) {
  * mute, apariencia) escriben solo su tabla en lugar de reescribir las ~8
  * tablas de la cuenta. */
 function saveStickers(user) {
-    Stmt.deleteStickers.run(user.id);
-    (Array.isArray(user.stickers) ? user.stickers : []).slice(-30).forEach((sticker, index) => {
-        if (typeof sticker === 'string') Stmt.insertSticker.run(user.id, index, encField('user_stickers.sticker', sticker));
-    });
+    if (!user || !user.id) return;
+    const save = () => persistStickers(user);
+    if (db.inTransaction) save();
+    else db.transaction(save)();
 }
 function saveMutedPeers(user, profile) {
     Stmt.deleteMutedPeers.run(user.id);
@@ -541,8 +563,10 @@ function saveChatSettings(user) {
     const chat = profile.chatAppearance;
     const appearance = chat && typeof chat === 'object' && !Array.isArray(chat) ? chat : {};
     const prevChat = Stmt.getChatSettings.get(user.id);
-    const wallpaperRef = storeImage(typeof appearance.image === 'string' ? appearance.image : '', { userId: user.id })
-        || (prevChat ? prevChat.wallpaper_ref : '');
+    const wallpaperRef = appearance.image === ''
+        ? ''
+        : storeImage(typeof appearance.image === 'string' ? appearance.image : '', { userId: user.id })
+            || (prevChat ? prevChat.wallpaper_ref : '');
     Stmt.upsertChatSettings.run(
         user.id, encField('user_chat_settings.wall', appearance.wall || null),
         Number.isFinite(appearance.opacity) ? appearance.opacity : 30,

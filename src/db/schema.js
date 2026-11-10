@@ -1,5 +1,5 @@
 /**
- * Esquema de la base de datos de Zlapy (v4).
+ * Esquema de la base de datos de Zlapy (v7).
  *
  * Tablas normalizadas con CHECK/UNIQUE y claves ajenas con ON DELETE CASCADE:
  * borrar una fila de `users` arrastra en cascada todo lo suyo, y borrar un
@@ -12,6 +12,11 @@
  *   La foto de perfil, el fondo del chat y el avatar de grupo ya NO son
  *   data-URLs guardados en la fila: viven en `blob.db`, cifrados en reposo.
  *   En la base solo queda su hash, que no revela el contenido.
+ * v5 registra qué cuentas guardan stickers locales, para controlar su acceso
+ * y conservar los blobs mientras sigan en favoritos.
+ * v6 añade una biblioteca pública de stickers con publicación voluntaria y
+ * etiquetas para búsqueda. v7 incorpora el paquete local de stickers bbot.
+ * v8 añade reacciones persistentes por usuario a los mensajes.
  *
  * Es la única fuente de verdad del esquema: src/db/database.js lo aplica al
  * arrancar con `ensureSchema` (idempotente) y test/schema.test.js
@@ -20,9 +25,9 @@
  */
 'use strict';
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 8;
 
-// Esquema v4
+// Esquema v8
 // Orden de creación: primero las tablas padre (users, groups) para que las
 // claves ajenas apunten a tablas que ya existen.
 const SCHEMA_SQL = `
@@ -130,6 +135,32 @@ CREATE TABLE IF NOT EXISTS user_stickers (
     position INTEGER NOT NULL,
     sticker  TEXT NOT NULL,
     PRIMARY KEY (user_id, position)
+);
+CREATE TABLE IF NOT EXISTS user_sticker_blobs (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    hash    TEXT NOT NULL,
+    PRIMARY KEY (user_id, hash)
+);
+CREATE INDEX IF NOT EXISTS idx_user_sticker_blobs_hash ON user_sticker_blobs(hash);
+CREATE TABLE IF NOT EXISTS public_stickers (
+    hash       TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_public_stickers_recent ON public_stickers(created_at DESC, hash);
+CREATE TABLE IF NOT EXISTS public_sticker_tags (
+    hash TEXT NOT NULL REFERENCES public_stickers(hash) ON DELETE CASCADE,
+    tag  TEXT NOT NULL,
+    PRIMARY KEY (hash, tag)
+);
+CREATE INDEX IF NOT EXISTS idx_public_sticker_tags_tag ON public_sticker_tags(tag, hash);
+CREATE TABLE IF NOT EXISTS default_stickers (
+    expression TEXT PRIMARY KEY,
+    hash       TEXT NOT NULL UNIQUE,
+    label      TEXT NOT NULL,
+    tags       TEXT NOT NULL,
+    sticker    TEXT NOT NULL,
+    position   INTEGER NOT NULL
 );
 
 /* ---------------- 9. Grupos ---------------- */
@@ -280,6 +311,14 @@ CREATE TABLE IF NOT EXISTS message_deletions (
     PRIMARY KEY (message_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_mdel_user ON message_deletions(user_id);
+CREATE TABLE IF NOT EXISTS message_reactions (
+    message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    emoji      TEXT NOT NULL CHECK (length(emoji) > 0),
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (message_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_message_reactions_message ON message_reactions(message_id);
 CREATE TABLE IF NOT EXISTS chat_deletions (
     chat       TEXT NOT NULL,
     user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -410,7 +449,7 @@ function ensureSchema(db) {
 // de `users` arrastra solo: sesiones, contactos (en ambos sentidos), bloqueos,
 // resúmenes, historias, llamadas, push, perfil, privacidad, colores, notas,
 // stickers, pertenencia a grupos, resúmenes de grupo, solicitudes y permisos
-// de descarga. Aquí se añade lo que la cascada no puede expresar con SQL:
+// de descarga, reacciones de mensajes. Aquí se añade lo que la cascada no puede expresar con SQL:
 // los mensajes (su destino va codificado en `chat`), los adjuntos y la
 // herencia de administración de los grupos.
 
@@ -492,6 +531,10 @@ function deleteAccountRows(db, userId, username, options = {}) {
     db.prepare('DELETE FROM blob_access_members WHERE user_id = ?').run(userId);
     // 4) Historias del usuario.
     hashes.push(...db.prepare('SELECT DISTINCT hash FROM blob_access WHERE story_user = ?').pluck().all(userId));
+    // 4b) Stickers propios: al quitar la última referencia de la cuenta, el
+    // blob se purga junto con sus conversaciones e imágenes.
+    hashes.push(...db.prepare('SELECT hash FROM user_sticker_blobs WHERE user_id = ?').pluck().all(userId));
+    hashes.push(...db.prepare('SELECT hash FROM public_stickers WHERE user_id = ?').pluck().all(userId));
     // 5) Historial de llamadas donde era el otro extremo.
     //    El nombre del par va CIFRADO: el borrado recorre las filas y delega
     //    la comparación en quien tiene la llave.

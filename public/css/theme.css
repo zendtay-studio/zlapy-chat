@@ -1,6 +1,6 @@
 :root {
   color-scheme: dark;
-  /* Paleta del rediseño: fondos casi negros y acento teal (interior del
+  /* Paleta del rediseño: fondos casi negros y acento bosque (interior del
      chat gestionado por preferencias propias de cada cuenta). */
   --page: #0b141a;
   --surface: #111b21;
@@ -10,11 +10,18 @@
   --line: #222d34;
   --text: #e9edef;
   --muted: #97a5ae;
-  --accent: #00a884;
-  --accent-ink: #0b141a;
+  --accent: #25483c;
+  --accent-ink: #e2f0e9;
+  --accent-readable: color-mix(in srgb, var(--accent) 30%, #e2f0e9);
+  --accent-soft: color-mix(in srgb, var(--accent) 18%, transparent);
   --accent-hover: color-mix(in srgb, var(--accent) 88%, var(--accent-ink));
   --accent-secondary: var(--accent);
   --public-header-height: 64px;
+  --toolbar-inline-padding: 16px;
+  --toolbar-item-gap: 12px;
+  --toolbar-control-size: 40px;
+  --toolbar-icon-size: 24px;
+  --toolbar-icon-color: var(--text);
 }
 
 @keyframes public-page-enter {
@@ -50,6 +57,64 @@ body.page-group-create > .appbar {
   flex: none;
   padding-top: calc(8px + env(safe-area-inset-top, 0px));
   padding-bottom: 8px
+}
+
+body.page-privacy > header,
+body.page-profile > header,
+body.page-view > header,
+body.page-group-details > .topbar,
+body.page-stories .page > header,
+body.page-group-create > .appbar,
+body.stickerCreatorPage .stickerCreatorToolbar {
+  gap: var(--toolbar-item-gap);
+  padding-inline: var(--toolbar-inline-padding)
+}
+
+body.page-group-details > .topbar > .topbar-copy {
+  padding-left: 0
+}
+
+body.page-privacy > header a,
+body.page-profile > header a,
+body.page-view > header a,
+body.page-group-details > .topbar > .icon-btn,
+body.page-group-create > .appbar > .icon-btn,
+body.page-stories .page > header > .back,
+body.stickerCreatorPage .stickerCreatorToolbar > .iconBtn {
+  flex: none;
+  width: var(--toolbar-control-size);
+  height: var(--toolbar-control-size);
+  display: grid;
+  place-items: center
+}
+
+body.page-privacy > header a,
+body.page-profile > header a,
+body.page-view > header a,
+body.page-group-details > .topbar > .icon-btn,
+body.page-group-create > .appbar > .icon-btn,
+body.page-stories .page > header > .back,
+body.stickerCreatorPage .stickerCreatorToolbar > .iconBtn {
+  color: var(--toolbar-icon-color)
+}
+
+body.page-privacy > header a,
+body.page-profile > header a,
+body.page-view > header a {
+  font-size: var(--toolbar-icon-size);
+  line-height: 1
+}
+
+body.page-group-details > .topbar > .icon-btn > svg,
+body.page-group-create > .appbar > .icon-btn > svg,
+body.page-stories .page > header > .back > svg,
+body.stickerCreatorPage .stickerCreatorToolbar > .iconBtn > svg,
+body.page-group-details > .topbar > .icon-btn > .icon,
+body.page-group-create > .appbar > .icon-btn > .icon,
+body.page-stories .page > header > .back > .icon,
+body.stickerCreatorPage .stickerCreatorToolbar > .iconBtn > .icon {
+  width: var(--toolbar-icon-size);
+  height: var(--toolbar-icon-size)
 }
 
 body.page-privacy > header,
@@ -688,4 +753,38 @@ input[type="url"],
 input[type="number"],
 textarea {
   border-radius: 12px !important
+}
+
+*,
+*::before,
+*::after {
+  box-shadow: none !important;
+  text-shadow: none !important
+}
+
+@media (min-width: 769px) {
+  html:has(body.page-privacy),
+  html:has(body.page-profile),
+  html:has(body.page-group-details),
+  html:has(body.page-group-create),
+  html:has(body.page-stories),
+  html:has(body.page-view),
+  html:has(body.page-login),
+  html:has(body.stickerCreatorPage),
+  html:has(body[data-view]) {
+    background: var(--surface)
+  }
+
+  body.page-privacy,
+  body.page-profile,
+  body.page-group-details,
+  body.page-group-create,
+  body.page-stories,
+  body.page-view,
+  body.page-login,
+  body.stickerCreatorPage,
+  body[data-view] {
+    background-color: var(--surface);
+    background-image: none
+  }
 }

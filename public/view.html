@@ -4,7 +4,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111b21">
   <title>Perfil</title>
+  <link rel="icon" type="image/webp" href="/image/isotype-308.webp">
   <style>
     * {
       margin: 0;
@@ -258,7 +260,7 @@
   <script>
     /* Aplica el acento cacheado del usuario antes de pintar para que no parpadee */
     try {
-      var hint = JSON.parse(localStorage.getItem('chatlocal_appearance_hint') || 'null'), ok = function (c) { return /^#[0-9a-f]{6}$/i.test(c || ''); };
+      var hint = JSON.parse(localStorage.getItem('zlapy_appearance_hint') || 'null'), ok = function (c) { return /^#[0-9a-f]{6}$/i.test(c || ''); };
       if (hint && ok(hint.sender)) {
         var ink = ok(hint.senderText) ? hint.senderText : '#101318', other = ok(hint.receiver) ? hint.receiver : '#171b21', r = document.documentElement.style;
         r.setProperty('--accent', hint.sender);

@@ -4,10 +4,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#111b21">
+  <meta name="theme-color" content="#0b141a">
   <title>Acceso — Zlapy</title>
+  <link rel="icon" type="image/webp" href="/image/isotype-308.webp">
   <link rel="stylesheet" href="/css/theme.css">
-  <link rel="stylesheet" href="/css/login.css?v=1">
+  <link rel="stylesheet" href="/css/login.css?v=2">
   <link rel="stylesheet" href="/css/avatar-editor.css?v=1">
   <!-- Mismo envoltorio de transporte que la app: las credenciales de acceso
        viajan cifradas además de bajo HTTPS. -->
@@ -64,7 +65,7 @@
                             <circle cx="12" cy="12" r="4"></circle>
                             <path d="M16 8v6a3 3 0 0 0 6 0v-1a10 10 0 1 0-3.92 7.94"></path>
                         </svg></span>
-                    <input id="uname" name="username" placeholder="zendtay298" maxlength="24" autocomplete="username"
+                    <input id="uname" name="username" placeholder="zendtay" maxlength="24" autocomplete="username"
                         autocapitalize="none" spellcheck="false" required="">
                 </div>
             </label>
@@ -110,7 +111,6 @@
         <div class="authDivider" aria-hidden="true"><span>o</span></div>
         <button class="authSwitch" id="btnNewAccount" type="button">¿No tienes
             cuenta?<strong>Crear cuenta</strong></button>
-        <div class="authFoot">Al continuar, accedes a tus conversaciones privadas.</div>
     </section>
 </div>
 
@@ -121,31 +121,6 @@
       'use strict';
       let authMode = 'login';
       let pendingAvatar = '';
-
-      /* Nombres sugeridos: en cada visita se enseña uno distinto para que la
-         gente no acabe con el mismo usuario que los demás. */
-      const NOMBRES = ['Pedro', 'Lucía', 'Carlos', 'Ana', 'Marta', 'Javier', 'Elena', 'Diego',
-        'Carmen', 'Pablo', 'Laura', 'Andrés', 'Rosa', 'Miguel', 'Isabel', 'Sergio', 'Patricia',
-        'Rubén', 'Alicia', 'Fernando', 'Sofía', 'Álvaro', 'Nuria', 'Iván', 'Beatriz', 'ZendTay'];
-
-      const sinAcentos = texto => texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-
-      /* Sugerencia de usuario válida: minúsculas, números y "_" (los únicos
-         caracteres que admite el usuario). */
-      function sugerirUsuario(nombre) {
-        const base = sinAcentos(nombre).toLowerCase().replace(/[^a-z0-9._-]/g, '').slice(0, 12) || 'usuario';
-        const numero = String(Math.floor(100 + Math.random() * 900));
-        const separador = Math.random() < 0.35 ? '_' : '';
-        return (base + separador + numero).slice(0, 24);
-      }
-
-      /* Sortea un nombre y su usuario, y lo muestra como sugerencia. */
-      function sortearSugerencia() {
-        const nombre = NOMBRES[Math.floor(Math.random() * NOMBRES.length)];
-        document.getElementById('authDisplayName').placeholder = nombre;
-        document.getElementById('uname').placeholder = sugerirUsuario(nombre);
-        refreshInitial();
-      }
 
       /* Inicial del avatar: la primera letra del nombre y, si no hay nombre,
          la del usuario. Se actualiza mientras se escribe. */
@@ -300,7 +275,6 @@
         document.getElementById('loginHero').style.display = authMode === 'register' ? 'none' : 'block';
         document.getElementById('authAvatarBlock').hidden = authMode !== 'register';
         document.getElementById('authNameField').style.display = authMode === 'register' ? 'flex' : 'none';
-        if (authMode === 'register') sortearSugerencia();
         document.getElementById('authAvatarRemove').onclick = event => {
           event.stopPropagation();
           pendingAvatar = '';
@@ -344,11 +318,7 @@
         input.setSelectionRange(start, start);
         refreshInitial();
       });
-      /* Al escribir el nombre, el usuario sugerido le sigue: en minúsculas y
-         con números (el avatar enseña su inicial al momento). */
       document.getElementById('authDisplayName').addEventListener('input', () => {
-        const nombre = document.getElementById('authDisplayName').value.trim();
-        if (nombre) document.getElementById('uname').placeholder = sugerirUsuario(nombre);
         refreshInitial();
       });
 

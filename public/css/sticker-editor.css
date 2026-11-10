@@ -1,0 +1,917 @@
+#stickerEditorContent {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  color: var(--text)
+}
+
+#stickerEditorContent .stickerEditorSheet {
+  box-sizing: border-box;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 20px max(16px, env(safe-area-inset-bottom));
+  background: var(--page);
+  font: inherit;
+  overscroll-behavior: contain
+}
+
+#stickerEditorContent .stickerEditorHint,
+#stickerEditorContent .stickerEditorTime {
+  align-self: stretch;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.45
+}
+
+#stickerEditorContent .stickerEditorStage {
+  position: relative;
+  flex: none;
+  width: min(100%, 440px, 42dvh);
+  aspect-ratio: 1;
+  margin: 2px auto;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  background: #080b0e;
+  touch-action: none;
+  cursor: grab
+}
+
+#stickerEditorContent .stickerEditorStage:active {
+  cursor: grabbing
+}
+
+#stickerEditorContent .stickerEditorCanvas {
+  display: block;
+  width: 100%;
+  height: 100%
+}
+
+#stickerEditorContent .stickerEditorControls {
+  display: grid;
+  gap: 8px;
+  width: min(100%, 680px)
+}
+
+#stickerEditorContent .stickerEditorControls label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 13px
+}
+
+#stickerEditorContent .stickerEditorTimelineCaption {
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center
+}
+
+#stickerEditorContent .stickerTrimRail {
+  position: relative;
+  width: 100%;
+  height: 56px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: repeating-linear-gradient(90deg, var(--surface-raised) 0 11%, var(--surface-hover) 11% 12%);
+  touch-action: none;
+  user-select: none
+}
+
+#stickerEditorContent .stickerTrimSelection {
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  box-sizing: border-box;
+  border: 2px solid var(--accent-readable);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+  cursor: grab
+}
+
+#stickerEditorContent .stickerTrimPlayhead {
+  position: absolute;
+  z-index: 1;
+  top: 3px;
+  bottom: 3px;
+  width: 3px;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 0 5px #000b, 0 0 2px var(--accent-readable);
+  pointer-events: none;
+  transform: translateX(-50%)
+}
+
+#stickerEditorContent .stickerTrimPlayhead[hidden] {
+  display: none
+}
+
+#stickerEditorContent .stickerTrimHandle {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  width: 34px;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  transform: translateX(-50%);
+  cursor: ew-resize;
+  touch-action: none
+}
+
+#stickerEditorContent .stickerTrimHandle::after {
+  content: "";
+  display: block;
+  width: 8px;
+  height: 32px;
+  margin: auto;
+  border: 2px solid var(--accent-ink);
+  border-radius: 8px;
+  background: var(--accent-readable);
+  box-shadow: 0 1px 5px #0008
+}
+
+#stickerEditorContent .stickerTrimHandle:focus-visible {
+  outline: 2px solid var(--accent-readable);
+  outline-offset: -2px;
+  border-radius: 10px
+}
+
+#stickerEditorContent .stickerEditorTimelineTimes {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums
+}
+
+#stickerEditorContent .stickerEditorPublishToggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: min(100%, 680px);
+  min-height: 44px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 650
+}
+
+#stickerEditorContent .stickerEditorSwitch {
+  position: relative;
+  width: 48px;
+  height: 28px;
+  flex: none;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-hover);
+  cursor: pointer
+}
+
+#stickerEditorContent .stickerEditorSwitch::after {
+  position: absolute;
+  content: "";
+  top: 2px;
+  left: 2px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--surface);
+  transition: left .18s ease, background-color .18s ease
+}
+
+#stickerEditorContent .stickerEditorSwitch.on,
+#stickerEditorContent .stickerEditorSwitch[aria-checked=true] {
+  border-color: var(--accent);
+  background: var(--accent)
+}
+
+#stickerEditorContent .stickerEditorSwitch.on::after,
+#stickerEditorContent .stickerEditorSwitch[aria-checked=true]::after {
+  left: 23px;
+  background: var(--surface)
+}
+
+#stickerEditorContent .stickerEditorPublishHint,
+#stickerEditorContent .stickerEditorTagBox,
+#stickerEditorContent .stickerEditorError {
+  width: min(100%, 680px)
+}
+
+#stickerEditorContent .stickerEditorPublishHint {
+  color: var(--muted);
+  font-size: 13px
+}
+
+#stickerEditorContent .stickerEditorTagBox {
+  display: grid;
+  gap: 8px
+}
+
+#stickerEditorContent .stickerEditorTagBox[hidden] {
+  display: none
+}
+
+#stickerEditorContent .stickerEditorTagBox > input,
+#stickerEditorContent #stickerTagInput {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  outline: none;
+  background: var(--surface-raised);
+  color: var(--text);
+  font: inherit
+}
+
+#stickerEditorContent .stickerEditorTagChips,
+.stickerTagChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px
+}
+
+#stickerEditorContent .stickerEditorTag,
+.stickerTagChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 24%, var(--surface-raised));
+  color: var(--accent-readable);
+  font-size: 13px
+}
+
+#stickerEditorContent .stickerEditorTag button,
+.stickerTagChip button {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer
+}
+
+#stickerEditorContent .stickerEditorTag button svg {
+  display: block
+}
+
+#stickerEditorContent .stickerEditorTagError {
+  color: #ff9a9a;
+  font-size: 13px
+}
+
+#stickerEditorContent .stickerEditorError {
+  min-height: 1.25em;
+  color: #ff9a9a;
+  font-size: 13px;
+  line-height: 1.4
+}
+
+#stickerEditorContent .stickerEditorActions {
+  position: sticky;
+  z-index: 2;
+  bottom: calc(-1 * max(16px, env(safe-area-inset-bottom)));
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 10px;
+  width: min(100%, 680px);
+  margin-top: auto;
+  padding: 12px 0 max(0px, env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line);
+  background: var(--page)
+}
+
+#stickerEditorContent .stickerEditorActions button {
+  min-height: 48px;
+  flex: 1;
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font: inherit;
+  font-size: 14.5px;
+  font-weight: 600;
+  cursor: pointer
+}
+
+#stickerEditorContent .stickerEditorActions .stickerEditorSave {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink)
+}
+
+#stickerEditorContent .stickerEditorActions button:disabled {
+  cursor: wait;
+  opacity: .6
+}
+
+.stickerPickerTabs button[role=tab].on {
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface));
+  color: var(--accent-readable)
+}
+
+.stickerPickerTabs button[role=tab][aria-selected=true] {
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface));
+  color: var(--accent-readable)
+}
+
+.stickerPickerTabs .bbotFaceIcon .bbotFaceHead {
+  fill: #080b0e;
+  stroke: #53636c;
+  stroke-width: .8
+}
+
+.stickerPickerTabs .bbotFaceIcon .bbotFaceEye {
+  fill: #fff;
+  stroke: none
+}
+
+#stkSourceBbot .bbotFaceIcon {
+  width: 30px;
+  height: 30px
+}
+
+.bbotStickerTile {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  min-width: 0;
+  aspect-ratio: 1;
+  padding: 6px;
+  border: 1px solid #ffffff10;
+  border-radius: 15px;
+  background: radial-gradient(circle at 50% 40%, #34434c 0, #1a252b 72%);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  transition: border-color .16s ease, background .16s ease, transform .16s ease, box-shadow .16s ease
+}
+
+.bbotStickerTile:hover,
+.bbotStickerTile:focus-visible {
+  border-color: color-mix(in srgb, var(--accent-readable) 52%, var(--line));
+  box-shadow: 0 7px 18px #0003, inset 0 1px #ffffff0a;
+  outline: none;
+  transform: translateY(-2px)
+}
+
+.bbotStickerPreview {
+  display: block;
+  width: min(100%, 66px);
+  height: auto;
+  aspect-ratio: 1;
+  overflow: hidden
+}
+
+.bbotStickerSavedImage {
+  z-index: 0;
+  object-fit: contain
+}
+
+#stickerGrid .bbotStickerSavedImage {
+  object-fit: contain
+}
+
+#stickerGrid .bbotStickerTile .bbotStickerSavedImage {
+  position: relative;
+  inset: auto;
+  width: min(100%, 66px);
+  height: auto;
+  aspect-ratio: 1;
+  border: 1px solid #ffffff10;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 40%, #34434c 0, #1a252b 72%)
+}
+
+.bbotStickerCreateTile {
+  z-index: 1
+}
+
+.bbotStickerPreview svg {
+  display: block;
+  width: 100%;
+  height: 100%
+}
+
+#stickerEditorContent .stickerEditorStage.bbotEditorStage {
+  display: grid;
+  place-items: center;
+  background: transparent
+}
+
+.bbotEditorFace {
+  position: relative;
+  width: min(80%, 280px);
+  height: min(80%, 280px);
+  overflow: hidden;
+  border-radius: 50%
+}
+
+.bbotEditorFace svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  transition: filter .2s ease
+}
+
+.bbotEditorFace::after {
+  position: absolute;
+  inset: 3%;
+  border-radius: 50%;
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, calc(var(--bbot-gloss, 0) * .55)), transparent 55%),
+    linear-gradient(135deg, rgba(255, 84, 216, calc(var(--bbot-holo, 0) * .3)), rgba(67, 255, 224, calc(var(--bbot-holo, 0) * .3))),
+    repeating-linear-gradient(0deg, rgba(2, 5, 10, calc(var(--bbot-scanlines, 0) * .35)) 0 1px, transparent 1px 4px),
+    repeating-linear-gradient(125deg, transparent 0 28px, rgba(255, 255, 255, calc(var(--bbot-scratches, 0) * .35)) 29px 30px, transparent 31px 48px);
+  box-shadow: 0 0 24px rgba(159, 255, 231, var(--bbot-rim, 0));
+  content: "";
+  mix-blend-mode: screen;
+  pointer-events: none
+}
+
+#stickerEditorContent .bbotEditorLayout {
+  display: grid;
+  grid-template-columns: minmax(200px, min(36vw, 380px)) minmax(0, 1fr);
+  align-items: start;
+  gap: 20px;
+  width: min(100%, 1100px)
+}
+
+#stickerEditorContent .bbotEditorStage {
+  position: sticky;
+  top: 0;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  max-width: 380px;
+  aspect-ratio: 1;
+  border-radius: 18px
+}
+
+#stickerEditorContent .bbotEditorControls {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  width: 100%
+}
+
+#stickerEditorContent .bbotEditorSection {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--surface)
+}
+
+#stickerEditorContent .bbotEditorSectionTitle {
+  margin: 0 0 10px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700
+}
+
+#stickerEditorContent .bbotEditorGroup {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px
+}
+
+#stickerEditorContent .bbotEditorChip {
+  min-height: 34px;
+  padding: 6px 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color .15s, background-color .15s, color .15s
+}
+
+#stickerEditorContent .bbotEditorChip:hover {
+  border-color: var(--accent-readable);
+  background: var(--surface-hover)
+}
+
+#stickerEditorContent .bbotEditorChip.on {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 25%, var(--surface-raised));
+  color: var(--accent-readable)
+}
+
+#stickerEditorContent .bbotEditorChip:focus-visible {
+  outline: 2px solid var(--accent-readable);
+  outline-offset: 2px
+}
+
+#stickerEditorContent .bbotEditorField {
+  flex: 1 1 100px
+}
+
+#stickerEditorContent .bbotEditorRange {
+  flex: 1 1 220px;
+  min-width: 0
+}
+
+#stickerEditorContent .bbotEditorRange > span {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text);
+  font-size: 12px
+}
+
+#stickerEditorContent .bbotEditorRange output {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums
+}
+
+#stickerEditorContent .bbotEditorRange input {
+  width: 100%;
+  margin: 4px 0 0;
+  accent-color: var(--accent)
+}
+
+#stickerEditorContent .bbotEditorControls label {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 13px
+}
+
+#stickerEditorContent .bbotEditorControls select,
+#stickerEditorContent .bbotEditorControls input[type=color] {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 40px;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit
+}
+
+#stickerEditorContent .bbotEditorControls input[type=color] {
+  height: 40px;
+  padding: 4px
+}
+
+#stickerEditorContent .bbotEditorCheck {
+  display: flex !important;
+  align-items: center;
+  align-self: center;
+  min-height: 40px;
+  gap: 8px !important
+}
+
+#stickerEditorContent .bbotEditorCheck input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent)
+}
+
+@media (max-width: 768px) {
+  #stickerEditorContent .bbotEditorLayout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px
+  }
+
+  #stickerEditorContent .bbotEditorStage {
+    position: relative;
+    top: auto;
+    justify-self: center;
+    width: min(100%, 38dvh)
+  }
+
+  #stickerEditorContent .bbotEditorControls {
+    grid-template-columns: minmax(0, 1fr)
+  }
+}
+
+.stickerSearchBox[hidden],
+.stickerTagFilter[hidden] {
+  display: none !important
+}
+
+.stickerTagFilter {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 0;
+  padding: 0
+}
+
+.stickerTagFilter[hidden] {
+  display: none
+}
+
+.stickerTagChip {
+  padding: 2px 4px 2px 9px
+}
+
+#stickerCreatorLayer {
+  position: relative;
+  box-sizing: border-box;
+  display: flex;
+  flex: none;
+  width: 0;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--page);
+  visibility: hidden;
+  transition: width .28s ease, visibility 0s linear .28s
+}
+
+#stickerCreatorLayer.on {
+  width: var(--info-width, 400px);
+  visibility: visible;
+  transition: width .28s ease, visibility 0s
+}
+
+#stickerCreatorLayer .stickerCreatorPanelInner {
+  display: flex;
+  flex: 1;
+  width: var(--info-width, 400px);
+  min-height: 0
+}
+
+#stickerCreatorFrame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: var(--page)
+}
+
+@media (max-width: 1024px) {
+  #stickerCreatorLayer.on {
+    width: min(var(--info-width, 400px), 320px)
+  }
+
+  #stickerCreatorLayer .stickerCreatorPanelInner {
+    width: min(var(--info-width, 400px), 320px)
+  }
+}
+
+@media (max-width: 768px) {
+  #stickerCreatorLayer.on {
+    position: fixed;
+    inset: 0;
+    z-index: 7;
+    width: 100%;
+  }
+
+  #stickerCreatorLayer .stickerCreatorPanelInner {
+    width: 100%
+  }
+
+  #stickerCreatorLayer .infoResize {
+    display: none
+  }
+}
+
+.stickerCreatorPage {
+  box-sizing: border-box;
+  height: 100%;
+  min-width: 0;
+  min-height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: var(--page);
+  background-image: radial-gradient(circle at 1px 1px, #ffffff08 1px, transparent 1px);
+  background-size: 26px 26px;
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif
+}
+
+html.surface-mode,
+html.surface-mode body,
+html.surface-mode body.stickerCreatorPage {
+  background-color: var(--surface);
+  background-image: none
+}
+
+@media (min-width: 769px) {
+  body.stickerCreatorPage {
+    background-color: var(--surface);
+    background-image: none
+  }
+}
+
+.stickerCreatorLanding {
+  display: flex;
+  height: 100dvh;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden
+}
+
+.stickerCreatorToolbar {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: var(--public-header-height, 64px);
+  min-height: var(--public-header-height, 64px);
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 17px
+}
+
+.stickerCreatorToolbar button {
+  display: flex;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  transition: background .15s
+}
+
+.stickerCreatorToolbar button:hover {
+  background: var(--surface-hover)
+}
+
+.stickerCreatorToolbar span {
+  flex: 1
+}
+
+.stickerCreatorIntro {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  width: min(100% - 32px, 480px);
+  margin: auto;
+  padding: 32px 0;
+  text-align: center
+}
+
+.stickerCreatorIntro[hidden] {
+  display: none
+}
+
+.stickerCreatorIcon {
+  display: grid;
+  width: 72px;
+  height: 72px;
+  place-items: center;
+  border-radius: 22px;
+  background: color-mix(in srgb, var(--accent) 28%, var(--surface-raised));
+  color: var(--accent-readable);
+  font-size: 36px
+}
+
+.stickerCreatorIntro h2 {
+  margin: 4px 0 0;
+  font-size: 22px
+}
+
+.stickerCreatorIntro p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.5
+}
+
+.stickerCreatorIntro .stickerCreatorChoose {
+  width: 100%;
+  min-height: 50px;
+  margin-top: 8px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer
+}
+
+.stickerCreatorIntro .stickerCreatorChoose:disabled {
+  opacity: .6;
+  cursor: wait
+}
+
+.stickerCreatorIntro .stickerCreatorBbot {
+  margin-top: 0;
+  border: 1px solid var(--line);
+  background: var(--surface-raised);
+  color: var(--text)
+}
+
+.stickerCreatorIntro .stickerCreatorFormats {
+  font-size: 12px
+}
+
+.stickerCreatorBusy {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--accent-readable);
+  font-size: 14px
+}
+
+.stickerCreatorBusy[hidden] {
+  display: none
+}
+
+.stickerCreatorSpinner {
+  width: 17px;
+  height: 17px;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent-readable);
+  border-radius: 50%;
+  animation: sticker-spin .75s linear infinite
+}
+
+.stickerCreatorError {
+  color: #ff9a9a;
+  font-size: 14px
+}
+
+@keyframes sticker-spin {
+  to { transform: rotate(360deg) }
+}
+
+@media (max-width: 600px) {
+  #stickerEditorContent .stickerEditorSheet {
+    gap: 10px;
+    padding-right: 14px;
+    padding-left: 14px
+  }
+
+  #stickerEditorContent .stickerEditorStage {
+    width: min(100%, 40dvh)
+  }
+
+  #stickerEditorContent .stickerEditorActions {
+    gap: 8px
+  }
+
+  .stickerCreatorIntro {
+    width: min(100% - 28px, 480px)
+  }
+}
+
+.stickerCreateTile {
+  position: relative;
+  align-self: start;
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  aspect-ratio: 1;
+  place-content: center;
+  gap: 7px;
+  padding: 8px;
+  border: 1px dashed color-mix(in srgb, var(--accent-readable) 65%, var(--line));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface-raised));
+  color: var(--accent-readable);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer
+}
+
+.stickerCreateTile svg {
+  width: 24px;
+  height: 24px;
+  margin: auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round
+}
+
+.stickerCreateTile:hover {
+  background: color-mix(in srgb, var(--accent) 22%, var(--surface-raised))
+}

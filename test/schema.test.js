@@ -1,4 +1,4 @@
-// Tests del esquema v3 de la base de datos:
+// Tests del esquema v8 de la base de datos:
 //   · el esquema se aplica en bases nuevas (idempotente, sin migraciones),
 //   · borrar una cuenta arrastra TODO en cascada (y libera el usuario),
 //     sin purgar grupos cuyo gid contenga el uuid de la víctima,
@@ -15,11 +15,11 @@ const {
     deleteAccountRows
 } = require('../src/db/schema.js');
 
-const TABLES_V2 = [
+const TABLES_V5 = [
     'users', 'user_profiles', 'user_keys', 'user_privacy', 'user_privacy_users',
-    'user_chat_settings', 'user_muted_peers', 'user_notes', 'user_stickers',
+    'user_chat_settings', 'user_muted_peers', 'user_notes', 'user_stickers', 'user_sticker_blobs',
     'user_group_seen', 'sessions', 'contacts', 'contact_requests', 'blocked',
-    'summaries', 'messages', 'blob_access', 'stories', 'calls', 'push_subs',
+    'summaries', 'messages', 'message_reactions', 'blob_access', 'stories', 'calls', 'push_subs',
     'groups', 'group_members', 'group_summaries', 'group_join_requests', 'meta'
 ];
 
@@ -53,13 +53,14 @@ function seedUsers(db, idA = ids.a, idB = ids.b) {
     return { idA, idB };
 }
 
-test('el esquema v3 se aplica en una base nueva y registra la versión', () => {
+test('el esquema v8 se aplica en una base nueva y registra la versión', () => {
     const db = newDb();
     ensureSchema(db);
     // Idempotente: aplicarlo de nuevo no rompe nada ni duplica nada.
     ensureSchema(db);
 
-    for (const table of TABLES_V2) assert.ok(tableExists(db, table), `falta la tabla ${table}`);
+    for (const table of TABLES_V5) assert.ok(tableExists(db, table), `falta la tabla ${table}`);
+    assert.ok(tableExists(db, 'default_stickers'), 'falta el catálogo de stickers bbot predeterminados');
     assert.ok(tableColumns(db, 'users').has('password_hash'));
     assert.ok(tableColumns(db, 'users').has('add_policy'));
     assert.ok(!tableColumns(db, 'users').has('data'), 'users ya no guarda un JSON con todo');
@@ -91,6 +92,7 @@ test('borrar una cuenta elimina todo en cascada y libera el nombre de usuario', 
     const chat = 'chat:' + [idA, idB].sort().join('__');
     db.prepare("INSERT INTO messages (id, chat, ts, from_id, to_id, kind, data, hash) VALUES ('dm1', ?, 1, ?, ?, 'text', 'x', 'hashA')").run(chat, idA, idB);
     db.prepare("INSERT INTO messages (id, chat, ts, from_id, to_id, kind, data, hash) VALUES ('dm2', ?, 2, ?, ?, 'text', 'y', 'hashB')").run(chat, idB, idA);
+    db.prepare("INSERT INTO message_reactions (message_id, user_id, emoji, updated_at) VALUES ('dm1', ?, '❤️', 1)").run(idB);
     db.prepare("INSERT INTO blob_access (hash, message_id, kind, chat_a, chat_b) VALUES ('hashA', 'dm1', 'chat', ?, ?)").run(idA, idB);
     db.prepare("INSERT INTO blob_access (hash, message_id, kind, chat_a, chat_b) VALUES ('hashB', 'dm2', 'chat', ?, ?)").run(idA, idB);
     db.prepare(`INSERT INTO groups (id, crypto_id, name, owner_id, visibility, join_policy, write_policy, add_policy,
@@ -117,6 +119,7 @@ test('borrar una cuenta elimina todo en cascada y libera el nombre de usuario', 
     // La conversación privada se purga completa (también el mensaje de beto)
     assert.equal(db.prepare('SELECT COUNT(*) AS c FROM messages').get().c, 1);
     assert.equal(db.prepare("SELECT id FROM messages").get().id, 'gm2');
+    assert.equal(db.prepare('SELECT COUNT(*) AS c FROM message_reactions').get().c, 0);
 
     // Los adjuntos sin dueño se devuelven para poder purgarlos
     for (const hash of ['hashA', 'hashB', 'hashG1', 'hashS'])

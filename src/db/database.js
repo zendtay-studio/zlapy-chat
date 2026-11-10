@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS blobs (
 );
 `);
 
-// Esquema v3 — se aplica y ya
+// Esquema v6 — se aplica y ya
 // El esquema completo (tablas normalizadas, CHECK y claves ajenas con
 // ON DELETE CASCADE) vive en src/db/schema.js, que es la única fuente de
 // verdad y está cubierto por test/schema.test.js.

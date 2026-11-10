@@ -86,6 +86,9 @@ const Stmt = {
     listStickers: db.prepare('SELECT sticker FROM user_stickers WHERE user_id = ? ORDER BY position'),
     insertSticker: db.prepare('INSERT OR REPLACE INTO user_stickers (user_id, position, sticker) VALUES (?, ?, ?)'),
     deleteStickers: db.prepare('DELETE FROM user_stickers WHERE user_id = ?'),
+    listUserStickerBlobs: db.prepare('SELECT hash FROM user_sticker_blobs WHERE user_id = ?'),
+    insertUserStickerBlob: db.prepare('INSERT OR IGNORE INTO user_sticker_blobs (user_id, hash) VALUES (?, ?)'),
+    deleteUserStickerBlobs: db.prepare('DELETE FROM user_sticker_blobs WHERE user_id = ?'),
 
     // Grupos vistos
     listGroupSeen: db.prepare('SELECT gid, ts FROM user_group_seen WHERE user_id = ?'),
@@ -103,6 +106,12 @@ const Stmt = {
         crypto_version = ?, crypto_group_id = ?, signature = ?, signing_public_key = ? WHERE id = ?`),
     deleteMessage: db.prepare('DELETE FROM messages WHERE id = ?'),
     getMessage: db.prepare('SELECT * FROM messages WHERE id = ?'),
+    getMessageReaction: db.prepare('SELECT emoji FROM message_reactions WHERE message_id = ? AND user_id = ?'),
+    upsertMessageReaction: db.prepare(`INSERT INTO message_reactions (message_id, user_id, emoji, updated_at)
+        VALUES (?, ?, ?, ?) ON CONFLICT(message_id, user_id) DO UPDATE SET
+        emoji = excluded.emoji, updated_at = excluded.updated_at`),
+    deleteMessageReaction: db.prepare('DELETE FROM message_reactions WHERE message_id = ? AND user_id = ?'),
+    listMessageReactions: db.prepare('SELECT message_id, user_id, emoji FROM message_reactions WHERE message_id = ? ORDER BY updated_at ASC'),
     lastMessages: db.prepare('SELECT * FROM messages WHERE chat = ? ORDER BY ts DESC, id DESC LIMIT ?'),
     // Borrados con alcance por usuario
     insertMessageDeletion: db.prepare('INSERT OR REPLACE INTO message_deletions (message_id, user_id, deleted_at) VALUES (?, ?, ?)'),
@@ -141,6 +150,32 @@ const Stmt = {
     pruneOrphanBlobAccessMembers: db.prepare('DELETE FROM blob_access_members WHERE message_id NOT IN (SELECT id FROM messages)'),
     pruneOrphanBlobAccess: db.prepare("DELETE FROM blob_access WHERE kind <> 'story' AND message_id NOT IN (SELECT id FROM messages)"),
     getBlobAccessStory: db.prepare(`SELECT story_user FROM blob_access WHERE hash = ? AND kind = 'story' LIMIT 1`),
+    getUserStickerBlob: db.prepare('SELECT 1 FROM user_sticker_blobs WHERE user_id = ? AND hash = ? LIMIT 1'),
+    getPublicSticker: db.prepare('SELECT 1 FROM public_stickers WHERE hash = ? LIMIT 1'),
+    listDefaultStickers: db.prepare(`SELECT hash, expression, label, tags, sticker, position
+        FROM default_stickers ORDER BY position ASC`),
+    upsertDefaultSticker: db.prepare(`INSERT INTO default_stickers
+        (expression, hash, label, tags, sticker, position) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(expression) DO UPDATE SET hash = excluded.hash, label = excluded.label,
+        tags = excluded.tags, sticker = excluded.sticker, position = excluded.position`),
+    insertPublicSticker: db.prepare('INSERT OR IGNORE INTO public_stickers (hash, user_id, created_at) VALUES (?, ?, ?)'),
+    insertPublicStickerTag: db.prepare('INSERT OR IGNORE INTO public_sticker_tags (hash, tag) VALUES (?, ?)'),
+    listPublicStickers: db.prepare(`SELECT ps.hash, ps.created_at,
+        GROUP_CONCAT(pst.tag, ',') AS tags
+        FROM public_stickers ps
+        LEFT JOIN public_sticker_tags pst ON pst.hash = ps.hash
+        GROUP BY ps.hash
+        ORDER BY ps.created_at DESC, ps.hash DESC
+        LIMIT ? OFFSET ?`),
+    searchPublicStickersByTags: db.prepare(`SELECT ps.hash, ps.created_at,
+        GROUP_CONCAT(pst.tag, ',') AS tags
+        FROM public_stickers ps
+        JOIN public_sticker_tags pst ON pst.hash = ps.hash
+        WHERE pst.tag IN (SELECT value FROM json_each(?))
+        GROUP BY ps.hash
+        HAVING COUNT(DISTINCT pst.tag) = ?
+        ORDER BY ps.created_at DESC, ps.hash DESC
+        LIMIT ? OFFSET ?`),
 
     // Blobs
     getBlob: blobDb.prepare('SELECT data FROM blobs WHERE hash = ?'),
@@ -155,12 +190,16 @@ const Stmt = {
         UNION SELECT ba.hash FROM blob_access ba JOIN group_members gm ON gm.gid = ba.gid
             WHERE ba.kind = 'group' AND gm.user_id = ?
         UNION SELECT hash FROM blob_access WHERE kind = 'story' AND story_user = ?
+        UNION SELECT hash FROM user_sticker_blobs WHERE user_id = ?
+        UNION SELECT hash FROM public_stickers WHERE user_id = ?
         UNION SELECT avatar_ref FROM user_profiles WHERE user_id = ? AND avatar_ref <> ''
         UNION SELECT wallpaper_ref FROM user_chat_settings WHERE user_id = ? AND wallpaper_ref <> ''`),
     allBlobHashes: blobDb.prepare('SELECT hash FROM blobs'),
     /* Referencias de TODOS los blobs: los adjuntos y también las imágenes de
        perfil, fondo y avatar de grupo (que no pasan por blob_access). */
     referencedBlobHashes: db.prepare(`SELECT DISTINCT hash FROM blob_access
+        UNION SELECT hash FROM user_sticker_blobs
+        UNION SELECT hash FROM public_stickers
         UNION SELECT avatar_ref FROM user_profiles WHERE avatar_ref <> ''
         UNION SELECT wallpaper_ref FROM user_chat_settings WHERE wallpaper_ref <> ''
         UNION SELECT avatar_ref FROM groups WHERE avatar_ref <> ''`),

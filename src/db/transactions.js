@@ -16,7 +16,8 @@ const { blobBytesGlobalTrack } = require('../chat/media.js');
 const { decField, encField } = require('../crypto/field-crypto.js');
 const { makeCache } = require('../shared/cache.js');
 
-const stmtBlobHasReference = db.prepare('SELECT 1 FROM blob_access WHERE hash = ? LIMIT 1');
+const stmtBlobHasReference = db.prepare(`SELECT 1 FROM blob_access WHERE hash = ?
+    UNION SELECT 1 FROM public_stickers WHERE hash = ? LIMIT 1`);
 /* Referencias fuera de blob_access: imágenes de perfil, fondo y avatar de
    grupo. Sin esta comprobación, el barrido de huérfanos borraría la foto de
    un usuario vivo. */
@@ -30,7 +31,7 @@ function pruneBlobHashes(hashes) {
     // que recompilarlas en cada borrado de mensaje o historia costaría una
     // compilación por operación.
     for (const hash of new Set(hashes))
-        if (!stmtBlobHasReference.get(hash) && !stmtBlobHasImageReference.get(hash, hash, hash)) {
+        if (!stmtBlobHasReference.get(hash, hash) && !stmtBlobHasImageReference.get(hash, hash, hash)) {
             // PERF-P02: el contador global de blobs en RAM se mantiene al día
             // con la longitud REAL del blob borrado; primera lectura carga de
             // la base, así que si aún no hay contador no toca nada.

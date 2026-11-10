@@ -32,8 +32,16 @@ const validStoryMedia = v => typeof v === 'string' && v.length <= CONFIG.maxGall
    la víctima haría una petición a un host arbitrario (fuga de IP/UA y
    confirmación de que estaba en línea). Solo se admiten los CDN de GIPHY. */
 const STICKER_ALLOWED_HOSTS = /^(?:media\d*\.giphy\.com|i\.giphy\.com)$/i;
+const DEFAULT_BBOT_STICKER_RE = /^\/stickers\/bbot-v3\/(?:idle|content|relieved|happy|joy|excited|love|pleading|shy|surprised|scared|curious|confused|dizzy|thinking|focus|suspicious|unimpressed|smug|sly|bored|exasperated|worried|guilty|sad|disgusted|annoyed|angry|sleepy|sleep)\.webp$/;
+const localStickerHash = value => {
+    if (typeof value !== 'string') return '';
+    const match = value.match(/^\/stickers\/blob\/([a-f0-9]{64})$/i);
+    return match ? match[1].toLowerCase() : '';
+};
 const validStickerData = v => {
     if (typeof v !== 'string' || v.length > 2048) return false;
+    if (localStickerHash(v)) return true;
+    if (DEFAULT_BBOT_STICKER_RE.test(v)) return true;
     if (!/^https:\/\/[a-zA-Z0-9.-]+\/[^\s"'<>\\]*$/i.test(v)) return false;
     let url;
     try { url = new URL(v); } catch { return false; }
@@ -91,6 +99,7 @@ module.exports = {
     validAvatar,
     validStoryMedia,
     STICKER_ALLOWED_HOSTS,
+    localStickerHash,
     validStickerData,
     MIME_RE,
     validMime,

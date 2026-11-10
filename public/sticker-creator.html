@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b141a">
+  <title>Crear stricker · Zlapy</title>
+  <script>
+    if (new URLSearchParams(location.search).get('surface') === '1')
+      document.documentElement.classList.add('surface-mode');
+  </script>
+  <link rel="stylesheet" href="/css/theme.css">
+  <link rel="stylesheet" href="/css/sticker-editor.css?v=22">
+  <script src="/js/appearance.js"></script>
+</head>
+<body class="stickerCreatorPage">
+  <main class="stickerCreatorLanding" id="stickerCreatorLanding">
+    <header class="stickerCreatorToolbar">
+      <button class="iconBtn" id="stickerCreatorClose" type="button" aria-label="Volver al chat">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true">
+          <path d="M20 11H7.8l5.6-5.6L12 4l-8 8 8 8 1.4-1.4L7.8 13H20v-2z"></path>
+        </svg>
+      </button>
+      <b id="stickerCreatorTitle">Crear stricker</b>
+      <span aria-hidden="true"></span>
+    </header>
+    <section class="stickerCreatorIntro">
+      <div class="stickerCreatorIcon" aria-hidden="true">✦</div>
+      <h2>Tu stricker, a tu manera</h2>
+      <p>Elige una imagen, un GIF cuadrado o un video. Podrás encuadrarlo antes de guardarlo.</p>
+      <button class="stickerCreatorChoose" id="stickerCreatorChoose" type="button">Elegir imagen o video</button>
+      <button class="stickerCreatorChoose stickerCreatorBbot" id="stickerCreatorBbot" type="button">Crear una cara bbot</button>
+      <p class="stickerCreatorFormats" id="stickerCreatorFormats">Límites de imágenes y videos…</p>
+      <div id="stickerCreatorBusy" class="stickerCreatorBusy" hidden role="status" aria-live="polite">
+        <span class="stickerCreatorSpinner" aria-hidden="true"></span>
+        Guardando stricker…
+      </div>
+      <div id="stickerCreatorError" class="stickerCreatorError" role="alert" aria-live="polite"></div>
+    </section>
+    <input id="stickerCreatorFile" type="file" accept="image/*,video/*" hidden>
+  </main>
+  <script src="/js/animated-webp.js?v=1"></script>
+  <script src="/js/sticker-editor.js?v=20"></script>
+</body>
+</html>

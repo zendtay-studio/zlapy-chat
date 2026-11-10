@@ -631,7 +631,7 @@ src/                   el backend, partido por dominios
   groups/              grupos, claves de grupo y sus rutas
   stories/             historias
   calls/               llamadas y su señalización
-  stickers/            proxy del catálogo de stickers
+  stickers/            catálogo, biblioteca y paquete bbot animado pre-renderizado
   push/                notificaciones push (VAPID)
   realtime/            WebSocket: framing, cifrado de frames, envío a los clientes y mensajes
   http/                router, respuestas, cabeceras, sobre cifrado y arranque de los servidores
@@ -651,6 +651,10 @@ public/                el cliente web (PWA): index.html, login.html, profile.htm
                        login.css, popmenu.css/js (menu desplegable comun),
                        autogrow.js, avatar-editor.css/js, appearance.js,
                        transport-crypto.js (primitivas) y transport.js (sobre y WS)
+Los WebP del paquete bbot se regeneran con `npm run generate:bbot-stickers`
+(requiere ImageMagick); las fuentes estáticas están en `scripts/assets/bbot-v3`.
+Se conservan las rutas del paquete; por eso también se actualiza la apariencia
+de los mensajes antiguos que usan esos stickers.
 docs/                  documentación (ver el índice final)
 test/                  pruebas unitarias y de integración (node --test)
   server-http.test.js      rutas HTTP: registro, contactos, mensajes, grupos

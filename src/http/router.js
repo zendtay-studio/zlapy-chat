@@ -21,7 +21,7 @@ const { groupCreateLimiter } = require('../http/rate-limit.js');
 const { withMentions } = require('../chat/mentions.js');
 const { unarchiveForIncoming } = require('../chat/prefs.js');
 const { deleteMessageById, filterForViewer, readMessagePage, resolveReply, rowToMessage, updateStoredMessage } = require('../chat/messages.js');
-const { getChatsSummary, getChatPreferences, getHave, getRoute2197, postChatDelete, postChatPreferences, postMessages, postMsgDelete, postMsgEdit, postPollVote, postReceipt, postSeen, postSend } = require('../chat/routes.js');
+const { getChatsSummary, getChatPreferences, getHave, getRoute2197, postChatDelete, postChatPreferences, postMessageReaction, postMessages, postMsgDelete, postMsgEdit, postPollVote, postReceipt, postSeen, postSend, withMessageReactions } = require('../chat/routes.js');
 const { decorateForClient } = require('../chat/summaries.js');
 const { CONFIG, PUBLIC, tlsState } = require('../config.js');
 const { getContactsRequests, getContactsRequestsSent, postBlock, postContacts, postContactsCancel, postContactsRemove, postContactsRespond } = require('../contacts/routes.js');
@@ -43,9 +43,9 @@ const { storeGallery, validateGallery } = require('../shared/gallery.js');
 const { MESSAGE_LIMITS, characterCount } = require('../shared/limits.js');
 const { resolvePublicFile } = require('../shared/static-path.js');
 const { normalizeContactData, normalizePollData } = require('../shared/types.js');
-const { clampStr, validAvatar, validMessageId, validMime, validStickerData } = require('../shared/validation.js');
+const { clampStr, localStickerHash, validAvatar, validMessageId, validMime, validStickerData } = require('../shared/validation.js');
 const { groupCache, profiles, stories, users } = require('../state.js');
-const { getGiphySearch, getStickers, postStickers } = require('../stickers/routes.js');
+const { getGiphySearch, getStickerBlob, getStickerDiscover, getStickers, postCreateSticker, postStickers } = require('../stickers/routes.js');
 const { getStories, postStory, postStoryLike } = require('../stories/routes.js');
 const { byName } = require('../users/helpers.js');
 const { isBlockedBy, isContact } = require('../users/privacy.js');
@@ -138,6 +138,8 @@ const handleRequest = (req, res) => {
     // GET
     // Proxy de stickers: la clave de GIPHY se queda en el servidor.
     if (req.method === 'GET' && url.pathname === '/giphy/search') return getGiphySearch(req, res, url, data, actor);
+    if (req.method === 'GET' && url.pathname.startsWith('/stickers/blob/')) return getStickerBlob(req, res, url);
+    if (req.method === 'GET' && url.pathname === '/stickers/discover') return getStickerDiscover(req, res, url);
     if (req.method === 'GET' && url.pathname.startsWith('/blob/')) return getRoute2197(req, res, url, data, actor);
     if (req.method === 'GET' && (url.pathname === '/users' || url.pathname === '/contacts'))
         return json(res, 200, { users: userList(req.authUser.id) });
@@ -165,7 +167,7 @@ const handleRequest = (req, res) => {
             full.unread = groupSummaryFor(req.authUser.id, g.id).unread;
         } else {
             const page = readMessagePage('group:' + g.id, { limit: 100 });
-            full.messages = filterForViewer(page.messages, req.authUser.id, 'group:' + g.id).map(m => withMentions(decorateForClient(m)));
+            full.messages = withMessageReactions(filterForViewer(page.messages, req.authUser.id, 'group:' + g.id), req.authUser.id).map(m => withMentions(decorateForClient(m)));
             full.more = page.more;
         }
         return json(res, 200, full);
@@ -182,7 +184,7 @@ const handleRequest = (req, res) => {
             limit: Number(url.searchParams.get('limit')) || 30
         });
         const visible = filterForViewer(page.messages, req.authUser.id, 'group:' + gid);
-        return json(res, 200, { messages: visible.map(m => withMentions(decorateForClient(m))), more: page.more });
+        return json(res, 200, { messages: withMessageReactions(visible, req.authUser.id).map(m => withMentions(decorateForClient(m))), more: page.more });
     }
     if (req.method === 'GET' && url.pathname === '/calls') return getCalls(req, res, url, data, actor);
     if (req.method === 'GET' && url.pathname === '/stickers')
@@ -291,6 +293,7 @@ const handleRequest = (req, res) => {
     if (url.pathname === '/story/view' || url.pathname === '/story/like') data.viewer = actor;
 
     // ---- Stickers ----
+    if (url.pathname === '/stickers/create') return postCreateSticker(req, res, url, data);
     if (url.pathname === '/stickers') return postStickers(req, res, url, data, actor);
 
     if (url.pathname === '/chat/preferences') return postChatPreferences(req, res, url, data, actor);
@@ -324,6 +327,7 @@ const handleRequest = (req, res) => {
 
     // ---- Seen ----
     if (url.pathname === '/seen') return postSeen(req, res, url, data, actor);
+    if (url.pathname === '/message/reaction') return postMessageReaction(req, res, url, data, actor);
 
     // ---- Stories ----
     if (url.pathname === '/story') return postStory(req, res, url, data, actor);
@@ -437,6 +441,11 @@ const handleRequest = (req, res) => {
                     if (source.gallery !== undefined && (!gallery || kind !== 'image')) return json(res, 400, { error: 'Galería inválida.' });
                     if (['image', 'video', 'audio', 'file'].includes(kind) && !source.hash && !gallery.length) return json(res, 400, { error: 'Falta hash.' });
                     if (kind === 'sticker' && !validStickerData(source.data)) return json(res, 400, { error: 'Sticker inválido.' });
+                    const stickerBlobHash = kind === 'sticker' ? localStickerHash(source.data) : '';
+                    if (stickerBlobHash &&
+                        ((typeof source.hash === 'string' && source.hash.toLowerCase() !== stickerBlobHash) ||
+                            !blobAvailableTo(req.authUser, stickerBlobHash)))
+                        return json(res, 400, { error: 'Sticker no disponible.' });
                     if (kind === 'contact') {
                         const contact = normalizeContactData(source.data, byName);
                         if (!contact) return json(res, 400, { error: 'Contacto inválido.' });
@@ -469,24 +478,27 @@ const handleRequest = (req, res) => {
                         mentions = [...mentioned];
                     }
                     let messageData = gallery.length ? '' : source.data;
-                    let pendingHash = typeof source.hash === 'string' ? source.hash.toLowerCase() : '';
+                    let pendingHash = typeof source.hash === 'string' ? source.hash.toLowerCase() : stickerBlobHash;
                     if (pendingHash) {
                         if (!blobHashOk(pendingHash)) return json(res, 400, { error: 'Hash inválido.' });
                         // Referenciar un adjunto ya existente exige tener acceso a él.
                         if (!messageData && !blobAvailableTo(req.authUser, pendingHash)) return json(res, 400, { error: 'Archivo no disponible.' });
                     }
                     /* Cuota de almacenamiento y, solo entonces, la escritura. */
-                    const bytesNuevos = (messageData && pendingHash ? Buffer.byteLength(messageData) : 0) +
+                    const bytesNuevos = (messageData && pendingHash && !stickerBlobHash ? Buffer.byteLength(messageData) : 0) +
                         gallery.reduce((total, item) => total + (item.data ? Buffer.byteLength(item.data) : 0), 0);
                     if (bytesNuevos > 0 && !blobQuotaOk(req.authUser.id, bytesNuevos))
                         return json(res, 413, { error: 'Has alcanzado el límite de almacenamiento de adjuntos.' });
-                    if (pendingHash && messageData && !storeBlob(pendingHash, messageData))
+                    if (pendingHash && messageData && !stickerBlobHash && !storeBlob(pendingHash, messageData))
                         return json(res, 400, { error: 'Archivo inválido.' });
                     if (gallery.length && !storeGallery(gallery, storeBlob))
                         return json(res, 400, { error: 'Galería inválida.' });
                     // El espacio acaba de crecer: fuera de la caché de cuota.
                     invalidateBlobQuota(req.authUser.id);
-                    if (pendingHash) { source.hash = pendingHash; messageData = ''; }
+                    if (pendingHash) {
+                        source.hash = pendingHash;
+                        if (!stickerBlobHash) messageData = '';
+                    }
                     const msg = {
                         id: validMessageId(source.id) ? source.id : crypto.randomUUID(),
                         fromId: req.authUser.id,

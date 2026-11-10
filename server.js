@@ -132,6 +132,10 @@ if (incompatibleRow)
 // Carga las cuentas, los grupos y las historias en memoria.
 loadFromDb();
 
+// Registra en la biblioteca local el paquete bbot pre-renderizado de la app.
+const { seedDefaultBbotStickers } = require('./src/stickers/default-pack.js');
+console.log(`[stickers] Paquete bbot listo (${seedDefaultBbotStickers(db)} caras).`);
+
 /* Auditoría de arranque: ¿la llave maestra de este proceso descifra las
    auth_key que hay en la base? Si NO descifra NINGUNA, la llave del `.env`
    no es la que cifró los datos: el servidor no debe ni servir ni escribir

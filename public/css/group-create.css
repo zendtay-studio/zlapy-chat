@@ -181,7 +181,7 @@
             border: 0;
             border-radius: 10px;
             background: transparent;
-            color: var(--accent);
+            color: var(--accent-readable);
             font-size: 14.5px;
             font-weight: 650;
             letter-spacing: .1px;
@@ -191,7 +191,7 @@
 
         .create-btn:hover:not(:disabled) {
             background: color-mix(in srgb, var(--accent) 10%, transparent);
-            color: var(--accent)
+            color: var(--accent-readable)
         }
 
         .create-btn:active:not(:disabled) {
@@ -234,7 +234,7 @@
             border: 0;
             border-radius: 50%;
             background: transparent;
-            color: var(--accent);
+            color: var(--accent-readable);
             cursor: pointer
         }
 
@@ -343,7 +343,7 @@
             padding: 2px 0;
             border: 0;
             background: transparent;
-            color: var(--accent);
+            color: var(--accent-readable);
             font-size: 12.5px;
             font-weight: 500;
             text-align: left;
@@ -351,7 +351,7 @@
         }
 
         .text-action:hover {
-            color: var(--accent)
+            color: var(--accent-readable)
         }
 
         .text-action .icon {
@@ -437,7 +437,7 @@
             padding: 0 8px;
             border-radius: 999px;
             background: color-mix(in srgb, var(--accent) 13%, transparent);
-            color: var(--accent);
+            color: var(--accent-readable);
             font-size: 12px;
             font-weight: 650;
             font-variant-numeric: tabular-nums;
@@ -492,7 +492,7 @@
         }
 
         .chip:hover .icon {
-            color: var(--accent)
+            color: var(--accent-readable)
         }
 
         .chip-avatar {
@@ -816,7 +816,7 @@
 
         .empty-retry:hover {
             border-color: var(--accent);
-            color: var(--accent)
+            color: var(--accent-readable)
         }
 
         .list-loading {
@@ -860,7 +860,7 @@
             flex: none;
             border-radius: 50%;
             background: color-mix(in srgb, var(--accent) 10%, transparent);
-            color: var(--accent)
+            color: var(--accent-readable)
         }
 
         .adv-icon .icon {
@@ -971,8 +971,8 @@
         }
 
         .seg button.on {
-            background: color-mix(in srgb, var(--accent) 14%, transparent);
-            color: var(--accent)
+            background: var(--accent);
+            color: var(--accent-ink)
         }
 
         .adv-note {
@@ -1164,6 +1164,12 @@
             .footnote {
                 margin-right: 18px;
                 margin-left: 18px
+            }
+        }
+
+        @media (min-width: 769px) {
+            .participants {
+                background: var(--panel)
             }
         }
 

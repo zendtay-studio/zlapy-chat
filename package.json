@@ -33,6 +33,8 @@
     "tunnel": "node ops/tunnel.js",
     "owner": "node ops/owner-credentials.js",
     "test": "node --test --require ./test/bootstrap.js test/*.test.js",
+    "generate:emojis": "node scripts/generate-emoji-data.js",
+    "generate:bbot-stickers": "node scripts/generate-animated-bbot-pack.js",
     "backup": "node ops/backup.js",
     "postinstall": "node ops/check-native.js",
     "rebuild:sqlite": "node ops/build-sqlite.js",

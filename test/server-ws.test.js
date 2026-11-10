@@ -116,6 +116,34 @@ test('al desconectarse quien llama, la contraparte recibe call-ended', async () 
     } finally { await stop(srv); }
 });
 
+test('la contraparte recibe los cambios de estado de cámara de la llamada', async () => {
+    const srv = await startServer();
+    try {
+        const { ana, beto } = await prepareContacts(srv.base);
+        const aws = new WsClient(srv.port, ana.cookie);
+        const bws = new WsClient(srv.port, beto.cookie);
+        await aws.connect();
+        await bws.connect();
+
+        bws.send({ type: 'call-offer', to: 'ana', callId: 'call-video-1', video: true });
+        await aws.waitFor('call-incoming');
+        bws.send({ type: 'call-video', to: 'ana', callId: 'call-video-1', videoEnabled: false });
+
+        const disabled = await aws.waitFor('call-video');
+        assert.equal(disabled.from, 'beto');
+        assert.equal(disabled.callId, 'call-video-1');
+        assert.equal(disabled.videoEnabled, false);
+        aws.frames.splice(aws.frames.indexOf(disabled), 1);
+
+        bws.send({ type: 'call-video', to: 'ana', callId: 'call-video-1', videoEnabled: true });
+        const enabled = await aws.waitFor('call-video');
+        assert.equal(enabled.videoEnabled, true);
+
+        aws.destroy();
+        bws.destroy();
+    } finally { await stop(srv); }
+});
+
 test('el ping de la app contesta pong y mantiene la conexión viva', async () => {
     const srv = await startServer();
     try {

@@ -17,22 +17,115 @@ const { deleteMessageById, filterForViewer, getChatPage, invalidateChatPage, rea
 const { decorateForClient, decryptSummaryCached, healSummary, lastEntryFromMsg, onChatDeletedSummary, onMessageDeletedSummary, onMessageSentSummary, onReadSummary, readSummaryEntry, resolveName, writeSummaryEntry } = require('./summaries.js');
 const { applyChatPrefs, readChatPrefs, resolveTarget, unarchiveForIncoming } = require('./prefs.js');
 const { CONFIG } = require('../config.js');
+const { decryptAtRest, encryptAtRest } = require('../crypto/setup.js');
 const { db } = require('../db/database.js');
 const { Stmt } = require('../db/statements.js');
 const { pruneBlobHashes, tx } = require('../db/transactions.js');
 const { groupLastEntry, groupPolicies, healGroupSummary, readGroup, readGroupSummary, writeGroupSummary } = require('../groups/store.js');
 const { rejectRateLimited, rejectRateLimitedMessage } = require('../http/helpers.js');
-const { chatPrefsLimiter, receiptLimiter } = require('../http/rate-limit.js');
+const { chatPrefsLimiter, receiptLimiter, reactionLimiter } = require('../http/rate-limit.js');
 const { json, securityHeaders } = require('../http/responses.js');
 const { notifyUser, pushNameOf } = require('../push/vapid.js');
 const { push, pushName } = require('../realtime/notify.js');
 const { storeGallery, validateGallery } = require('../shared/gallery.js');
 const { MESSAGE_LIMITS, characterCount } = require('../shared/limits.js');
 const { normalizeContactData, normalizePollData, togglePollVote } = require('../shared/types.js');
-const { clampStr, validMime, validStickerData } = require('../shared/validation.js');
+const { clampStr, localStickerHash, validMessageId, validMime, validStickerData } = require('../shared/validation.js');
 const { profiles, users } = require('../state.js');
 const { byName, isChatMuted, mutedChatPeers, pairKeyFromIds } = require('../users/helpers.js');
 const { accountsBlocked, isBlockedBy, permite } = require('../users/privacy.js');
+
+const REACTION_EMOJI_RE = /[\p{Extended_Pictographic}\p{Regional_Indicator}\u20e3]/u;
+const emojiSegmenter = new Intl.Segmenter('es', { granularity: 'grapheme' });
+
+function isValidReactionEmoji(value) {
+    if (typeof value !== 'string' || value.length > 32 || !REACTION_EMOJI_RE.test(value)) return false;
+    const segments = [...emojiSegmenter.segment(value)];
+    return segments.length === 1 && segments[0].segment === value;
+}
+
+function withMessageReactions(messages, viewerId) {
+    if (!messages.length) return messages;
+    const ids = messages.map(message => message.id);
+    const placeholders = ids.map(() => '?').join(',');
+    const rows = db.prepare(`SELECT message_id, user_id, emoji FROM message_reactions
+        WHERE message_id IN (${placeholders}) ORDER BY updated_at ASC`).all(...ids);
+    const grouped = new Map();
+    for (const stored of rows) {
+        const row = { ...stored, emoji: decryptAtRest(stored.emoji) };
+        if (typeof row.emoji !== 'string' || !isValidReactionEmoji(row.emoji)) {
+            console.error(`[reactions] Reacción ilegible para el mensaje ${row.message_id}.`);
+            continue;
+        }
+        let byEmoji = grouped.get(row.message_id);
+        if (!byEmoji) grouped.set(row.message_id, byEmoji = new Map());
+        let reaction = byEmoji.get(row.emoji);
+        if (!reaction) byEmoji.set(row.emoji, reaction = { emoji: row.emoji, count: 0, mine: false });
+        reaction.count++;
+        if (row.user_id === viewerId) reaction.mine = true;
+    }
+    return messages.map(message => ({
+        ...message,
+        reactions: [...(grouped.get(message.id)?.values() || [])]
+    }));
+}
+
+function messageReactionsForViewer(messageId, viewerId) {
+    return withMessageReactions([{ id: messageId }], viewerId)[0].reactions;
+}
+
+function broadcastMessageReactions(row, group, reactions) {
+    const recipients = group ? group.members.map(name => byName(name)).filter(Boolean)
+        : [users.get(row.from_id), users.get(row.to_id)].filter(Boolean);
+    const unique = new Map(recipients.map(user => [user.id, user]));
+    const userReactions = Stmt.listMessageReactions.all(row.id).map(item => ({
+        ...item,
+        emoji: decryptAtRest(item.emoji)
+    }));
+    for (const user of unique.values()) {
+        const personalized = reactions.map(reaction => ({
+            ...reaction,
+            mine: userReactions.some(item => item.emoji === reaction.emoji && item.user_id === user.id)
+        }));
+        push(user, {
+            type: 'message-reactions',
+            messageId: row.id,
+            groupId: group ? group.id : '',
+            reactions: personalized
+        });
+    }
+}
+
+function postMessageReaction(req, res, url, data, actor) {
+    if (typeof data.messageId !== 'string' || !validMessageId(data.messageId) ||
+        typeof data.emoji !== 'string' || (data.emoji !== '' && !isValidReactionEmoji(data.emoji)))
+        return json(res, 400, { error: 'Reacción inválida.' });
+    if (rejectRateLimited(res, reactionLimiter, req.authUser.id, 120, 'reacciones por minuto')) return;
+    const row = Stmt.getMessage.get(data.messageId);
+    if (!row || row.once || row.kind === 'seen' ||
+        db.prepare('SELECT 1 FROM message_deletions WHERE message_id = ? AND user_id = ?').get(row.id, req.authUser.id))
+        return json(res, 404, { error: 'Mensaje no disponible.' });
+    let group = null;
+    if (row.chat.startsWith('chat:')) {
+        if (row.from_id !== req.authUser.id && row.to_id !== req.authUser.id) return json(res, 404, { error: 'Mensaje no disponible.' });
+        const peerId = row.from_id === req.authUser.id ? row.to_id : row.from_id;
+        const peer = peerId && users.get(peerId);
+        if (!peer || accountsBlocked(actor, peer.username)) return json(res, 404, { error: 'Mensaje no disponible.' });
+    } else if (row.chat.startsWith('group:')) {
+        group = readGroup(row.chat.slice(6));
+        if (!group || !group.memberIds.includes(req.authUser.id)) return json(res, 404, { error: 'Mensaje no disponible.' });
+    } else return json(res, 404, { error: 'Mensaje no disponible.' });
+
+    const previous = Stmt.getMessageReaction.get(row.id, req.authUser.id);
+    const previousEmoji = previous ? decryptAtRest(previous.emoji) : '';
+    if (!data.emoji || (previousEmoji && previousEmoji === data.emoji))
+        Stmt.deleteMessageReaction.run(row.id, req.authUser.id);
+    else
+        Stmt.upsertMessageReaction.run(row.id, req.authUser.id, encryptAtRest(data.emoji), Date.now());
+    const reactions = messageReactionsForViewer(row.id, req.authUser.id);
+    broadcastMessageReactions(row, group, reactions);
+    return json(res, 200, { ok: true, reactions });
+}
 
 function getRoute2197(req, res, url, data, actor) {
     const hash = url.pathname.slice(6);
@@ -267,6 +360,12 @@ function postSend(req, res, url, data, actor) {
 
     let messageData = typeof data.data === 'string' ? data.data : '';
     let messageHash = typeof data.hash === 'string' ? data.hash.toLowerCase() : '';
+    const stickerBlobHash = data.kind === 'sticker' ? localStickerHash(messageData) : '';
+    if (stickerBlobHash) {
+        if ((messageHash && messageHash !== stickerBlobHash) || !blobAvailableTo(sender, stickerBlobHash))
+            return json(res, 400, { error: 'Sticker no disponible.' });
+        messageHash = stickerBlobHash;
+    }
     if (messageHash) {
         if (!blobHashOk(messageHash)) return json(res, 400, { error: 'Hash inválido.' });
         // Referenciar un adjunto QUE YA EXISTE exige tener acceso a
@@ -279,18 +378,18 @@ function postSend(req, res, url, data, actor) {
        se cuenta SIEMPRE que venga: con hash (subida de blob) o sin él (línea
        persistida en el mensaje). Antes, la vía sin hash no pagaba cuota:
        SECOA-I-001. */
-    const bytesNuevos = (messageData ? Buffer.byteLength(messageData) : 0) +
+    const bytesNuevos = (messageData && !stickerBlobHash ? Buffer.byteLength(messageData) : 0) +
         gallery.reduce((total, item) => total + (item.data ? Buffer.byteLength(item.data) : 0), 0);
     if (bytesNuevos > 0 && !blobQuotaOk(sender.id, bytesNuevos))
         return json(res, 413, { error: 'Has alcanzado el límite de almacenamiento de adjuntos.' });
-    if (messageHash && messageData && !storeBlob(messageHash, messageData))
+    if (messageHash && messageData && !stickerBlobHash && !storeBlob(messageHash, messageData))
         return json(res, 400, { error: 'Archivo inválido.' });
     if (gallery.length && !storeGallery(gallery, storeBlob)) return json(res, 400, { error: 'Galería inválida.' });
     // El espacio acaba de crecer: fuera de la caché de cuota, o durante la
     // ventana de 15 s peticiones concurrentes veían el mismo consumo y
     // pasaban todas la barrera (hasta N extra de 18 MB por cuenta).
     invalidateBlobQuota(sender.id);
-    if (messageHash) messageData = '';
+    if (messageHash && !stickerBlobHash) messageData = '';
 
     const msg = {
         id: crypto.randomUUID(),
@@ -645,7 +744,7 @@ function postMessages(req, res, url, data, actor) {
     if (typeof data.beforeId === 'string') page = readMessagePage('chat:' + pk, { beforeId: data.beforeId, limit });
     else page = getChatPage(pk, limit);
     const visible = filterForViewer(page.messages, req.authUser.id, 'chat:' + pk);
-    return json(res, 200, { messages: visible.map(decorateForClient), more: page.more });
+    return json(res, 200, { messages: withMessageReactions(visible, req.authUser.id).map(decorateForClient), more: page.more });
 }
 
 
@@ -661,6 +760,8 @@ module.exports = {
     postReceipt,
     postMsgDelete,
     postMsgEdit,
+    postMessageReaction,
+    withMessageReactions,
     postChatDelete,
     postMessages,
 };

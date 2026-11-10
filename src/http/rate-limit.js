@@ -16,6 +16,7 @@ const registerAttempts = new Map();
 const messageRateLimiter = createMessageRateLimiter();
 // Límites por cuenta para las rutas caras (proxy de GIPHY, perfil, historias).
 const giphyLimiter = createMessageRateLimiter(30, 60 * 1000);
+const stickerCreateLimiter = createMessageRateLimiter(10, 60 * 1000);
 const profileLimiter = createMessageRateLimiter(10, 60 * 1000);
 /* Regeneración de clave: re-cifra TODO el contenido del usuario, así que
    lleva tope propio de 5/min (BUG-012): antes compartía limiter con el
@@ -46,8 +47,9 @@ const passwordCheckLimiter = createMessageRateLimiter(5, 60 * 1000);
    fila (AES-256-GCM por mensaje) y toca resúmenes: sin cota era el multiplicador
    barato de escritura más caro del chat. SECOA-I-004. */
 const receiptLimiter = createMessageRateLimiter(120, 60 * 1000);
+const reactionLimiter = createMessageRateLimiter(120, 60 * 1000);
 setInterval(() => messageRateLimiter.prune(), MESSAGE_LIMITS.messageWindowMs).unref();
-setInterval(() => { giphyLimiter.prune(); profileLimiter.prune(); keyRegenLimiter.prune(); storyLimiter.prune(); storyViewLimiter.prune(); contactLimiter.prune(); groupCreateLimiter.prune(); callOfferLimiter.prune(); chatPrefsLimiter.prune(); passwordCheckLimiter.prune(); receiptLimiter.prune(); }, 60 * 1000).unref();
+setInterval(() => { giphyLimiter.prune(); stickerCreateLimiter.prune(); profileLimiter.prune(); keyRegenLimiter.prune(); storyLimiter.prune(); storyViewLimiter.prune(); contactLimiter.prune(); groupCreateLimiter.prune(); callOfferLimiter.prune(); chatPrefsLimiter.prune(); passwordCheckLimiter.prune(); receiptLimiter.prune(); reactionLimiter.prune(); }, 60 * 1000).unref();
 /* Limpieza perezosa de los contadores de acceso y registro: las entradas cuya
    ventana ya venció no significan nada y ocupan memoria. Incluye el freno por
    IP (`brk:...`) con su enfriamiento corto y el contador por cuenta e IP
@@ -74,6 +76,7 @@ module.exports = {
     registerAttempts,
     messageRateLimiter,
     giphyLimiter,
+    stickerCreateLimiter,
     profileLimiter,
     keyRegenLimiter,
     storyLimiter,
@@ -84,4 +87,5 @@ module.exports = {
     chatPrefsLimiter,
     passwordCheckLimiter,
     receiptLimiter,
+    reactionLimiter,
 };

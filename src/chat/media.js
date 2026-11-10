@@ -43,9 +43,9 @@ function blobBytesOfUser(userId) {
     // El total puede ser 0: `cached === undefined` distingue el hueco del cero.
     if (cached !== undefined) return cached;
     let bytes = 0;
-    /* La cuenta usa: adjuntos de chat, adjuntos de grupo, historias y sus
-       propias imágenes (avatar y fondo), que también consumen cuota. */
-    for (const { hash } of Stmt.userBlobHashes.all(userId, userId, userId, userId, userId, userId)) {
+    /* La cuenta usa: adjuntos de chat, adjuntos de grupo, historias, stickers
+       propios y sus imágenes (avatar y fondo), que también consumen cuota. */
+    for (const { hash } of Stmt.userBlobHashes.all(userId, userId, userId, userId, userId, userId, userId, userId)) {
         const row = Stmt.blobSize.get(hash);
         if (row) bytes += Number(row.bytes || 0);
     }
@@ -107,6 +107,8 @@ function readBlob(hash) {
 function blobAvailableTo(user, hash) {
     if (!user || !blobHashOk(hash)) return false;
     const h = hash.toLowerCase();
+    if (Stmt.getPublicSticker.get(h)) return true;
+    if (Stmt.getUserStickerBlob.get(user.id, h)) return true;
     if (Stmt.getBlobAccessChat.get(h, user.id, user.id)) return true;
     /* Adjuntos de grupo: accede quien estaba en el grupo cuando se publicó.
        Los anteriores a esta regla no tienen foto de miembros, así que para

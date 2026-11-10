@@ -315,10 +315,19 @@ const wsUpgradeInner = (req, socket) => {
                 pushName(m.to, { type: relay, from, callId: m.callId });
                 return;
             }
-            if (m.type === 'call-sdp' || m.type === 'call-ice' || m.type === 'call-mute') {
+            if (m.type === 'call-sdp' || m.type === 'call-ice' || m.type === 'call-mute' || m.type === 'call-video') {
                 if (!hasCall(from, m.to, m.callId)) return;
                 if (isBlockedBy(profiles[from], m.to) || isBlockedBy(profiles[m.to], from)) return;
-                pushName(m.to, { type: m.type, from, callId: m.callId, sdp: m.sdp, candidate: m.candidate, muted: !!m.muted });
+                if (m.type === 'call-video' && typeof m.videoEnabled !== 'boolean') return;
+                pushName(m.to, {
+                    type: m.type,
+                    from,
+                    callId: m.callId,
+                    sdp: m.sdp,
+                    candidate: m.candidate,
+                    muted: !!m.muted,
+                    videoEnabled: m.videoEnabled
+                });
                 return;
             }
             if (m.type === 'ping') {
