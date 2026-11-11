@@ -82,7 +82,7 @@ const handleRequest = (req, res) => {
         return getConfig(req, res, url, data, actor);
 
     // Health check público y sin datos: comprueba que ambas bases respondan.
-    if (req.method === 'GET' && url.pathname === '/healthz') return getHealthz(req, res, url, data, actor);
+    if ((req.method === 'GET' || req.method === 'HEAD') && url.pathname === '/healthz') return getHealthz(req, res, url, data, actor);
 
     const avatarMatch = req.method === 'GET' && url.pathname.match(/^\/avatar\/([a-z0-9_.-]{3,36})\.svg$/i);
     if (avatarMatch) {

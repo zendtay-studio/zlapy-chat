@@ -36,8 +36,15 @@ const cspFor = host => {
         "font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'self'";
 };
 const json = (res, code, obj) => {
-    res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...securityHeaders });
-    res.end(JSON.stringify(obj));
+    const body = JSON.stringify(obj);
+    const headOnly = res.req && res.req.method === 'HEAD';
+    res.writeHead(code, {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-store',
+        'Content-Length': Buffer.byteLength(body),
+        ...securityHeaders
+    });
+    res.end(headOnly ? undefined : body);
 };
 
 
