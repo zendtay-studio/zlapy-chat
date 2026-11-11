@@ -1048,7 +1048,7 @@
   background-image: radial-gradient(circle at 1px 1px, #ffffff08 1px, transparent 1px);
   background-size: 26px 26px;
   color: var(--text);
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif
+  font-family: 'Outfit', system-ui, -apple-system, "Segoe UI", sans-serif
 }
 
 html.surface-mode,

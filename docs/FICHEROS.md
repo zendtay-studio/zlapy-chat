@@ -232,6 +232,7 @@ y `public/css/`; en la raíz de `public/` solo quedan las páginas y **dos
 | `public/stories.html` | 2391 | Visor de historias a pantalla completa (con visualizaciones, likes, editor de publicación y hoja de stickers). | Carga `/css/{theme,popmenu}.css` y `/js/{popmenu,appearance,transport-crypto,transport}.js`. |
 | `public/privacy.html` | 615 | Política de privacidad estática. | Carga `/css/theme.css` y `/js/{appearance,transport-crypto,transport}.js`. |
 | `public/css/theme.css` | 639 | Hoja de estilos común: tokens CSS, tema oscuro, formularios y controles. La cargan todas las páginas. | — |
+| `public/css/fonts.css` | 41 | Tipografía Outfit servida en local: dos `@font-face` variables (`latin` y `latin-ext`), la pila `--font-ui` y el `font-family` base de la interfaz. La cargan todas las páginas antes que el resto de CSS. | — |
 | `public/css/login.css` | 332 | Estilos propios de la pantalla de acceso. | — |
 | `public/css/popmenu.css` | 93 | Estilo del pop-menu compartido (filas con icono, separaciones, cierre al tocar fuera). | — |
 | `public/css/avatar-editor.css` | 232 | Estilos del editor de foto (recorte, zoom, encuadre). | — |
@@ -245,7 +246,7 @@ y `public/css/`; en la raíz de `public/` solo quedan las páginas y **dos
 | `public/js/avatar-editor.js` | 321 | Editor de foto (perfil y grupo): recorte 512×512 con arrastre, zoom y punto de encuadre. | `window.ZlapyAvatarEditor.open({file, onSave})` |
 | `public/js/group-create.js` | 565 | Lógica del formulario de creación de grupo: selección de miembros y subida del avatar. | IIFE de página. |
 | `public/js/group-details.js` | 1301 | Lógica de la ficha de grupo: políticas según rol, integrantes, solicitudes de entrada y subida de *keyboxes*. | IIFE de página. |
-| `public/js/sw.js` | 73 | Service worker: cachea el *shell* (`chatlocal-v65`), sirve offline solo las navegaciones del shell (el resto falla de forma explícita, sin inventar un 504 vacío) y gestiona las notificaciones push y su clic. | — |
+| `public/js/sw.js` | 73 | Service worker: cachea el *shell* (`zlapy-v154`, fuentes Outfit incluidas), sirve offline solo las navegaciones del shell (el resto falla de forma explícita, sin inventar un 504 vacío) y gestiona las notificaciones push y su clic. | — |
 | `public/sw.js` | 1 | **Shim** de compatibilidad: `importScripts('/js/sw.js')`. Los navegadores que ya registraron `/sw.js` siguen recibiendo actualizaciones a través de él. | Sin lógica propia. |
 | `public/transport-crypto.js` | 4 | **Shim** de compatibilidad: comenta que la ruta histórica sigue existiendo y hace `require('./js/transport-crypto.js')` para la suite de Node. | Se borrará cuando ningún test cargue la ruta antigua. |
 | `public/manifest.webmanifest` | 14 | Manifiesto PWA: nombre, `display: standalone`, colores e iconos. | — |
@@ -254,6 +255,8 @@ y `public/css/`; en la raíz de `public/` solo quedan las páginas y **dos
 | `public/image/icon-512-full.webp` | binario | Icono 512×512 sin borde. | — |
 | `public/image/isotype-308.webp` | binario | Isotipo 308×308. | — |
 | `public/image/isotype-512-full.webp` | binario | Isotipo 512×512 (el de la pantalla de acceso). | — |
+| `public/fonts/outfit/outfit-latin.woff2` | binario | Outfit variable (peso 100–900) para el subconjunto latino. Se sirve sin sesión con MIME `font/woff2`. | — |
+| `public/fonts/outfit/outfit-latin-ext.woff2` | binario | Outfit variable para el subconjunto latino ampliado (acentos y signos de Europa del Este). | — |
 
 ---
 

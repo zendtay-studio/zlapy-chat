@@ -50,7 +50,25 @@ test('only resolves existing regular public files under the canonical public roo
     }
 });
 
-test('sirve las imágenes webp de la carpeta pública sin sesión', async () => {
+test('todas las páginas públicas usan la tipografía Outfit local', () => {
+    /* La app usa Outfit en todas sus páginas y la sirve desde /fonts: así no
+       depende de Google en tiempo de ejecución y respeta `font-src 'self'`. */
+    const publicDir = path.join(__dirname, '..', 'public');
+    const pages = fs.readdirSync(publicDir).filter(name => name.endsWith('.html'));
+    assert.ok(pages.length > 0);
+    for (const page of pages) {
+        const html = fs.readFileSync(path.join(publicDir, page), 'utf8');
+        assert.match(html, /\/css\/fonts\.css/, `${page} debe cargar la tipografía compartida`);
+        assert.doesNotMatch(html, /fonts\.googleapis\.com|fonts\.gstatic\.com/,
+            `${page} no debe depender de Google Fonts en tiempo de ejecución`);
+    }
+
+    const css = fs.readFileSync(path.join(publicDir, 'css', 'fonts.css'), 'utf8');
+    assert.match(css, /font-family:\s*'Outfit'/);
+    assert.match(css, /\/fonts\/outfit\/outfit-latin\.woff2/);
+});
+
+test('sirve las imágenes webp y la tipografía de la carpeta pública sin sesión', async () => {
     /* Los iconos del manifiesto y el isotipo del acceso son .webp: sin esta
        extensión en la lista pública, el navegador no lograba cargarlos antes
        de iniciar sesión. */
@@ -64,6 +82,15 @@ test('sirve las imágenes webp de la carpeta pública sin sesión', async () => 
 
         const isotipo = await fetch(`${srv.base}/image/isotype-512-full.webp`);
         assert.equal(isotipo.status, 200, 'el isotipo debe servirse sin sesión');
+
+        // La tipografía también es un estático público: sin `.woff2` en la
+        // lista de extensiones ni su MIME, la CSP la bloquearía.
+        const cssFuente = await fetch(`${srv.base}/css/fonts.css`);
+        assert.equal(cssFuente.status, 200);
+        const fuente = await fetch(`${srv.base}/fonts/outfit/outfit-latin.woff2`);
+        assert.equal(fuente.status, 200, 'la fuente debe servirse sin sesión');
+        assert.equal(fuente.headers.get('content-type'), 'font/woff2', 'el MIME del woff2 debe ser correcto');
+        assert.ok((await fuente.arrayBuffer()).byteLength > 0);
 
         // El PNG viejo ya no existe.
         assert.equal((await fetch(`${srv.base}/icon-192.png`)).status, 404);
