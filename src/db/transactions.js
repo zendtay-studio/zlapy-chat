@@ -158,10 +158,13 @@ const tx = {
         updateStoredMessage(message, row);
         return hashes;
     }),
-    deleteGroup: db.transaction(gid => deleteGroupRows(db, gid)),
+    deleteGroup: db.transaction(gid => deleteGroupRows(db, gid, {
+        // Los nombres de par silenciado van cifrados en reposo.
+        decryptField: (column, value) => decField(column, value)
+    })),
     deleteAccount: db.transaction((userId, username) => deleteAccountRows(db, userId, username, {
-        // El par de una llamada va cifrado: se descifra y se compara.
-        peerMatches: peer => decField('calls.peer', peer) === username
+        // Los nombres de par (llamadas, silenciados y privacidad) van cifrados.
+        decryptField: (column, value) => decField(column, value)
     })),
     // Vaciar un chat para los dos: se borran sus mensajes de verdad.
     clearChatMessages: db.transaction(chatKey => {
@@ -175,7 +178,12 @@ const tx = {
         const { Stmt } = require('../db/statements.js');
         for (const chat of chats) {
             Stmt.insertChatDeletion.run(chat.chatId, userId, now);
-            if (!keepSummary) Stmt.deleteSummary.run(userId, chat.peerId);
+            if (!keepSummary) {
+                // La conversación desaparece de la lista: sus preferencias
+                // (fijado, no leído, archivado) tampoco deben quedar sueltas.
+                if (chat.peerKey) Stmt.deleteChatPref.run(userId, chat.peerKey);
+                Stmt.deleteSummary.run(userId, chat.peerId);
+            }
         }
     }),
     // Preferencias de la lista de chats: un bloque de cambios (fijado,

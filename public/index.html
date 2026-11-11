@@ -12418,8 +12418,21 @@
                 if (msg.type === 'chatDelete') {
                     replaceConversation(msg.peer, []);
                     delete conv[msg.peer]; conversationMessageIds.delete(msg.peer);
+                    // El chat desaparece también de la carpeta de archivados
+                    // (p. ej. cuando el contacto borra su cuenta): si la
+                    // preferencia local sobrevive, el botón «Desarchivar»
+                    // intentaría abrir una conversación que ya no existe.
+                    if (msg.peer.startsWith('group:')) {
+                        const gid = msg.peer.slice(6);
+                        delete groupSummary[gid];
+                        delete chatPrefs['group:' + gid];
+                    } else {
+                        unread[msg.peer] = 0;
+                        delete chatSummary[msg.peer];
+                        delete chatPrefs['dm:' + msg.peer];
+                    }
                     if (active === msg.peer) dismissLayer('chat');
-                    renderAll(); return;
+                    renderAll(); renderContacts(); return;
                 }
                 if (msg.type === 'receipt') {
                     for (const id of msg.ids) {

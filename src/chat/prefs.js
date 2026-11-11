@@ -76,6 +76,11 @@ function resolveTarget(actor, key) {
 function readChatPrefs(userId) {
     const prefs = {};
     for (const row of Stmt.listChatPrefs.all(userId)) {
+        // Un DM solo existe mientras exista la otra cuenta. Las filas que
+        // quedaron de cuentas ya borradas (bases anteriores a la purga de
+        // referencias) no deben reaparecer como chats archivados fantasma.
+        const target = parseKey(row.peer_key);
+        if (target && target.type === 'dm' && !byName(target.id)) continue;
         prefs[row.peer_key] = {
             pinned: Number(row.pinned_at) > 0,
             pinnedAt: Number(row.pinned_at) || 0,
@@ -89,6 +94,7 @@ function readChatPrefs(userId) {
         const nombre = decField('user_muted_peers.peer_name', row.peer_name);
         if (!nombre) continue;
         const key = nombre === SAVED_KEY ? SAVED_KEY : nombre.startsWith(GROUP_PREFIX) ? nombre : dmKey(nombre);
+        if (key.startsWith(DM_PREFIX) && !byName(key.slice(DM_PREFIX.length))) continue;
         const entry = prefs[key] || (prefs[key] = emptyPref());
         entry.muted = true;
     }

@@ -182,6 +182,23 @@ test('borrar varios chats de golpe es una sola operación', async () => {
     } finally { await stop(srv); }
 });
 
+test('borrar un chat limpia también sus preferencias (fijado, archivado, no leído)', async () => {
+    const srv = await startServer();
+    try {
+        const { ana } = await contactPair(srv.base);
+        const set = await api(srv.base, 'POST', '/chat/preferences', {
+            targets: ['dm:beto'], pinned: true, archived: true, unread: true
+        }, ana.cookie);
+        assert.equal(set.status, 200);
+
+        const deleted = await api(srv.base, 'POST', '/chat/delete', { peers: ['beto'] }, ana.cookie);
+        assert.equal(deleted.status, 200);
+
+        const prefs = await api(srv.base, 'GET', '/chat/preferences', null, ana.cookie);
+        assert.equal(prefs.json.prefs['dm:beto'], undefined, 'sin chat no deben quedar preferencias sueltas');
+    } finally { await stop(srv); }
+});
+
 test('la cita de respuesta se resuelve por ID: al editar cambia y al borrar desaparece', async () => {
     const srv = await startServer();
     try {
@@ -323,6 +340,32 @@ test('un mensaje nuevo desarchiva el chat salvo con mantener archivados', async 
         await api(srv.base, 'POST', '/send', { to: 'ana', kind: 'text', data: 'otra vez' }, beto.cookie);
         prefs = await api(srv.base, 'GET', '/chat/preferences', null, ana.cookie);
         assert.equal(prefs.json.prefs['dm:beto'].archived, true, 'con el ajuste activo sigue archivado');
+    } finally { await stop(srv); }
+});
+
+test('al borrar la cuenta del contacto desaparecen sus chats archivados y silenciados', async () => {
+    const srv = await startServer();
+    try {
+        const { ana, beto } = await contactPair(srv.base);
+        const set = await api(srv.base, 'POST', '/chat/preferences', {
+            targets: ['dm:beto'], archived: true, muted: true
+        }, ana.cookie);
+        assert.equal(set.status, 200);
+        assert.equal(set.json.prefs['dm:beto'].archived, true);
+
+        const deleted = await api(srv.base, 'POST', '/account/delete', { password: 'pruebachat1' }, beto.cookie);
+        assert.equal(deleted.status, 200);
+
+        // La cuenta borrada arrastra TODAS sus referencias, también las que
+        // viven en filas de otras cuentas y no tienen FK (la clave de un DM
+        // es 'dm:<usuario>', no un id).
+        const prefs = await api(srv.base, 'GET', '/chat/preferences', null, ana.cookie);
+        assert.equal(prefs.status, 200);
+        assert.deepEqual(prefs.json.prefs, {}, 'no debe quedar el chat archivado fantasma');
+        assert.deepEqual(prefs.json.mutedPeers, [], 'tampoco el silencio huérfano');
+
+        const summary = await api(srv.base, 'GET', '/chats/summary', null, ana.cookie);
+        assert.ok(!(summary.json.chats || []).some(chat => chat.peer === 'beto'));
     } finally { await stop(srv); }
 });
 

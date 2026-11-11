@@ -470,14 +470,37 @@ function deleteMessageRowsWhere(db, where, ...params) {
     return hashes;
 }
 
-/* Borra un grupo entero: mensajes, adjuntos, miembros, resúmenes y solicitudes. */
-function deleteGroupRows(db, gid) {
+/* Valor en claro de una columna que puede ir cifrada en reposo. El esquema no
+   conoce la llave maestra: quien borra (transactions.js) pasa el descifrador.
+   Sin él se compara el texto tal cual, que es lo que usan los tests. */
+const readableField = (options, column, value) =>
+    typeof options.decryptField === 'function' ? options.decryptField(column, value) : value;
+
+/* Borra filas de una tabla cuyo campo de nombre coincida con `matches`.
+   Se usa para referencias que no tienen FK (o la tienen nula): silenciados y
+   listas de privacidad guardan el nombre cifrado, no el id. */
+function deleteRowsByFieldName(db, table, idColumn, fieldColumn, where, matches, options) {
+    const filter = where ? ` WHERE ${where}` : '';
+    for (const row of db.prepare(`SELECT ${idColumn} AS id, ${fieldColumn} AS value FROM ${table}${filter}`).all())
+        if (matches(readableField(options, fieldColumn, row.value)))
+            db.prepare(`DELETE FROM ${table} WHERE ${idColumn} = ?`).run(row.id);
+}
+
+/* Borra un grupo entero: mensajes, adjuntos, miembros, resúmenes y solicitudes.
+   También las referencias por texto que sobreviven a la cascada: preferencias
+   de lista (fijado/archivado), marcas de chat oculto y silencios. */
+function deleteGroupRows(db, gid, options = {}) {
+    const peerKey = 'group:' + gid;
     const hashes = [
         ...db.prepare('SELECT DISTINCT hash FROM blob_access WHERE gid = ?').pluck().all(gid),
-        ...blobHashesOfMessages(db, 'chat = ?', 'group:' + gid)
+        ...blobHashesOfMessages(db, 'chat = ?', peerKey)
     ];
     db.prepare('DELETE FROM blob_access WHERE gid = ?').run(gid);
-    deleteMessageRowsWhere(db, 'chat = ?', 'group:' + gid);
+    deleteMessageRowsWhere(db, 'chat = ?', peerKey);
+    db.prepare('DELETE FROM user_chat_prefs WHERE peer_key = ?').run(peerKey);
+    db.prepare('DELETE FROM chat_deletions WHERE chat = ?').run(peerKey);
+    deleteRowsByFieldName(db, 'user_muted_peers', 'rowid', 'peer_name',
+        'peer_id IS NULL', value => value === peerKey, options);
     db.prepare('DELETE FROM groups WHERE id = ?').run(gid); // cascada completa
     return hashes;
 }
@@ -485,14 +508,15 @@ function deleteGroupRows(db, gid) {
 /* Borra una cuenta completa. Devuelve { hashes, groupsTouched, groupsRemoved }
    para que el servidor pueda limpiar los blobs y refrescar la RAM.
 
-   `options.peerMatches` es el comparador del historial de llamadas: el
-   nombre del par va CIFRADO (columna `calls.peer`), así que no se puede
-   borrar con un WHERE sobre el texto. Quien trae la llave (src/db/
-   transactions.js) lo pasa; sin él, se compara el texto en claro (legacy). */
+   `options.decryptField(column, value)` descifra los campos en reposo
+   (`calls.peer`, `user_muted_peers.peer_name`, `user_privacy_users.target_name`).
+   Sin él (tests) se compara el texto tal cual. */
 function deleteAccountRows(db, userId, username, options = {}) {
     const hashes = [];
     const groupsTouched = [];
     const groupsRemoved = [];
+    const usernameKey = String(username || '').trim().toLowerCase();
+    const sameUsername = value => typeof value === 'string' && value.trim().toLowerCase() === usernameKey;
 
     // 1) Grupos: si era el último miembro, el grupo desaparece; si no, el grupo
     //    sigue vivo y la administración (y la propiedad) pasan a otro miembro.
@@ -500,7 +524,7 @@ function deleteAccountRows(db, userId, username, options = {}) {
     for (const gid of gids) {
         const others = db.prepare('SELECT user_id, role FROM group_members WHERE gid = ? AND user_id <> ?').all(gid, userId);
         if (!others.length) {
-            hashes.push(...deleteGroupRows(db, gid));
+            hashes.push(...deleteGroupRows(db, gid, options));
             groupsRemoved.push(gid);
             continue;
         }
@@ -535,16 +559,26 @@ function deleteAccountRows(db, userId, username, options = {}) {
     // blob se purga junto con sus conversaciones e imágenes.
     hashes.push(...db.prepare('SELECT hash FROM user_sticker_blobs WHERE user_id = ?').pluck().all(userId));
     hashes.push(...db.prepare('SELECT hash FROM public_stickers WHERE user_id = ?').pluck().all(userId));
-    // 5) Historial de llamadas donde era el otro extremo.
-    //    El nombre del par va CIFRADO: el borrado recorre las filas y delega
-    //    la comparación en quien tiene la llave.
-    if (typeof options.peerMatches === 'function') {
-        for (const row of db.prepare('SELECT id, peer FROM calls').all())
-            if (options.peerMatches(row.peer))
-                db.prepare('DELETE FROM calls WHERE id = ?').run(row.id);
-    } else {
-        db.prepare('DELETE FROM calls WHERE peer = ?').run(username);
-    }
+    // 5) Referencias que viven en filas de OTRAS cuentas y que las claves
+    //    ajenas no alcanzan porque guardan el nombre (o el par de ids) como
+    //    texto. Sin esto quedaban chats archivados/fijados "fantasma" que al
+    //    desarchivarse respondían «Chat no válido».
+    //    - Preferencias de lista: 'dm:<usuario>'.
+    db.prepare('DELETE FROM user_chat_prefs WHERE lower(peer_key) = ?').run('dm:' + usernameKey);
+    //    - Marcadores de "chat borrado" de la conversación 1:1 (el id va
+    //      dentro de 'chat:<idA>__<idB>'; el prefijo excluye grupos).
+    db.prepare("DELETE FROM chat_deletions WHERE chat LIKE 'chat:%' AND instr(chat, ?) > 0").run(userId);
+    //    - Silenciados guardados sin id resuelto (peer_id IS NULL). Los que
+    //      tienen peer_id caen por la cascada al borrar `users`.
+    deleteRowsByFieldName(db, 'user_muted_peers', 'rowid', 'peer_name',
+        'peer_id IS NULL', sameUsername, options);
+    //    - Listas "excepto / solo" de privacidad guardadas sin id resuelto.
+    deleteRowsByFieldName(db, 'user_privacy_users', 'rowid', 'target_name',
+        'target_id IS NULL', sameUsername, options);
+    // 5b) Historial de llamadas donde era el otro extremo. El nombre del par
+    //     va CIFRADO: el borrado recorre las filas y delega la comparación en
+    //     quien tiene la llave.
+    deleteRowsByFieldName(db, 'calls', 'id', 'peer', '', sameUsername, options);
     // 6) El borrado de la cuenta: aquí caen TODAS las cascadas del esquema.
     db.prepare('DELETE FROM users WHERE id = ?').run(userId);
 

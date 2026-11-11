@@ -257,7 +257,7 @@ async function postAccountDelete(req, res, url, data, actor) {
     pruneBlobHashes(removed.hashes || []);
     for (const gid of [...(removed.groupsRemoved || []), ...(removed.groupsTouched || [])]) { groupCache.delete(gid); invalidateGroupPubCache(gid); }
     // 4) Fuera de la RAM (usuarios, perfiles, resúmenes, colas…).
-    purgeUserFromMemory(deletedId, who);
+    purgeUserFromMemory(deletedId, who, removed.groupsRemoved || []);
     // 5) Grupos supervivientes: se releen de la base (miembros y
     //    administradores ya actualizados) y se avisa a cada miembro.
     for (const gid of removed.groupsTouched || []) {

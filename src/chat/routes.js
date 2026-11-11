@@ -713,6 +713,7 @@ function postChatDelete(req, res, url, data, actor) {
     tx.deleteChats(req.authUser.id, targets.map(target => ({
         chatId: 'chat:' + target.pk,
         peerId: target.peerId,
+        peerKey: 'dm:' + target.peer,
         pk: target.pk
     })), now, keepSummary);
     // Ocultar grupos de la lista sin salir (BUG-013): marca de conversación
@@ -723,6 +724,7 @@ function postChatDelete(req, res, url, data, actor) {
             for (const gid of gids) {
                 Stmt.insertChatDeletion.run('group:' + gid, req.authUser.id, now);
                 Stmt.deleteGroupSummary.run(req.authUser.id, gid);
+                Stmt.deleteChatPref.run(req.authUser.id, 'group:' + gid);
             }
         });
         ocultar(groupTargets.map(g => g.id));

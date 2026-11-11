@@ -408,8 +408,10 @@ function accountByName(name) {
     return acc;
 }
 
-/* Elimina de la RAM todo rastro de una cuenta (usada al borrar y al reparar). */
-function purgeUserFromMemory(id, username) {
+/* Elimina de la RAM todo rastro de una cuenta (usada al borrar y al reparar).
+   `removedGroups` son los grupos que desaparecieron con la cuenta: sus claves
+   'group:<gid>' también se quitan de los silenciados de los demás. */
+function purgeUserFromMemory(id, username, removedGroups = []) {
     const acc = users.get(id);
     if (acc) for (const s of [...(acc.sockets || [])]) { try { s.destroy(); } catch { } }
     users.delete(id);
@@ -424,11 +426,36 @@ function purgeUserFromMemory(id, username) {
     setStories(stories.filter(s => s.from !== username && s.fromId !== id));
     for (const [pk, c] of [...chatPageCache]) if (pk.includes(id)) chatPageCache.delete(pk);
     for (const [key, o] of pendingOffers) if (o.to === username || o.from === username || o.toId === id || o.fromId === id) pendingOffers.delete(key);
-    // Quitar al usuario de los contactos/bloqueos de los demás (en RAM).
+    const usernameKey = String(username || '').trim().toLowerCase();
+    const sameUsername = value => typeof value === 'string' && value.trim().toLowerCase() === usernameKey;
+    const removedGroupKeys = new Set((Array.isArray(removedGroups) ? removedGroups : []).map(gid => 'group:' + gid));
+    // Quitar al usuario de los contactos/bloqueos/silencios/privacidad de los
+    // demás (en RAM). Sin esto, el siguiente guardado de perfil resucitaría en
+    // la base filas que la transacción de borrado acababa de limpiar.
     for (const other of users.values()) {
         other.contacts.delete(id);
         const set = blockedSet.get(other.username);
         if (set && set.delete(username)) profiles[other.username] && (profiles[other.username].blocked = [...set]);
+        const profile = profiles[other.username];
+        if (!profile) continue;
+        if (Array.isArray(profile.mutedChatPeers)) {
+            const next = profile.mutedChatPeers.filter(peer => !sameUsername(peer) && !removedGroupKeys.has(peer));
+            if (next.length !== profile.mutedChatPeers.length) profile.mutedChatPeers = next;
+        }
+        if (profile.privacy && typeof profile.privacy === 'object') {
+            for (const rule of Object.values(profile.privacy)) {
+                if (!rule || !Array.isArray(rule.users)) continue;
+                const next = rule.users.filter(name => !sameUsername(name));
+                if (next.length !== rule.users.length) rule.users = next;
+            }
+        }
+    }
+    // El historial de llamadas de los demás también vive en caché: la base ya
+    // borró las filas del par, pero sin esto seguirían en /calls hasta reiniciar.
+    for (const [owner, list] of [...callFiles]) {
+        if (!Array.isArray(list)) continue;
+        const next = list.filter(call => !call || !sameUsername(call.peer));
+        if (next.length !== list.length) callFiles.set(owner, next);
     }
 }
 

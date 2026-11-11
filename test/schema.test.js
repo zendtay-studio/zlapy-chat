@@ -108,6 +108,19 @@ test('borrar una cuenta elimina todo en cascada y libera el nombre de usuario', 
     db.prepare("INSERT INTO stories (from_id, ts, data, hash) VALUES (?, 9, 'cifrada', 'hashS')").run(idA);
     db.prepare("INSERT INTO blob_access (hash, message_id, kind, story_user) VALUES ('hashS', 'story:9', 'story', ?)").run(idA);
     db.prepare("INSERT INTO user_group_seen (user_id, gid, ts) VALUES (?, 'g1', 5)").run(idA);
+    // Referencias por nombre (sin FK al contacto): preferencias de lista,
+    // silenciados, marcas de chat borrado y listas de privacidad.
+    db.prepare('INSERT INTO user_chat_prefs (user_id, peer_key, pinned_at, archived) VALUES (?, ?, 0, 1)').run(idB, 'dm:ana');
+    db.prepare('INSERT INTO user_chat_prefs (user_id, peer_key, pinned_at, archived) VALUES (?, ?, 0, 1)').run(idA, 'dm:beto');
+    db.prepare('INSERT INTO user_muted_peers (user_id, peer_id, peer_name) VALUES (?, ?, ?)').run(idB, idA, 'ana');
+    // La misma cuenta con otra caja: la PK permite la fila y la purga debe
+    // comparar sin distinguir mayúsculas.
+    db.prepare('INSERT INTO user_muted_peers (user_id, peer_id, peer_name) VALUES (?, NULL, ?)').run(idB, 'ANA');
+    db.prepare('INSERT INTO chat_deletions (chat, user_id, deleted_at) VALUES (?, ?, 1)').run(chat, idB);
+    db.prepare('INSERT INTO chat_deletions (chat, user_id, deleted_at) VALUES (?, ?, 1)').run(chat, idA);
+    db.prepare('INSERT INTO user_privacy (user_id, feature, mode) VALUES (?, ?, ?)').run(idB, 'foto', 'except');
+    db.prepare('INSERT INTO user_privacy_users (user_id, feature, position, target_id, target_name) VALUES (?, ?, 0, ?, ?)').run(idB, 'foto', idA, 'ana');
+    db.prepare('INSERT INTO user_privacy_users (user_id, feature, position, target_id, target_name) VALUES (?, ?, 1, NULL, ?)').run(idB, 'foto', 'ana');
 
     const removed = deleteAccountRows(db, idA, 'ana');
 
@@ -146,6 +159,14 @@ test('borrar una cuenta elimina todo en cascada y libera el nombre de usuario', 
     // no debe quedar rastro de la cuenta en ninguna parte.
     assert.deepEqual(db.prepare('SELECT id FROM calls').pluck().all(), []);
 
+    // Las referencias por nombre tampoco sobreviven: nada de chats archivados
+    // fantasma, silencios huérfanos ni listas de privacidad que apunten a una
+    // cuenta borrada.
+    assert.deepEqual(db.prepare('SELECT peer_key FROM user_chat_prefs').pluck().all(), []);
+    assert.deepEqual(db.prepare('SELECT peer_name FROM user_muted_peers').pluck().all(), []);
+    assert.deepEqual(db.prepare('SELECT chat FROM chat_deletions').pluck().all(), []);
+    assert.deepEqual(db.prepare('SELECT target_name FROM user_privacy_users').pluck().all(), []);
+
     // El nombre queda libre al instante: se puede registrar otra vez
     db.prepare(`INSERT INTO users (id, username, password_hash, password_salt, add_policy, created_at)
         VALUES ('99999999-9999-4999-8999-999999999999', 'ana', 'h2', 's2', 'request', 9)`).run();
@@ -156,7 +177,7 @@ test('borrar una cuenta elimina todo en cascada y libera el nombre de usuario', 
 test('un grupo sin miembros se borra entero con sus mensajes y adjuntos', () => {
     const db = newDb();
     ensureSchema(db);
-    const { idA } = seedUsers(db);
+    const { idA, idB } = seedUsers(db);
     db.prepare(`INSERT INTO groups (id, crypto_id, name, owner_id, visibility, join_policy, write_policy, add_policy,
         edit_policy, mention_all_policy, content_policy, invite_code, created_at)
         VALUES ('solo', 'crypto', 'Solitario', ?, 'private', 'request', 'all', 'admins', 'admins', 'admins', '{}', 'inv', 1)`).run(idA);
@@ -164,6 +185,10 @@ test('un grupo sin miembros se borra entero con sus mensajes y adjuntos', () => 
     db.prepare("INSERT INTO messages (id, chat, ts, from_id, kind, data, hash) VALUES ('g1', 'group:solo', 1, ?, 'text', 'x', 'hG')").run(idA);
     db.prepare("INSERT INTO group_summaries (owner, gid, unread) VALUES (?, 'solo', 0)").run(idA);
     db.prepare("INSERT INTO blob_access (hash, message_id, kind, gid) VALUES ('hG', 'g1', 'group', 'solo')").run();
+    // Referencias de otra cuenta al grupo que va a desaparecer.
+    db.prepare('INSERT INTO user_chat_prefs (user_id, peer_key, archived) VALUES (?, ?, 1)').run(idB, 'group:solo');
+    db.prepare("INSERT INTO chat_deletions (chat, user_id, deleted_at) VALUES ('group:solo', ?, 1)").run(idB);
+    db.prepare('INSERT INTO user_muted_peers (user_id, peer_id, peer_name) VALUES (?, NULL, ?)').run(idB, 'group:solo');
 
     const removed = deleteAccountRows(db, idA, 'ana');
     assert.deepEqual(removed.groupsRemoved, ['solo']);
@@ -173,6 +198,10 @@ test('un grupo sin miembros se borra entero con sus mensajes y adjuntos', () => 
     assert.equal(db.prepare('SELECT COUNT(*) AS c FROM group_summaries').get().c, 0);
     assert.equal(db.prepare('SELECT COUNT(*) AS c FROM messages').get().c, 0);
     assert.equal(db.prepare('SELECT COUNT(*) AS c FROM blob_access').get().c, 0);
+    // El grupo borrado tampoco deja preferencias, marcas ni silencios sueltos.
+    assert.deepEqual(db.prepare('SELECT peer_key FROM user_chat_prefs').pluck().all(), []);
+    assert.deepEqual(db.prepare('SELECT chat FROM chat_deletions').pluck().all(), []);
+    assert.deepEqual(db.prepare('SELECT peer_name FROM user_muted_peers').pluck().all(), []);
     assert.deepEqual(db.pragma('foreign_key_check'), []);
     db.close();
 });
