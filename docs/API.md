@@ -26,15 +26,21 @@ cuerpo.
 
 | Cookie | Contenido | Uso |
 |---|---|---|
-| `chatlocal_session` | Token opaco de 32 bytes en base64url | Sesión principal de la cuenta conectada. |
-| `chatlocal_account_<uuid>` | Otro token opaco | Sesión de una cuenta **vinculada** (varias cuentas abiertas en el mismo navegador). |
+| `chatlocal_session` | JWT HS256 (`header.payload.firma`) | Sesión principal de la cuenta conectada. |
+| `chatlocal_account_<uuid>` | Otro JWT HS256 | Sesión de una cuenta **vinculada** (varias cuentas abiertas en el mismo navegador). |
 
 Atributos de la cookie (`src/auth/sessions.js:79-90`): `HttpOnly; SameSite=Lax; Path=/; Max-Age=<AUTH_SESSION_TTL/1000>`,
 y `Secure` solo si la conexión va cifrada (`socket.encrypted` o `X-Forwarded-Proto: https`).
 El TTL por defecto son 30 días (`AUTH_SESSION_TTL_MS`, `src/config.js:28`).
 
-El servidor guarda el hash SHA-256 del token, nunca el token en claro
-(`hashSessionToken`, `src/auth/sessions.js:23`).
+**El servidor no guarda el token** (v9, `src/auth/sessions.js`): no hay tabla `sessions`
+ni caché en RAM. El payload del JWT lleva la cuenta (`sub`), la versión de
+autenticación vigente (`ver`) y la caducidad (`exp`); la firma es HMAC-SHA256 con un
+secreto derivado por HKDF-SHA256 de la llave maestra (`zlapy/session-token/v1`), así que
+sobrevive a los reinicios sin estar escrito en ninguna parte. Cada petición verifica
+firma, caducidad y que `ver` siga siendo la de `users.auth_version`. La revocación es por
+cuenta: rotar `auth_version` (logout, cambio de contraseña, cambio de cuenta) invalida de
+golpe todos los tokens de la cuenta, también los de otros dispositivos.
 
 **Cualquier ruta no pública exige sesión.** El corte se hace en `src/http/router.js:100-101`:
 
@@ -410,6 +416,11 @@ mundo; `all` se normaliza a `server`), `contacts`, `nobody`, `only` (contactos d
 `except` (contactos menos los de la lista). El bloqueo entre cuentas siempre gana a la regla
 de privacidad.
 
+La presencia es una función más (`online`): quién puede ver «en línea» y la última vez
+visto. No aparece en `permisos`: decide si los campos `online`/`lastSeen` **viajan** en
+`GET /profile` y `GET /users`. Sin permiso se omiten (el cliente muestra «Presencia no
+disponible»), y la propia cuenta siempre ve la suya.
+
 El campo `id` (UUID interno) solo se entrega a la propia cuenta y a los contactos; servirlo a
 cualquier sesión convertiría la ruta en un oráculo de enumeración de cuentas
 (`src/profile/routes.js:52-54`).
@@ -735,9 +746,10 @@ límite de mensajes, también el campo `retryAfter` en el cuerpo.
 - **`POST /auth/switch` es "pública" en el enrutador** (`publicAuthPost`, `src/http/router.js:120`)
   pero en la práctica necesita la cookie `chatlocal_account_<uuid>` de la cuenta a la que se
   quiere cambiar. Esa cookie lleva una sesión **propia**, distinta de la principal
-  (`src/auth/sessions.js`): al cambiar de cuenta se revocan las sesiones de la cuenta
-  abandonada y acto seguido se le emite una sesión vinculada nueva, de modo que se puede volver
-  a ella sin volver a iniciar sesión. Si la cookie caducó o el navegador la perdió, la respuesta
+  (`src/auth/sessions.js`): al cambiar de cuenta se **rota la versión de autenticación** de la
+  cuenta abandonada (todos sus tokens dejan de valer, también en otros dispositivos) y acto
+  seguido se le emite una sesión vinculada nueva con la versión ya rotada, de modo que se
+  puede volver a ella sin volver a iniciar sesión. Si la cookie caducó o el navegador la perdió, la respuesta
   es `401 { error: "Sesión no disponible.", relogin: true }`: la cuenta **sigue existiendo**, así que
   el cliente la conserva en la lista y explica que hay que volver a agregarla con «Agregar
   cuenta» (no pide la contraseña). Solo cuando la cuenta ya no está en la base responde

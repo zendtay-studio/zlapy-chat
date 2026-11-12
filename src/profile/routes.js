@@ -8,7 +8,7 @@
 'use strict';
 
 const crypto = require('crypto');
-const { accountCookieName, clearCookie, clearSessionCookie, createSession } = require('../auth/sessions.js');
+const { accountCookieName, clearCookie, clearSessionCookie, createSession, rotateRid } = require('../auth/sessions.js');
 const { hashPassword, verifyPassword } = require('../auth/password.js');
 const { propagateUsernameChange } = require('../chat/mentions.js');
 const { decryptForUser, messageCrypto } = require('../crypto/setup.js');
@@ -22,7 +22,7 @@ const { broadcastUsers, push, pushName, pushStories } = require('../realtime/not
 const { normalizeChatAppearanceSettings } = require('../shared/appearance.js');
 const { MESSAGE_LIMITS, characterCount } = require('../shared/limits.js');
 const { NOTE_TTL, validAvatar, validUsername } = require('../shared/validation.js');
-const { blockedSet, callFiles, groupCache, notesMap, profiles, sessionCache, usernameIndex, users } = require('../state.js');
+const { blockedSet, callFiles, groupCache, notesMap, profiles, usernameIndex, users } = require('../state.js');
 const { accountId, byName, freshNote, usernameTakenInDb } = require('../users/helpers.js');
 const { accountsBlocked, isBlockedBy, isContact, normPriv, permite, permiteDescripcion, privacyCacheBust, privacyFor } = require('../users/privacy.js');
 const { accountByName, purgeUserFromMemory, regenerateAuthKey, saveChatSettings, saveUserToDb } = require('../users/store.js');
@@ -70,9 +70,14 @@ function getProfile(req, res, url, data, actor) {
     compartir: !!permite(owner, 'compartir', meQ)
     };
     out.permisos = perms;
-    if (meQ === p.username || (isContact(owner, meQ) && !accountsBlocked(meQ, p.username))) {
+    /* La presencia («en línea» / última vez visto) respeta SU propia regla
+       de privacidad ('online'), igual que la foto: se entrega solo a quien
+       el ajuste autorice (incluye no-contactos si el modo es «Todos», y
+       nunca a quien la cuenta tenga bloqueado). Si no, el campo no viaja y
+       el cliente muestra «Presencia no disponible». */
     const presence = byName(p.username);
-    if (presence) { out.online = !!presence.online; out.lastSeen = presence.lastSeen || null; }
+    if (presence && permite(owner || p, 'online', meQ)) {
+        out.online = !!presence.online; out.lastSeen = presence.lastSeen || null;
     }
     if (perms.verNota) {
     out.note = freshNote(p.username);
@@ -128,8 +133,13 @@ async function postAccountProfile(req, res, url, data, actor) {
     if (nextPasswordHash) {
         req.authUser.passwordSalt = nextPasswordSalt;
         req.authUser.passwordHash = nextPasswordHash;
-        Stmt.deleteSessionsByUser.run(req.authUser.id);
-        for (const [h, s] of sessionCache) if (s.userId === req.authUser.id) sessionCache.delete(h);
+        /* Rotación del rid: TODOS los tokens de la cuenta dejan de validar
+           (los de este navegador y cualquier copia en otro dispositivo) y los
+           sockets se cortan. A continuación se emiten cookies nuevas con el
+           checksum del rid ya rotado, así que quien cambió la clave sigue
+           dentro. Aunque la rotación fallase, el hash nuevo descuadra por sí
+           solo el checksum de los tokens anteriores. */
+        rotateRid(req.authUser);
         for (const sk of [...req.authUser.sockets]) { try { sk.destroy(); } catch { } }
         createSession(req.authUser, req, res);
     }
@@ -247,8 +257,9 @@ async function postAccountDelete(req, res, url, data, actor) {
     if (!account || !await verifyPassword(data.password, account.passwordHash, account.passwordSalt))
         return json(res, 401, { error: 'Contraseña incorrecta.' });
     // 1) Sesiones y cookies: la cuenta deja de estar disponible al instante.
+    //    (No hace falta rotar la versión: al borrar la cuenta, los tokens ya
+    //    no resuelven a ninguna cuenta válida.)
     for (const sk of [...req.authUser.sockets]) { try { sk.destroy(); } catch { } }
-    for (const [h, s] of sessionCache) if (s.userId === deletedId) sessionCache.delete(h);
     clearSessionCookie(res, req);
     clearCookie(res, req, accountCookieName(deletedId));
     // 2) La pertenencia a grupos se resuelve en la transacción (removed).

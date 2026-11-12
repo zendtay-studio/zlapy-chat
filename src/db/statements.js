@@ -20,6 +20,14 @@ const Stmt = {
     updateUser: db.prepare(`UPDATE users SET username = ?, password_hash = ?, password_salt = ?,
         add_policy = ?, last_seen = ? WHERE id = ?`),
     touchUser: db.prepare('UPDATE users SET last_seen = ? WHERE id = ?'),
+    /* Revocación de sesiones sin almacén (v10): el `rid` de la cuenta rota
+       y el checksum de todos sus tokens deja de cuadrar. Las marcas de
+       tiempo son la segunda defensa (iat vs. cambio de contraseña/logout). */
+    getRid: db.prepare('SELECT rid, password_changed_at, logged_out_at FROM user_rid WHERE user_id = ?'),
+    upsertRid: db.prepare(`INSERT INTO user_rid (user_id, rid, password_changed_at, logged_out_at)
+        VALUES (?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET
+        rid = excluded.rid, password_changed_at = excluded.password_changed_at,
+        logged_out_at = excluded.logged_out_at`),
     groupExists: db.prepare('SELECT 1 FROM groups WHERE id = ?'),
     listOwnersByContact: db.prepare('SELECT owner FROM contacts WHERE contact = ?'),
     listGroupsOfUser: db.prepare('SELECT gid FROM group_members WHERE user_id = ?'),
@@ -359,17 +367,9 @@ const Stmt = {
     trimCalls: db.prepare(`DELETE FROM calls WHERE owner = ? AND id NOT IN (
         SELECT id FROM calls WHERE owner = ? ORDER BY ts DESC LIMIT ?)`),
 
-    // Sessions
-    getSession: db.prepare('SELECT user_id, expires_at FROM sessions WHERE token_hash = ?'),
-    insertSession: db.prepare('INSERT OR REPLACE INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)'),
-    deleteSession: db.prepare('DELETE FROM sessions WHERE token_hash = ?'),
-    deleteSessionsByUser: db.prepare('DELETE FROM sessions WHERE user_id = ?'),
-    deleteExpiredSessions: db.prepare('DELETE FROM sessions WHERE expires_at <= ?'),
-    listSessions: db.prepare('SELECT token_hash, user_id, expires_at FROM sessions'),
-    /* Tope de sesiones activas por cuenta: se ordena por caducidad DESC y se
-       cierran las más viejas cuando se supera el tope (sin cota, el éxito del
-       login sin límite hacía crecer la tabla sin techo). */
-    listSessionHashesByUser: db.prepare('SELECT token_hash FROM sessions WHERE user_id = ? ORDER BY expires_at DESC'),
+    /* Sin tabla de sesiones (v10): los tokens van firmados y su validez se
+       decide con el checksum de `src/auth/rid.js` contra el rid de
+       `user_rid` (getRid/upsertRid, más arriba). */
 
     // Push
     listPushSubs: db.prepare('SELECT user_id, endpoint, data FROM push_subs'),

@@ -22,7 +22,8 @@ const { invalidateBlobQuota } = require('../chat/media.js');
 const { messageRateLimiter } = require('../http/rate-limit.js');
 const { readImage, storeImage } = require('../profile/images.js');
 const { push } = require('../realtime/notify.js');
-const { blockedSet, callFiles, chatPageCache, groupCache, notesMap, pendingOffers, profiles, pushSubs, sessionCache, stories, usernameIndex, users, setStories } = require('../state.js');
+const { blockedSet, callFiles, chatPageCache, groupCache, notesMap, pendingOffers, profiles, pushSubs, stories, usernameIndex, users, setStories } = require('../state.js');
+const { generateRid } = require('../auth/rid.js');
 const { byId, byName, mutedChatPeers, parseJsonSafe } = require('./helpers.js');
 
 const LOCAL_STICKER_RE = /^\/stickers\/blob\/([a-f0-9]{64})$/i;
@@ -49,6 +50,21 @@ function persistStickers(user) {
 }
 
 function hydrateUserFromDb(acc) {
+    // Revocación de sesiones (v10): el rid y las marcas de tiempo con las que
+    // se validan los tokens (checksum + iat). Sin rid la cuenta no acepta
+    // ningún token: se crea al vuelo si falta (cuenta anterior a la migración
+    // cuya fila no se llegó a escribir).
+    const ridRow = Stmt.getRid.get(acc.id);
+    if (ridRow) {
+        acc.rid = ridRow.rid;
+        acc.passwordChangedAt = ridRow.password_changed_at || 0;
+        acc.loggedOutAt = ridRow.logged_out_at || 0;
+    } else if (!acc.rid) {
+        acc.rid = generateRid(acc.id);
+        acc.passwordChangedAt = 0;
+        acc.loggedOutAt = 0;
+        Stmt.upsertRid.run(acc.id, acc.rid, 0, 0);
+    }
     // Perfil público (reutiliza la entrada existente y la refresca)
     const row = Stmt.getProfile.get(acc.id);
     // Los campos de texto del perfil (nombre, bio y nota) se guardan cifrados
@@ -190,13 +206,10 @@ function loadFromDb() {
         try { hydrateUserFromDb(acc); }
         catch (e) { console.error('[load] hydrate', acc.username, e.message); }
     }
-    // Sesiones
+    // Sesiones: no hay tabla (v9/v10). Los tokens van firmados en las cookies
+    // y se validan con el checksum de `src/auth/rid.js` contra el rid de
+    // `user_rid`, que hidrata `hydrateUserFromDb` cuenta por cuenta.
     const now = Date.now();
-    for (const row of Stmt.listSessions.all()) {
-        if (row.expires_at > now && users.has(row.user_id))
-            sessionCache.set(row.token_hash, { userId: row.user_id, expiresAt: row.expires_at });
-    }
-    Stmt.deleteExpiredSessions.run(now);
     // Push
     for (const row of Stmt.listPushSubs.all()) {
         if (!pushSubs.has(row.user_id)) pushSubs.set(row.user_id, []);
@@ -370,6 +383,7 @@ function userFromRow(row) {
         stickers: [],
         contacts: new Set(),
         addPolicy: ['all', 'request', 'nobody'].includes(row.add_policy) ? row.add_policy : 'request',
+        rid: '', passwordChangedAt: 0, loggedOutAt: 0,
         createdAt: row.created_at || 0,
         sockets: new Set(), online: false, lastSeen: row.last_seen || null
     };
@@ -474,6 +488,17 @@ function writeUserRows(user) {
         ['all', 'request', 'nobody'].includes(user.addPolicy) ? user.addPolicy : 'request',
         user.createdAt || Date.now(), user.lastSeen || null
     );
+    /* Revocación (v10): una cuenta nueva nace con su rid ya puesto; las
+       cuentas existentes NUNCA lo regeneran aquí (un guardado de perfil
+       corriente no debe cerrar las sesiones abiertas). */
+    if (!Stmt.getRid.get(user.id)) {
+        const rid = user.rid || generateRid(user.id);
+        const changedAt = user.createdAt || Date.now();
+        Stmt.upsertRid.run(user.id, rid, changedAt, 0);
+        user.rid = rid;
+        user.passwordChangedAt = changedAt;
+        user.loggedOutAt = 0;
+    }
     const now = Date.now();
     /* La foto de perfil y el fondo del chat van al almacén de blobs (cifrados
        en reposo); en la fila solo queda su hash. Se guardan los valores

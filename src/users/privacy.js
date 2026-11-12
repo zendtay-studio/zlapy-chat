@@ -2,9 +2,9 @@
  * Privacidad por función.
  *
  * Cada cuenta decide, función por función (foto, nota, descripción,
- * historias, llamadas, mensajes y compartir), quién ve ese contenido: todo
- * el mundo, solo contactos, nadie o una lista explícita. El bloqueo entre
- * dos cuentas siempre gana a la regla de privacidad.
+ * historias, llamadas, mensajes, compartir y presencia «en línea»), quién ve
+ * ese contenido: todo el mundo, solo contactos, nadie o una lista explícita.
+ * El bloqueo entre dos cuentas siempre gana a la regla de privacidad.
  */
 'use strict';
 
@@ -12,10 +12,12 @@ const { blockedSet, users } = require('../state.js');
 const { byName } = require('./helpers.js');
 
 // Permisos
-const PRIV_KEYS = ['foto', 'nota', 'descripcion', 'historias', 'llamadas', 'mensajes', 'compartir'];
+/* 'online' cubre la PRESENCIA (en línea / última vez visto) de la cuenta. */
+const PRIV_KEYS = ['foto', 'nota', 'descripcion', 'historias', 'llamadas', 'mensajes', 'compartir', 'online'];
 /* Valores por defecto: la foto y la descripción son públicas; el resto
-   (nota, historias, llamadas, mensajes, compartir) es solo para contactos. */
-const PRIV_DEF = { foto: 'server', nota: 'contacts', descripcion: 'server', historias: 'contacts', llamadas: 'contacts', mensajes: 'contacts', compartir: 'contacts' };
+   (nota, historias, llamadas, mensajes, compartir y online) es solo para
+   contactos — el valor que ya tenía la presencia antes de ser configurable. */
+const PRIV_DEF = { foto: 'server', nota: 'contacts', descripcion: 'server', historias: 'contacts', llamadas: 'contacts', mensajes: 'contacts', compartir: 'contacts', online: 'contacts' };
 /* Normaliza las reglas de privacidad: cada función acaba con un modo válido
    y una lista de usuarios, aunque el cliente envíe campos raros o ausentes.
    La lista de excepciones se canoniza AQUÍ (minúsculas, sin espacios): así

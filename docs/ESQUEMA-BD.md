@@ -42,7 +42,6 @@ que es la única fuente de verdad: el servidor lo aplica al arrancar
 │ user_muted_peers ──► users   │   │    │ group_summaries           │
 │ user_notes                   │   │    │ user_group_seen ──► users │
 │ user_stickers                │   │    └───────────────────────────┘
-│ sessions                     │   │
 │ contacts (2 sentidos)        │   │    ┌───────────────────────────┐
 │ contact_requests             │   └────│ (todas: gid/user_id FK)   │
 │ blocked                      │        └───────────────────────────┘
@@ -87,12 +86,13 @@ La tabla principal. Todo lo demás cuelga de aquí.
 | `password_hash` | TEXT | NOT NULL | Derivación de la contraseña (scrypt-like con sal). |
 | `password_salt` | TEXT | NOT NULL | Sal aleatoria por cuenta (16 bytes en hex). |
 | `add_policy` | TEXT | CHECK `all`/`request`/`nobody`, default `request` | Quién puede agregar como contacto. |
+| `auth_version` | INTEGER | NOT NULL default 1 | Versión de autenticación. Rotarla (logout, cambio de contraseña, cambio de cuenta) invalida de golpe TODOS los tokens de sesión (JWT) emitidos para la cuenta. |
 | `created_at` | INTEGER | NOT NULL, default 0 | Alta de la cuenta. |
 | `last_seen` | INTEGER | NULL | Última desconexión. `NULL` = en línea. |
 
 **Cascada:** borrar una fila de `users` arrastra (en este orden lógico):
 `user_profiles`, `user_keys`, `user_privacy` (+ sus listas), `user_chat_settings`,
-`user_muted_peers`, `user_notes`, `user_stickers`, `user_group_seen`, `sessions`,
+`user_muted_peers`, `user_notes`, `user_stickers`, `user_group_seen`,
 `contacts` (ambos sentidos), `contact_requests`, `blocked`, `summaries`,
 `messages` (como autor y como destinatario), `stories`, `calls`,
 `push_subs`, `group_members`, `group_summaries`, `group_join_requests`,
@@ -131,7 +131,7 @@ aplica el valor por defecto de esa función).
 | Columna | Tipo | Restricciones | Significado |
 | --- | --- | --- | --- |
 | `user_id` | TEXT | FK → `users.id` CASCADE, PK compuesta | Dueño. |
-| `feature` | TEXT | CHECK: `foto`, `nota`, `descripcion`, `historias`, `llamadas`, `mensajes`, `compartir`, PK compuesta | Qué se está regulando. |
+| `feature` | TEXT | CHECK: `foto`, `nota`, `descripcion`, `online`, `historias`, `llamadas`, `mensajes`, `compartir`, PK compuesta | Qué se está regulando (`online` = quién ve «en línea» y última vez). |
 | `mode` | TEXT | CHECK: `server`, `contacts`, `nobody`, `except`, `only` | Regla. `server` = "todos" (histórico del nombre), `except` = todos menos la lista, `only` = solo la lista. |
 
 `user_privacy_users` son las listas de `except`/`only`:
@@ -242,16 +242,22 @@ preconfigurados del cliente terminan escribiendo aquí.
 | `gid` | TEXT | FK → `groups.id` CASCADE, PK compuesta | Qué grupo. |
 | `ts` | INTEGER | NOT NULL | Último mensaje visto (para el contador de no leídos). |
 
-### 3.13 `sessions` — sesiones de inicio de sesión
+### 3.13 Sesiones — no hay tabla (v9)
 
-| Columna | Tipo | Restricciones | Significado |
-| --- | --- | --- | --- |
-| `token_hash` | TEXT | PK | SHA-256 del token de la cookie (el token nunca se guarda en claro). |
-| `user_id` | TEXT | FK → `users.id` CASCADE | Cuenta. |
-| `expires_at` | INTEGER | NOT NULL | Caducidad (30 días). Se purgan de la base al arrancar y cada 10 minutos; al usarlas solo se limpia la RAM. |
+Las sesiones son **stateless**: el servidor genera el token (JWT HS256,
+secreto derivado por HKDF-SHA256 de la llave maestra, dominio
+`zlapy/session-token/v1`) y lo guarda **solo en la cookie HttpOnly del
+navegador**. No hay filas que guardar, purgar ni migrar: el payload lleva la
+cuenta (`sub`), la versión de autenticación vigente (`ver`) y la caducidad
+(`exp`), y cada petición verifica firma, caducidad y que `ver` siga siendo la
+de `users.auth_version`. Un token manipulado, caducado o emitido antes de una
+rotación se rechaza con `401` aunque la firma "parezca" buena.
 
-Las cookies por cuenta (`chatlocal_account_<id>`) permiten tener varias
-cuentas abiertas en el mismo dispositivo; cada una guarda su propio token.
+La revocación es **por cuenta**: rotar `users.auth_version` (logout, cambio
+de contraseña, cambio de cuenta) invalida de golpe todos los tokens de esa
+cuenta, también los de otros dispositivos. Las cookies por cuenta
+(`chatlocal_account_<id>`) permiten tener varias cuentas abiertas en el mismo
+navegador; cada una lleva su propio token.
 
 ### 3.14 `contacts`, `contact_requests` y `blocked`
 

@@ -1,9 +1,11 @@
 /**
  * Estado compartido en memoria.
  *
- * Guarda las cuentas, los grupos, las sesiones y los resúmenes que se
- * consultan en cada petición. Es la capa de caché del servidor: la base de
- * datos sigue siendo la fuente de verdad.
+ * Guarda las cuentas, los grupos y los resúmenes que se consultan en cada
+ * petición. Es la capa de caché del servidor: la base de datos sigue siendo
+ * la fuente de verdad. (Las sesiones no viven aquí: los tokens van firmados
+ * y se validan con el checksum de src/auth/rid.js contra el rid de
+ * user_rid.)
  */
 'use strict';
 
@@ -20,7 +22,6 @@ const groupCache = new Map();        // gid → normalized group
    mano por gid cuando el grupo cambia y el tope desaloja por uso. */
 const groupPubCache = makeCache({ max: 20000 });
 const blockedSet = new Map();        // username → Set<username>
-const sessionCache = new Map();      // hash → { userId, expiresAt }
 const pushSubs = new Map();          // userId → array of subs
 const notesMap = Object.create(null);   // username → note object (sin prototipo)
 const callFiles = new Map();           // username → array de calls (en RAM por velocidad)
@@ -38,8 +39,6 @@ const chatPageCache = new Map();     // pairKey → { messages, savedAt, more }
 const blobBytesCache = { bytes: null };
 const CHAT_PAGE_TTL = CONFIG.chatPageCacheTtlMs;
 const CHAT_PAGE_MAX = CONFIG.chatPageCacheMax;
-
-const AUTH_SESSION_TTL = CONFIG.authSessionTtlMs;
 
 /* Listas mutables del estado: se filtran a menudo, así que se cambian por
  * aquí. IMPORTANTE: se MUTAN en lugar de reasignarse. Todos los módulos
@@ -61,7 +60,6 @@ module.exports = {
     groupCache,
     groupPubCache,
     blockedSet,
-    sessionCache,
     pushSubs,
     notesMap,
     callFiles,
@@ -71,5 +69,4 @@ module.exports = {
     blobBytesCache,
     CHAT_PAGE_TTL,
     CHAT_PAGE_MAX,
-    AUTH_SESSION_TTL,
 };

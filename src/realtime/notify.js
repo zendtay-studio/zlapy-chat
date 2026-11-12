@@ -56,13 +56,21 @@ const pushName = (username, obj) => push(byName(username), obj);
 function userList(viewerId) {
     const viewer = users.get(viewerId);
     if (!viewer) return [];
-    const out = [{ id: viewer.id, username: viewer.username, online: !!viewer.online, lastSeen: viewer.lastSeen }];
+    /* La presencia de CADA cuenta respeta su propia regla de privacidad
+       ('online'): el visor solo recibe online/lastSeen de quien la autorice.
+       Sin permiso, los campos no viajan (el cliente muestra «Sin conexión» /
+       «Presencia no disponible» y nada delata la última conexión). */
+    const presenceEntry = u => {
+        const allowed = u.id === viewer.id || permite(profiles[u.username], 'online', viewer.username);
+        return allowed ? { online: !!u.online, lastSeen: u.lastSeen } : {};
+    };
+    const out = [{ id: viewer.id, username: viewer.username, ...presenceEntry(viewer) }];
     for (const id of viewer.contacts) {
         if (id === viewer.id) continue;
         const u = users.get(id);
         if (!u) continue;
         if (isBlockedBy(profiles[u.username], viewer.username)) continue;
-        out.push({ id: u.id, username: u.username, online: !!u.online, lastSeen: u.lastSeen });
+        out.push({ id: u.id, username: u.username, ...presenceEntry(u) });
     }
     return out;
 }

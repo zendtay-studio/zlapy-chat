@@ -1,5 +1,5 @@
 /**
- * Esquema de la base de datos de Zlapy (v7).
+ * Esquema de la base de datos de Zlapy (v10).
  *
  * Tablas normalizadas con CHECK/UNIQUE y claves ajenas con ON DELETE CASCADE:
  * borrar una fila de `users` arrastra en cascada todo lo suyo, y borrar un
@@ -17,15 +17,24 @@
  * v6 añade una biblioteca pública de stickers con publicación voluntaria y
  * etiquetas para búsqueda. v7 incorpora el paquete local de stickers bbot.
  * v8 añade reacciones persistentes por usuario a los mensajes.
+ * v9 hace configurable la privacidad de la presencia («en línea»): añade la
+ *   función 'online' a `user_privacy` y quita la tabla `sessions` (los tokens
+ *   ya no se guardan: son firmados y se validan en la petición).
+ * v10 sustituye `users.auth_version` por la tabla `user_rid` (rid aleatorio
+ *   por cuenta que rota para revocar TODOS sus tokens) y añade
+ *   `password_changed_at` / `logged_out_at`, que sirven de segunda defensa
+ *   frente a tokens emitidos antes de un cambio de contraseña o un logout.
+ *   En las instalaciones migradas la columna `auth_version` queda sin uso.
  *
  * Es la única fuente de verdad del esquema: src/db/database.js lo aplica al
  * arrancar con `ensureSchema` (idempotente) y test/schema.test.js
- * lo verifica. No hay migraciones: una base en un formato anterior no es
- * compatible con este servidor.
+ * lo verifica. No hay migraciones de formato completo, salvo las ALTER/
+ * rebuild puntuales que listan las versiones (una base en un formato
+ * anterior no es compatible con este servidor).
  */
 'use strict';
 
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 10;
 
 // Esquema v8
 // Orden de creación: primero las tablas padre (users, groups) para que las
@@ -63,7 +72,7 @@ CREATE TABLE IF NOT EXISTS user_keys (
 /* ---------------- 4. Privacidad por función ---------------- */
 CREATE TABLE IF NOT EXISTS user_privacy (
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    feature TEXT NOT NULL CHECK (feature IN ('foto','nota','descripcion','historias','llamadas','mensajes','compartir')),
+    feature TEXT NOT NULL CHECK (feature IN ('foto','nota','descripcion','historias','llamadas','mensajes','compartir','online')),
     mode    TEXT NOT NULL CHECK (mode IN ('server','contacts','nobody','except','only')),
     PRIMARY KEY (user_id, feature)
 );
@@ -212,14 +221,21 @@ CREATE TABLE IF NOT EXISTS user_group_seen (
 );
 CREATE INDEX IF NOT EXISTS idx_ugs_gid ON user_group_seen(gid);
 
-/* ---------------- 11. Sesiones ---------------- */
-CREATE TABLE IF NOT EXISTS sessions (
-    token_hash TEXT PRIMARY KEY,
-    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    expires_at INTEGER NOT NULL
+/* ---------------- 11. Revocación de sesiones (rid) ----------------
+   Sesiones stateless (v9): no hay tabla de sesiones. La validez de un token
+   se decide comparando el checksum de su payload (firmado: SHA-256 sobre
+   id | usuario | hash de contraseña | rid) con el estado vigente de la
+   cuenta. ROTAR el rid invalida de golpe TODOS los tokens de la cuenta
+   (cambio de contraseña, logout, cambio de cuenta), también los de otros
+   dispositivos. password_changed_at y logged_out_at son la segunda defensa:
+   un token emitido ANTES de esas marcas se rechaza aunque el checksum
+   siguiera cuadrando (hueco de caché o escritura perdida). */
+CREATE TABLE IF NOT EXISTS user_rid (
+    user_id           TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    rid               TEXT NOT NULL,
+    password_changed_at INTEGER NOT NULL DEFAULT 0,
+    logged_out_at     INTEGER NOT NULL DEFAULT 0
 );
-CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
-CREATE INDEX IF NOT EXISTS idx_sessions_exp ON sessions(expires_at);
 
 /* ---------------- 12. Contactos ---------------- */
 CREATE TABLE IF NOT EXISTS contacts (
@@ -426,6 +442,58 @@ const tableExists = (db, name) =>
 const tableColumns = (db, name) =>
     new Set(db.pragma(`table_info(${name})`).map(column => column.name));
 
+/* SQL original de una tabla (CHECK/UNIQUE incluidos) o '' si no existe. */
+const tableSql = (db, name) => {
+    const row = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?").get(name);
+    return row && row.sql ? String(row.sql) : '';
+};
+
+/* Migración v9: la CHECK de `user_privacy.feature` de las bases antiguas no
+   admite 'online' (privacidad de la presencia). SQLite no puede ALTERar una
+   CHECK, así que se reconstruyen las dos tablas (regla + listas) con el
+   mismo esquema actualizado, copiando las filas. Idempotente: si el SQL de
+   la tabla ya menciona 'online', no se toca nada. */
+function migratePrivacyFeatures(db) {
+    const sql = tableSql(db, 'user_privacy');
+    if (!sql || /'online'/.test(sql)) return;
+    if (!tableSql(db, 'user_privacy_users')) return; // base a medias: el CREATE IF NOT EXISTS la crea completa
+    db.pragma('foreign_keys = OFF');
+    try {
+        db.exec(`
+            BEGIN;
+            CREATE TABLE user_privacy_v9 (
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                feature TEXT NOT NULL CHECK (feature IN ('foto','nota','descripcion','historias','llamadas','mensajes','compartir','online')),
+                mode    TEXT NOT NULL CHECK (mode IN ('server','contacts','nobody','except','only')),
+                PRIMARY KEY (user_id, feature)
+            );
+            INSERT INTO user_privacy_v9 (user_id, feature, mode) SELECT user_id, feature, mode FROM user_privacy;
+            CREATE TABLE user_privacy_users_v9 (
+                user_id     TEXT NOT NULL,
+                feature     TEXT NOT NULL,
+                position    INTEGER NOT NULL,
+                target_id   TEXT REFERENCES users(id) ON DELETE CASCADE,
+                target_name TEXT NOT NULL,
+                PRIMARY KEY (user_id, feature, position),
+                FOREIGN KEY (user_id, feature) REFERENCES user_privacy(user_id, feature) ON DELETE CASCADE
+            );
+            INSERT INTO user_privacy_users_v9 (user_id, feature, position, target_id, target_name)
+                SELECT user_id, feature, position, target_id, target_name FROM user_privacy_users;
+            DROP TABLE user_privacy_users;
+            DROP TABLE user_privacy;
+            ALTER TABLE user_privacy_v9 RENAME TO user_privacy;
+            ALTER TABLE user_privacy_users_v9 RENAME TO user_privacy_users;
+            CREATE INDEX IF NOT EXISTS idx_upu_target ON user_privacy_users(target_id) WHERE target_id IS NOT NULL;
+            COMMIT;
+        `);
+    } catch (error) {
+        try { db.exec('ROLLBACK'); } catch { }
+        throw error;
+    } finally {
+        db.pragma('foreign_keys = ON');
+    }
+}
+
 function applySchema(db) {
     db.exec(SCHEMA_SQL);
     // Altas de columna idempotentes para instalaciones con tablas existentes.
@@ -435,10 +503,29 @@ function applySchema(db) {
         db.exec('ALTER TABLE user_chat_settings ADD COLUMN keep_archived INTEGER NOT NULL DEFAULT 0 CHECK (keep_archived IN (0,1))');
     if (!tableColumns(db, 'user_chat_settings').has('accent'))
         db.exec('ALTER TABLE user_chat_settings ADD COLUMN accent TEXT');
+    // v9: la tabla de sesiones desaparece (tokens JWT stateless). Una base
+    // antigua la conserva con filas de sesiones ya inservibles: se suelta.
+    if (tableExists(db, 'sessions')) db.exec('DROP TABLE sessions');
+    // v10: `users.auth_version` quedó sin uso al nacer `user_rid` (la
+    // revocación es el rid + checksum). Si la instalación venía de v9, la
+    // columna sigue ahí con su valor fijo: se suelta. No necesita la llave
+    // maestra, así que puede hacerse aquí. Si el SQLite del sistema es
+    // demasiado antiguo para DROP COLUMN, simplemente queda sin uso.
+    if (tableColumns(db, 'users').has('auth_version')) {
+        try { db.exec('ALTER TABLE users DROP COLUMN auth_version'); } catch { }
+    }
+    // v10: `user_rid` se crea con el resto del esquema (arriba). Las FILAS de
+    // las cuentas existentes NO se rellenan aquí: generar el rid necesita la
+    // llave maestra, y applySchema corre mientras la base se está abriendo
+    // (antes de que exista). Lo hace backfillUserRids, ya con la llave en
+    // RAM, desde el arranque del servidor (ver server.js).
+    migratePrivacyFeatures(db);
 }
 
 /* Aplica el esquema si falta algo (idempotente) y registra la versión.
- * No hay migraciones: bases en formatos anteriores no son compatibles. */
+ * No hay migraciones de formato completo, salvo las ALTER/rebuild que
+ * listan las versiones del encabezado: una base en un formato anterior no
+ * es compatible con este servidor. */
 function ensureSchema(db) {
     applySchema(db);
     db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)").run('schema_version', String(SCHEMA_VERSION));
@@ -446,7 +533,7 @@ function ensureSchema(db) {
 
 // Borrado en cascada
 // El esquema declara claves ajenas ON DELETE CASCADE, así que borrar la fila
-// de `users` arrastra solo: sesiones, contactos (en ambos sentidos), bloqueos,
+// de `users` arrastra solo: contactos (en ambos sentidos), bloqueos,
 // resúmenes, historias, llamadas, push, perfil, privacidad, colores, notas,
 // stickers, pertenencia a grupos, resúmenes de grupo, solicitudes y permisos
 // de descarga, reacciones de mensajes. Aquí se añade lo que la cascada no puede expresar con SQL:
@@ -585,13 +672,30 @@ function deleteAccountRows(db, userId, username, options = {}) {
     return { hashes, groupsTouched, groupsRemoved };
 }
 
+/* Rellena `user_rid` para las cuentas que aún no tienen fila (migración v10
+   de instalaciones anteriores, o una cuenta creada por una vía que no la
+   escribió). Se llama con la llave maestra YA en RAM (server.js, tras cargar
+   crypto/setup.js): generar el rid la necesita, y applySchema corre antes de
+   que exista. Idempotente: no toca las filas que ya tienen rid. */
+function backfillUserRids(db) {
+    const faltan = db.prepare(`SELECT u.id FROM users u
+        LEFT JOIN user_rid r ON r.user_id = u.id WHERE r.user_id IS NULL`).all();
+    if (!faltan.length) return 0;
+    const { generateRid } = require('../auth/rid.js');
+    const insert = db.prepare('INSERT INTO user_rid (user_id, rid, password_changed_at, logged_out_at) VALUES (?, ?, 0, 0)');
+    for (const row of faltan) insert.run(row.id, generateRid(row.id));
+    return faltan.length;
+}
+
 module.exports = {
     SCHEMA_VERSION,
     SCHEMA_SQL,
     applySchema,
     ensureSchema,
+    backfillUserRids,
     tableExists,
     tableColumns,
+    tableSql,
     deleteAccountRows,
     deleteGroupRows,
     deleteMessageRowsWhere

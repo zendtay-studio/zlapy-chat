@@ -66,6 +66,7 @@ try {
 }
 
 const { loadFromDb } = require('./src/users/store.js');
+const { backfillUserRids } = require('./src/db/schema.js');
 
 /* El manifiesto de integridad del ENLACE credencial ↔ base (sal, keycheck,
    usuario, key_id): si alguien manipuló esas filas con el servidor parado,
@@ -132,6 +133,22 @@ if (incompatibleRow)
 // Carga las cuentas, los grupos y las historias en memoria.
 const { seedMediaFallback } = require('./src/chat/media.js');
 console.log(`[blobs] Imagen de respaldo lista (${seedMediaFallback()}).`);
+
+/* Migración v10: las cuentas de bases anteriores reciben su `rid` AHORA, con
+   la llave maestra ya en RAM (applySchema no puede hacerlo: corre mientras la
+   base se abre, antes de que exista la llave). Idempotente. */
+try {
+    const creados = backfillUserRids(db);
+    if (creados) console.log(`[db] user_rid: ${creados} cuenta(s) recibieron su rid de revocación.`);
+} catch (error) {
+    console.error('');
+    console.error('[db] No se pudo completar la migración de user_rid (revocación de sesiones v10):');
+    console.error(`  ${error && error.message ? error.message : error}`);
+    console.error('  Las cuentas sin rid no aceptan ningún token: arréglalo antes de continuar.');
+    console.error('');
+    process.exit(78);
+}
+
 loadFromDb();
 
 // Genera el paquete bbot si hace falta y registra sus WebP en la biblioteca.

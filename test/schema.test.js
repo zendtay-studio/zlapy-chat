@@ -1,24 +1,30 @@
-// Tests del esquema v8 de la base de datos:
+// Tests del esquema v10 de la base de datos:
 //   · el esquema se aplica en bases nuevas (idempotente, sin migraciones),
 //   · borrar una cuenta arrastra TODO en cascada (y libera el usuario),
 //     sin purgar grupos cuyo gid contenga el uuid de la víctima,
-//   · las restricciones (UNIQUE, CHECK, claves ajenas) hacen su trabajo.
+//   · las restricciones (UNIQUE, CHECK, claves ajenas) hacen su trabajo,
+//   · la migración v10 crea `user_rid` (rid + marcas de revocación) en las
+//     instalaciones anteriores sin tocar las sesiones vivas de más,
+//   · la migración v9 (privacidad 'online') sigue aplicándose donde falte.
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const Database = require('better-sqlite3');
 
 const {
     SCHEMA_VERSION,
+    SCHEMA_SQL,
     ensureSchema,
+    backfillUserRids,
     tableExists,
     tableColumns,
+    tableSql,
     deleteAccountRows
 } = require('../src/db/schema.js');
 
-const TABLES_V5 = [
-    'users', 'user_profiles', 'user_keys', 'user_privacy', 'user_privacy_users',
+const TABLES_V10 = [
+    'users', 'user_profiles', 'user_keys', 'user_privacy', 'user_privacy_users', 'user_rid',
     'user_chat_settings', 'user_muted_peers', 'user_notes', 'user_stickers', 'user_sticker_blobs',
-    'user_group_seen', 'sessions', 'contacts', 'contact_requests', 'blocked',
+    'user_group_seen', 'contacts', 'contact_requests', 'blocked',
     'summaries', 'messages', 'message_reactions', 'blob_access', 'stories', 'calls', 'push_subs',
     'groups', 'group_members', 'group_summaries', 'group_join_requests', 'meta'
 ];
@@ -44,7 +50,7 @@ function findValueInDb(db, value) {
     return found;
 }
 
-/* Inserta dos usuarios v2 mínimos y devuelve { db, idA, idB }. */
+/* Inserta dos usuarios v10 mínimos y devuelve { db, idA, idB }. */
 function seedUsers(db, idA = ids.a, idB = ids.b) {
     const insert = db.prepare(`INSERT INTO users (id, username, password_hash, password_salt, add_policy, created_at, last_seen)
         VALUES (?, ?, 'hash', 'salt', 'request', ?, NULL)`);
@@ -53,17 +59,22 @@ function seedUsers(db, idA = ids.a, idB = ids.b) {
     return { idA, idB };
 }
 
-test('el esquema v8 se aplica en una base nueva y registra la versión', () => {
+test('el esquema v10 se aplica en una base nueva y registra la versión', () => {
     const db = newDb();
     ensureSchema(db);
     // Idempotente: aplicarlo de nuevo no rompe nada ni duplica nada.
     ensureSchema(db);
 
-    for (const table of TABLES_V5) assert.ok(tableExists(db, table), `falta la tabla ${table}`);
+    for (const table of TABLES_V10) assert.ok(tableExists(db, table), `falta la tabla ${table}`);
+    assert.ok(!tableExists(db, 'sessions'), 'ya no hay tabla de sesiones (tokens stateless)');
     assert.ok(tableExists(db, 'default_stickers'), 'falta el catálogo de stickers bbot predeterminados');
     assert.ok(tableColumns(db, 'users').has('password_hash'));
     assert.ok(tableColumns(db, 'users').has('add_policy'));
+    assert.ok(!tableColumns(db, 'users').has('auth_version'), 'auth_version se retira: la revocación vive en user_rid (v10)');
     assert.ok(!tableColumns(db, 'users').has('data'), 'users ya no guarda un JSON con todo');
+    assert.ok(tableColumns(db, 'user_rid').has('rid'), 'user_rid guarda el rid de cada cuenta');
+    assert.match(tableSql(db, 'user_rid'), /ON DELETE CASCADE/, 'borrar la cuenta arrastra su rid');
+    assert.match(tableSql(db, 'user_privacy'), /'online'/, 'la CHECK de user_privacy admite la función online');
     assert.equal(db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, String(SCHEMA_VERSION));
     db.close();
 });
@@ -83,7 +94,6 @@ test('borrar una cuenta elimina todo en cascada y libera el nombre de usuario', 
     db.prepare('INSERT INTO blocked (owner, target) VALUES (?, ?)').run(idB, idA);
     db.prepare('INSERT INTO summaries (owner, peer) VALUES (?, ?)').run(idB, idA);
     db.prepare('INSERT INTO summaries (owner, peer) VALUES (?, ?)').run(idA, idB);
-    db.prepare('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)').run('h1', idA, Date.now() + 1000);
     db.prepare('INSERT INTO push_subs (user_id, endpoint, data) VALUES (?, ?, ?)').run(idA, 'https://push/1', '{}');
     db.prepare('INSERT INTO calls (id, owner, peer, ts) VALUES (?, ?, ?, 1)').run('callA', idA, 'beto');
     db.prepare('INSERT INTO calls (id, owner, peer, ts) VALUES (?, ?, ?, 2)').run('callB', idB, 'ana');
@@ -152,7 +162,6 @@ test('borrar una cuenta elimina todo en cascada y libera el nombre de usuario', 
     assert.equal(db.prepare('SELECT COUNT(*) AS c FROM contacts').get().c, 0);
     assert.equal(db.prepare('SELECT COUNT(*) AS c FROM blocked').get().c, 0);
     assert.equal(db.prepare('SELECT COUNT(*) AS c FROM summaries').get().c, 0);
-    assert.equal(db.prepare('SELECT COUNT(*) AS c FROM sessions').get().c, 0);
     assert.equal(db.prepare('SELECT COUNT(*) AS c FROM push_subs').get().c, 0);
 
     // El historial de llamadas donde era el otro extremo también se va:
@@ -219,6 +228,11 @@ test('las restricciones del esquema frenan datos inválidos y nombres repetidos'
     assert.throws(() => db.prepare("INSERT INTO users (id, username, password_hash, password_salt) VALUES ('u2', 'ANA', 'h', 's')").run(),
         /UNIQUE constraint failed/);
 
+    // CHECK de user_privacy: solo funciones conocidas ('online' incluida)
+    db.prepare(`INSERT INTO user_privacy (user_id, feature, mode) VALUES ('u1', 'online', 'nobody')`).run();
+    assert.throws(() => db.prepare(`INSERT INTO user_privacy (user_id, feature, mode) VALUES ('u1', 'presencia', 'nobody')`).run(),
+        /CHECK constraint failed/);
+
     // Clave ajena: no se puede meter un perfil de una cuenta que no existe
     assert.throws(() => db.prepare("INSERT INTO user_profiles (user_id) VALUES ('nadie')").run(),
         /FOREIGN KEY constraint failed/);
@@ -227,6 +241,95 @@ test('las restricciones del esquema frenan datos inválidos y nombres repetidos'
     db.prepare("INSERT INTO user_profiles (user_id, display_name) VALUES ('u1', 'Ana')").run();
     db.prepare("DELETE FROM users WHERE id = 'u1'").run();
     assert.equal(db.prepare('SELECT COUNT(*) AS c FROM user_profiles').get().c, 0);
+    db.close();
+});
+
+test('la migración v10 crea user_rid, suelta sessions y respeta la privacidad v9', () => {
+    const db = newDb();
+    // Base "v9": misma DDL pero SIN la tabla user_rid, CON users.auth_version
+    // (la columna que v10 retira), SIN 'online' en la CHECK de user_privacy
+    // y CON la tabla sessions de entonces.
+    const v9 = SCHEMA_SQL
+        .replace("'compartir','online'", "'compartir'")
+        .replace(/\/\* -+ 11\.[\s\S]*?logged_out_at\s+INTEGER NOT NULL DEFAULT 0\s*\);/, '')
+        .replace("add_policy    TEXT NOT NULL DEFAULT 'request'",
+            "auth_version  INTEGER NOT NULL DEFAULT 1,\n    add_policy    TEXT NOT NULL DEFAULT 'request'");
+    db.exec(v9);
+    assert.ok(!tableExists(db, 'user_rid'), 'la base simulada v9 no tiene user_rid');
+    assert.ok(tableColumns(db, 'users').has('auth_version'), 'la base simulada v9 tiene auth_version');
+    assert.ok(!/'online'/.test(tableSql(db, 'user_privacy')), 'la base simulada v9 no admite online');
+    // La tabla sessions del esquema v9 (el SCHEMA_SQL actual ya no la crea).
+    db.exec(`CREATE TABLE sessions (
+        token_hash TEXT PRIMARY KEY,
+        user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        expires_at INTEGER NOT NULL
+    )`);
+
+    const idA = ids.a;
+    db.prepare(`INSERT INTO users (id, username, password_hash, password_salt, add_policy, auth_version, created_at)
+        VALUES (?, 'ana', 'h', 's', 'request', 7, 1)`).run(idA);
+    db.prepare('INSERT INTO user_privacy (user_id, feature, mode) VALUES (?, ?, ?)').run(idA, 'foto', 'contacts');
+    db.prepare('INSERT INTO user_privacy_users (user_id, feature, position, target_id, target_name) VALUES (?, ?, 0, NULL, ?)')
+        .run(idA, 'foto', 'caro');
+    db.prepare("INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ('h1', ?, 9999999999999)").run(idA);
+
+    ensureSchema(db);
+
+    // La tabla de sesiones desaparece; user_rid se crea VACÍA (las filas las
+    // escribe backfillUserRids con la llave maestra ya en RAM: applySchema
+    // corre antes de que exista y no puede generar el rid).
+    assert.ok(!tableExists(db, 'sessions'), 'la tabla sessions se suelta en la migración');
+    assert.ok(tableExists(db, 'user_rid'), 'la migración crea user_rid (vacía: sin rid hasta el backfill)');
+    assert.equal(db.prepare('SELECT COUNT(*) AS c FROM user_rid').get().c, 0, 'applySchema no rellena filas');
+
+    // El backfill (lo que hace server.js al arrancar) pone el rid a cada
+    // cuenta que no lo tenga, y es idempotente.
+    assert.equal(backfillUserRids(db), 1, 'se rellena una cuenta');
+    assert.equal(backfillUserRids(db), 0, 'la segunda pasada no toca nada');
+    const ridRow = db.prepare('SELECT rid, password_changed_at, logged_out_at FROM user_rid WHERE user_id = ?').get(idA);
+    assert.ok(ridRow && typeof ridRow.rid === 'string' && ridRow.rid.length >= 20, 'cada cuenta recibe su rid');
+    assert.equal(ridRow.password_changed_at, 0, 'sin datos previos, las marcas arrancan en 0 (no revolucionan tokens por tiempo)');
+    // La columna auth_version de v9 se suelta: no queda ni como vestigio.
+    assert.ok(!tableColumns(db, 'users').has('auth_version'), 'auth_version se suelta en instalaciones migradas');
+
+    // La migración es idempotente: una segunda pasada NO rota el rid (o
+    // cerraría las sesiones abiertas en cada reinicio).
+    ensureSchema(db);
+    assert.equal(db.prepare('SELECT rid FROM user_rid WHERE user_id = ?').get(idA).rid, ridRow.rid,
+        'el rid no rota al reaplicar el esquema');
+
+    // La CHECK nueva admite 'online' y las reglas previas sobreviven.
+    db.prepare('INSERT INTO user_privacy (user_id, feature, mode) VALUES (?, ?, ?)').run(idA, 'online', 'only');
+    assert.deepEqual(
+        db.prepare('SELECT feature, mode FROM user_privacy WHERE user_id = ? ORDER BY feature').all(idA),
+        [{ feature: 'foto', mode: 'contacts' }, { feature: 'online', mode: 'only' }]
+    );
+
+    // Las listas "solo/excepto" sobreviven al rebuild y la FK sigue viva:
+    // borrar la cuenta las arrastra (junto con su fila de user_rid).
+    assert.deepEqual(
+        db.prepare('SELECT user_id, feature, position, target_name FROM user_privacy_users').all(),
+        [{ user_id: idA, feature: 'foto', position: 0, target_name: 'caro' }]
+    );
+    db.prepare('DELETE FROM users WHERE id = ?').run(idA);
+    assert.equal(db.prepare('SELECT COUNT(*) AS c FROM user_privacy_users').get().c, 0);
+    assert.equal(db.prepare('SELECT COUNT(*) AS c FROM user_privacy').get().c, 0);
+    assert.equal(db.prepare('SELECT COUNT(*) AS c FROM user_rid').get().c, 0, 'el rid se borra con la cuenta');
+    assert.deepEqual(db.pragma('foreign_key_check'), []);
+    db.close();
+});
+
+test('el esquema es idempotente sobre una base ya migrada', () => {
+    const db = newDb();
+    ensureSchema(db);
+    db.prepare(`INSERT INTO users (id, username, password_hash, password_salt, add_policy)
+        VALUES (?, 'ana', 'h', 's', 'request')`).run(ids.a);
+    db.prepare(`INSERT INTO user_rid (user_id, rid) VALUES (?, 'rid-original')`).run(ids.a);
+    db.prepare(`INSERT INTO user_privacy (user_id, feature, mode) VALUES (?, 'online', 'nobody')`).run(ids.a);
+    ensureSchema(db); // segunda pasada: no toca nada
+    assert.equal(db.prepare('SELECT rid FROM user_rid WHERE user_id = ?').get(ids.a).rid, 'rid-original',
+        'el rid no se rota por reaplicar el esquema');
+    assert.equal(db.prepare('SELECT mode FROM user_privacy WHERE user_id = ? AND feature = ?').get(ids.a, 'online').mode, 'nobody');
     db.close();
 });
 

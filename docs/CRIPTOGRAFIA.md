@@ -245,7 +245,7 @@ para con un mensaje que dice qué hacer.
 | identificadores y claves ajenas | hacen falta para el grafo social y las consultas |
 | `messages.chat`, `kind`, `ts`, `flags` | estructura, no contenido |
 | `hash`, `signature`, `signing_public_key` | el hash es el SHA-256 del adjunto; la firma es pública |
-| `sessions.token_hash` | ya es un SHA-256 del token |
+| `users.auth_version` | contador de revocación de tokens (v9): no hay tabla `sessions` |
 
 Todo lo demás (nombres visibles, biografías, notas, mensajes, fotos, fondos,
 nombres de grupos, códigos de invitación, listas de privacidad, silenciados,

@@ -39,9 +39,7 @@ const DEFAULTS = Object.freeze({
     MAX_GROUP_MEMBERS: 200,
     /* Cota global de bytes de la caché de páginas de chat (además del tope de
        entradas): sin ella, páginas con adjuntos grandes llenaban la RAM. */
-    CHAT_PAGE_CACHE_MAX_BYTES: 64 * 1024 * 1024,
-    /* Tope de sesiones activas por cuenta. */
-    MAX_SESSIONS_PER_USER: 20
+    CHAT_PAGE_CACHE_MAX_BYTES: 64 * 1024 * 1024
 });
 
 function integerSetting(env, name, min, max) {
@@ -83,7 +81,6 @@ function loadConfig(env = process.env) {
         storyInlineCharLimit: integerSetting(env, 'STORY_INLINE_CHAR_LIMIT', 1, 1024 * 1024 * 1024),
         maxGroupMembers: integerSetting(env, 'MAX_GROUP_MEMBERS', 1, 10_000),
         chatPageCacheMaxBytes: integerSetting(env, 'CHAT_PAGE_CACHE_MAX_BYTES', 1024, 1_073_741_824),
-        maxSessionsPerUser: integerSetting(env, 'MAX_SESSIONS_PER_USER', 1, 1_000),
         dataDir: typeof env.DATA_DIR === 'string' && env.DATA_DIR.trim() ? env.DATA_DIR.trim() : '',
         /* Nombre (o ruta) de la base principal. La extensión ".db" se añade
            sola; un valor con separadores de ruta se toma como ruta. */

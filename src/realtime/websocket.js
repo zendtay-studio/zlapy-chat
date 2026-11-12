@@ -4,13 +4,13 @@
  * Gestiona el upgrade a WebSocket, autentica la sesión, reparte los frames
  * entre las conexiones de cada cuenta y limita el tráfico entrante para que
  * un cliente no pueda acaparar el proceso. También mantiene las tareas
- * periódicas de limpieza (historias, sesiones y notas caducadas).
+ * periódicas de limpieza (historias, intentos de login y notas caducadas).
  */
 'use strict';
 
 const crypto = require('crypto');
 const http = require('http');
-const { getSessionFromCache, hashSessionToken, originAllowed, requestEncrypted, sessionCookie } = require('../auth/sessions.js');
+const { originAllowed, requestEncrypted, sessionCookie, sessionFromToken } = require('../auth/sessions.js');
 const { addCall, endUserCalls, hasCall, hasPendingCall, updateCall } = require('../calls/store.js');
 const { CONFIG, tlsState } = require('../config.js');
 const { decryptForUser } = require('../crypto/setup.js');
@@ -25,7 +25,7 @@ const { acceptHandshake, openFrame } = require('./encrypted.js');
 const { WS_FRAME_BURST, WS_FRAME_RATE, WS_MAX_PER_USER, broadcastUsersAround, liveStories, push, pushName, pushStories, storyForViewer, updateContactRequests, userList, wsSend } = require('./notify.js');
 const { MESSAGE_LIMITS, characterCount } = require('../shared/limits.js');
 const { NOTE_TTL, validAvatar } = require('../shared/validation.js');
-const { callFiles, notesMap, pendingOffers, profiles, sessionCache, stories, users, setStories } = require('../state.js');
+const { callFiles, notesMap, pendingOffers, profiles, stories, users, setStories } = require('../state.js');
 const { byId, byName } = require('../users/helpers.js');
 const { isBlockedBy, normPriv, permite, privacyCacheBust } = require('../users/privacy.js');
 const { loadUserFromRow, saveUserToDb } = require('../users/store.js');
@@ -56,12 +56,7 @@ const wsUpgradeInner = (req, socket) => {
         typeof req.headers['sec-websocket-key'] !== 'string' || !req.headers['sec-websocket-key'])
         return rejectUpgrade(socket, 400, 'Bad WebSocket Handshake');
     const token = sessionCookie(req);
-    const s = token ? getSessionFromCache(hashSessionToken(token)) : null;
-    let u = s && s.expiresAt > Date.now() ? users.get(s.userId) : null;
-    if (s && !u) {
-        const row = Stmt.getUserById.get(s.userId);
-        if (row) u = loadUserFromRow(row);
-    }
+    let u = token ? sessionFromToken(token) : null;
     if (!u) return rejectUpgrade(socket, 401, 'Unauthorized');
     socket.authToken = token;
     const key = req.headers['sec-websocket-key'];
@@ -387,21 +382,19 @@ setInterval(() => {
     pruneBlobHashes(removedHashes);
 }, 60000).unref();
 
-// Limpieza de sesiones expiradas y de los mapas de intentos (una vez cada 10 min).
+// Limpieza de los mapas de intentos (una vez cada 10 min).
 // Exportada y probada directamente: un ReferenceError aquí (identificador sin
 // importar) mataba el servidor cada 10 minutos con la suite entera en verde,
 // porque los tests paran sus servidores antes de que el temporizador dispare.
 // Cada familia lleva su propio try: una limpieza rota se AVISA (y se ve en el
 // log del supervisor), pero ni tumba el proceso ni deja sin hacer a las demás.
+// (Las sesiones ya no se limpian: no hay almacén; los tokens caducan solos y
+// la revocación es por rid (user_rid / checksum, v10).)
 function pruneAuthState(now = Date.now()) {
-    try { Stmt.deleteExpiredSessions.run(now); } catch (e) { console.error('[pruneAuthState] sesiones:', e.message); }
     try {
         for (const [key, entry] of [...loginAttempts]) if (entry.until <= now) loginAttempts.delete(key);
         for (const [key, entry] of [...registerAttempts]) if (entry.until <= now) registerAttempts.delete(key);
     } catch (e) { console.error('[pruneAuthState] intentos:', e.message); }
-    try {
-        for (const [hash, session] of [...sessionCache]) if (session.expiresAt <= now) sessionCache.delete(hash);
-    } catch (e) { console.error('[pruneAuthState] caché de sesiones:', e.message); }
 }
 setInterval(() => pruneAuthState(), 600000).unref();
 

@@ -1,4 +1,4 @@
-const CACHE = 'zlapy-v154';
+const CACHE = 'zlapy-v155';
 const SHELL = ['/', '/index.html', '/login.html', '/profile.html', '/stories.html', '/view.html', '/sticker-creator.html', '/css/fonts.css', '/fonts/outfit/outfit-latin.woff2', '/fonts/outfit/outfit-latin-ext.woff2', '/css/theme.css', '/css/login.css?v=1', '/css/popmenu.css?v=4', '/css/emoji-picker.css?v=4', '/css/avatar-editor.css?v=1', '/css/sticker-editor.css?v=30', '/files/emoji/index.json', '/files/emoji/smileys-emotion.json', '/files/emoji/animals-nature.json', '/files/emoji/travel-places.json', '/files/emoji/activities.json', '/files/emoji/objects.json', '/files/emoji/symbols.json', '/files/emoji/flags.json', '/js/appearance.js', '/js/interaction-guard.js?v=1', '/js/popmenu.js?v=5', '/js/emoji-picker.js?v=6', '/js/avatar-editor.js?v=1', '/js/animated-webp.js?v=2', '/js/sticker-editor.js?v=43', '/js/vendor/bbot-face.js', '/image/isotype-308.webp', '/image/isotype-512-full.webp', '/manifest.webmanifest'];
 // Rutas navegables de la app. Sólo estas navigaciones pueden
 // servirse desde la caché cuando no hay red: para el resto de rutas del

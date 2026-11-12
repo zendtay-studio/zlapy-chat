@@ -90,7 +90,7 @@ const TABLES = [
         name: 'user_privacy', db: 'zlapy', group: 'perfil', rows: 0, col: 0,
         cols: [
             c('user_id', 'TEXT', 'pnf'),
-            c('feature', 'TEXT', 'pn', "CHECK foto|nota|descripcion|historias|llamadas|mensajes|compartir"),
+            c('feature', 'TEXT', 'pn', "CHECK foto|nota|descripcion|online|historias|llamadas|mensajes|compartir"),
             c('mode', 'TEXT', 'n', 'CHECK server|contacts|nobody|except|only')
         ],
         refs: [r(['user_id'], 'users', ['id'])],
@@ -168,22 +168,12 @@ const TABLES = [
             c('password_hash', 'TEXT', 'n', 'scrypt'),
             c('password_salt', 'TEXT', 'n'),
             c('add_policy', 'TEXT', 'n', "DEFAULT 'request' · CHECK all|request|nobody"),
+            c('auth_version', 'INTEGER', 'n', 'DEFAULT 1 · rotarla revoca los tokens (JWT) de la cuenta'),
             c('created_at', 'INTEGER', 'n', 'DEFAULT 0 · epoch ms'),
             c('last_seen', 'INTEGER')
         ],
         refs: [],
         idx: []
-    },
-    {
-        name: 'sessions', db: 'zlapy', group: 'identidad', rows: 0, col: 1,
-        cols: [
-            c('token_hash', 'TEXT', 'p'),
-            c('user_id', 'TEXT', 'nf'),
-            c('expires_at', 'INTEGER', 'n', 'epoch ms')
-        ],
-        refs: [r(['user_id'], 'users', ['id'])],
-        idx: ['idx_sessions_user', 'idx_sessions_exp'],
-        note: 'Tope de aplicación: 20 sesiones activas por cuenta (MAX_SESSIONS_PER_USER); al iniciar sesión las más antiguas se borran.'
     },
     {
         name: 'user_auth_keys', db: 'zlapy', group: 'identidad', rows: 0, col: 1,

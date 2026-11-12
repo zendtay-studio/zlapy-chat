@@ -9,7 +9,7 @@
 'use strict';
 
 const crypto = require('crypto');
-const { accountCookieName, accountCookies, clearCookie, clearSessionCookie, createLinkedAccountSession, createSession, getSessionFromCache, hashSessionToken, sessionCookie, sessionUser, setAccountSessionCookie } = require('./sessions.js');
+const { accountCookieName, accountCookies, clearCookie, clearSessionCookie, createLinkedAccountSession, createSession, rotateRid, sessionCookie, sessionFromToken, sessionUser, setAccountSessionCookie } = require('./sessions.js');
 const { esHashAntiguo, hashPassword, verifyPassword } = require('./password.js');
 const { Stmt } = require('../db/statements.js');
 const { loginAttempts, registerAttempts } = require('../http/rate-limit.js');
@@ -17,7 +17,7 @@ const { json } = require('../http/responses.js');
 const { broadcastUsersAround } = require('../realtime/notify.js');
 const { clientIp, validUsername } = require('../shared/validation.js');
 const { characterCount } = require('../shared/limits.js');
-const { blockedSet, notesMap, profiles, sessionCache, usernameIndex, users } = require('../state.js');
+const { blockedSet, notesMap, profiles, usernameIndex, users } = require('../state.js');
 const { normPriv } = require('../users/privacy.js');
 const { accountByName, loadUserFromRow, saveUserToDb } = require('../users/store.js');
 
@@ -63,8 +63,8 @@ function getAuthSession(req, res, url, data, actor) {
     for (const [name, value] of accountCookies(req)) {
         const accountId = name.slice('chatlocal_account_'.length);
         if (accountId === user.id) continue;
-        const s = getSessionFromCache(hashSessionToken(value));
-        linked.push({ id: accountId, alive: !!(s && s.userId === accountId && Stmt.getUserById.get(accountId)) });
+        const linkedUser = sessionFromToken(value);
+        linked.push({ id: accountId, alive: !!(linkedUser && linkedUser.id === accountId) });
     }
     return json(res, 200, { authenticated: true, user: { id: user.id, username: user.username }, linked });
     }
@@ -287,14 +287,19 @@ function postAuthSwitch(req, res, url, data, actor) {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(accountIdV))
         return json(res, 400, { error: 'Cuenta inválida.' });
     const token = sessionCookie(req, accountCookieName(accountIdV));
-    const hash = token ? hashSessionToken(token) : '';
-    const s = token ? getSessionFromCache(hash) : null;
+    /* El token vinculado vale si su firma y caducidad son buenas, es de ESTA
+       cuenta y su checksum sigue vigente (rid no rotado): eso ya lo decide
+       sessionFromToken, que además resuelve la cuenta. */
+    const linked = sessionFromToken(token);
     let user = users.get(accountIdV);
     if (!user) {
         const row = Stmt.getUserById.get(accountIdV);
         if (row) user = loadUserFromRow(row);
     }
-    if (!s || s.userId !== accountIdV) {
+    /* Token sin firma válida, de OTRA cuenta o revocado (rid rotado: la
+       cuenta cambió de contraseña, cerró sesión o salió de ella): la cookie
+       no vale. */
+    if (!linked || linked.id !== accountIdV) {
         clearCookie(res, req, accountCookieName(accountIdV));
         /* Sin sesión vigente no se distingue "la cuenta no existe" de "la
            cookie caducó": la ruta es pública y hacerlo la convertiría en un
@@ -324,49 +329,22 @@ function postAuthSwitch(req, res, url, data, actor) {
         return json(res, 401, { error: 'Sesión no disponible.', relogin: true });
     }
     if (!user) {
-        // La cuenta no está en la base: se limpia la sesión y su cookie.
-        sessionCache.delete(hash);
-        try { Stmt.deleteSession.run(hash); } catch { }
+        // La cuenta no está en la base: se limpia la cookie.
         clearCookie(res, req, accountCookieName(accountIdV));
         return json(res, 401, { error: 'Cuenta no disponible.', gone: true });
     }
-    // Al cambiar de cuenta se ROTA el token: la sesión principal
-    // pasa a ser una sesión nueva, distinta de la cookie de la
-    // cuenta vinculada.
-    try { Stmt.deleteSession.run(hash); } catch { }
-    sessionCache.delete(hash);
-    /* También se revoca la sesión SALIENTE (la cookie principal de la cuenta
-       que se abandona). Sin esto, el token anterior seguía siendo válido
-       30 días: quien lo hubiera copiado (una cookie filtrada, otro navegador)
-       mantenía el acceso a la cuenta que el usuario creía haber cerrado. */
+    /* Revocación V-10: al cambiar de cuenta se ROTA el `rid` de la cuenta
+       que se abandona. Todos sus tokens (este navegador y cualquier copia en
+       otro sitio) dejan de validar de golpe: el checksum descuadra. La cuenta
+       abandonada recibe a continuación un token vinculado NUEVO, ya con el
+       rid rotado: sigue en la lista de cuentas conectadas y se puede volver
+       a ella sin contraseña. */
     const outgoing = req.authUser;
     if (outgoing && outgoing.id !== user.id) {
-        /* La revocación es POR NAVEGADOR, no global: se revocan la sesión
-           principal de este navegador y las cookies de cuenta vinculadas a
-           esa misma cuenta grabadas aquí. Antes se borraban TODAS las
-           sesiones de la cuenta a nivel de servidor: cambiar de cuenta en
-           un dispositivo deslogueaba la misma cuenta en los demás (el
-           origen de cuentas con cero sesiones, como zendtay). Un duplicado
-           robado de la cookie vieja deja de anularse por completo — es el
-           mismo riesgo de sesión múltiple que toda app tolera — a cambio
-           de no romper dispositivos ajenos. */
-        const cookiesSalientes = [['main', sessionCookie(req)]];
-        for (const [name, value] of accountCookies(req)) {
-            if (!value) continue;
-            const s = getSessionFromCache(hashSessionToken(value));
-            if (s && s.userId === outgoing.id) cookiesSalientes.push([name, value]);
-        }
-        for (const [, raw] of cookiesSalientes) {
-            if (!raw) continue;
-            const h = hashSessionToken(raw);
-            sessionCache.delete(h);
-            try { Stmt.deleteSession.run(h); } catch { }
-            for (const sk of [...(outgoing.sockets || [])]) if (sk.authToken === raw) { try { sk.destroy(); } catch { } }
-        }
-        /* La cuenta abandonada recibe una sesión vinculada NUEVA: sigue en la
-           lista de cuentas conectadas y se puede volver a ella sin volver a
-           iniciar sesión. Sin esto, el siguiente cambio de cuenta exigiría la
-           contraseña (la cookie vieja quedó revocada con el resto). */
+        rotateRid(outgoing);
+        /* Todos los sockets de la cuenta abandonada quedan sin sesión: se
+           cierran. */
+        for (const sk of [...(outgoing.sockets || [])]) { try { sk.destroy(); } catch { } }
         createLinkedAccountSession(outgoing, req, res);
     }
     const switched = createSession(user, req, res);
@@ -381,41 +359,38 @@ function postAuthAccountRemove(req, res, url, data, actor) {
         return json(res, 400, { error: 'No puedes quitar la cuenta que estás usando.' });
     const token = sessionCookie(req, accountCookieName(accountIdV));
     if (token) {
-        const hash = hashSessionToken(token);
-        const s = sessionCache.get(hash);
-        if (!s || s.userId === accountIdV) {
-            sessionCache.delete(hash);
-            Stmt.deleteSession.run(hash);
-            const user = users.get(accountIdV);
-            if (user) for (const s of [...user.sockets]) if (s.authToken === token) { try { s.destroy(); } catch { } }
-        }
+        /* Sin almacén no se puede revocar SOLO este token: se limpia la
+           cookie del navegador. El token sigue válido hasta caducar si una
+           copia lo conserva (mismo riesgo que toda app tolera con cookies
+           duplicadas); la ventana se cierra de golpe con logout o cambio de
+           contraseña, que rotan el rid de la cuenta. */
+        const user = users.get(accountIdV);
+        if (user) for (const s of [...user.sockets]) if (s.authToken === token) { try { s.destroy(); } catch { } }
     }
     clearCookie(res, req, accountCookieName(accountIdV));
     return json(res, 200, { ok: true });
 }
 
 function postAuthLogout(req, res, url, data, actor) {
-    const token = sessionCookie(req);
-    const hash = token ? hashSessionToken(token) : '';
-    const s = hash ? sessionCache.get(hash) : null;
-    if (hash) { sessionCache.delete(hash); Stmt.deleteSession.run(hash); }
-    const user = s && users.get(s.userId);
-    if (user) for (const sk of [...user.sockets]) if (sk.authToken === token) { try { sk.destroy(); } catch { } }
-    clearSessionCookie(res, req);
-    if (s) clearCookie(res, req, accountCookieName(s.userId));
-    // Cerrar sesión revoca TODAS las cuentas abiertas en este
-    // navegador, incluidas las cuentas vinculadas (add-account):
-    // sus sesiones se borran y sus cookies se limpian.
+    /* Logout = ROTACIÓN del `rid` de CADA cuenta de este navegador cuyos
+       tokens sigan siendo válidos (solo se rota lo que se puede verificar: un
+       token falsificado no rota la cuenta que nombra). Al no haber almacén,
+       la revocación es por CUENTA: todos los tokens de esas cuentas dejan de
+       validar, también en otros dispositivos; sus sockets se cortan y sus
+       cookies se limpian. */
+    const revocar = [];
+    const principal = sessionFromToken(sessionCookie(req));
+    if (principal) revocar.push(principal);
     for (const [name, value] of accountCookies(req)) {
-        if (s && name === accountCookieName(s.userId)) continue;
-        const h = hashSessionToken(value);
-        const linked = getSessionFromCache(h);
-        sessionCache.delete(h);
-        try { Stmt.deleteSession.run(h); } catch { }
-        const u = linked && users.get(linked.userId);
-        if (u) for (const sk of [...u.sockets]) if (sk.authToken === value) { try { sk.destroy(); } catch { } }
-        clearCookie(res, req, name);
+        const linked = sessionFromToken(value);
+        if (linked && !revocar.some(u => u.id === linked.id)) revocar.push(linked);
     }
+    for (const user of revocar) {
+        rotateRid(user);
+        for (const sk of [...(user.sockets || [])]) { try { sk.destroy(); } catch { } }
+    }
+    clearSessionCookie(res, req);
+    for (const [name] of accountCookies(req)) clearCookie(res, req, name);
     return json(res, 200, { ok: true });
 }
 

@@ -385,12 +385,14 @@
       historias: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.5"/></svg>',
       llamadas: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 3h3l2 5-2.5 1.5a11 11 0 006 6L16 13l5 2v3a2 2 0 01-2.2 2A16 16 0 014 5.2 2 2 0 016 3z"/></svg>',
       mensajes: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5h16v11H9l-5 4V5z"/></svg>',
-      compartir: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M10 9V5l-7 7 7 7v-4c5 0 8.5 1.6 11 5-1-5-4-10-11-11z"/></svg>'
+      compartir: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M10 9V5l-7 7 7 7v-4c5 0 8.5 1.6 11 5-1-5-4-10-11-11z"/></svg>',
+      online: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></svg>'
     };
     const ROWS = [
       { key: 'foto', label: 'Foto de perfil', sub: 'Quién puede ver mi foto' },
       { key: 'nota', label: 'Mi nota', sub: 'Quién puede ver mi nota (dura 24 h)' },
       { key: 'descripcion', label: 'Descripción', sub: 'Quién puede ver mi descripción' },
+      { key: 'online', label: 'En línea', sub: 'Quién puede ver cuándo estoy en línea' },
       { key: 'historias', label: 'Mis historias', sub: 'Quién puede ver mis historias' },
       { key: 'llamadas', label: 'Quién puede llamarme', sub: 'Quién puede llamarme' },
       { key: 'mensajes', label: 'Quién puede escribirme', sub: 'Quién puede enviarme mensajes' },
@@ -399,6 +401,7 @@
     const PRIVACY_MODES = [['server', 'Todos'], ['contacts', 'Contactos'], ['nobody', 'Nadie'], ['only', 'Solo…'], ['except', 'Excepto…']];
     const PRIVACY_DEFAULTS = {
       foto: { mode: 'server', users: [] }, nota: { mode: 'contacts', users: [] }, descripcion: { mode: 'server', users: [] },
+      online: { mode: 'contacts', users: [] },
       historias: { mode: 'contacts', users: [] }, llamadas: { mode: 'contacts', users: [] }, mensajes: { mode: 'contacts', users: [] },
       compartir: { mode: 'contacts', users: [] }
     };
@@ -446,7 +449,7 @@
     }
     function paintGlobalPicker() {
       const mode = pickMode;
-      showPickerModal(mode, [], 'Se aplica a los 7 ajustes y solo puede elegir contactos aceptados.').then(selected => {
+      showPickerModal(mode, [], 'Se aplica a los 8 ajustes y solo puede elegir contactos aceptados.').then(selected => {
         if (selected === null) { pickMode = null; return; }
         pickSel = selected;
         applyGlobalPick();

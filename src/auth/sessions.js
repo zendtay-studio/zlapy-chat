@@ -1,22 +1,141 @@
 /**
- * Sesiones y cookies.
+ * Sesiones stateless («lazy»).
  *
- * Las sesiones viven en RAM (con respaldo en SQLite) y se identifican por un
- * token opaco de 32 bytes que viaja en una cookie HttpOnly. La cookie de
- * cuenta permite tener varias cuentas abiertas en el mismo navegador.
+ * El servidor GENERA el token pero NO lo guarda: la cookie lleva un JWT
+ * firmado (HS256, secreto derivado de la llave maestra) y cada petición lo
+ * verifica contra la firma, la caducidad y el CHECKSUM del estado vigente
+ * de la cuenta (`src/auth/rid.js`): si el `rid` de `user_rid` rotó, el
+ * checksum ya no cuadra y el token muere. No hay tabla `sessions` ni caché
+ * de sesiones: el checksum más la firma bastan para autorizar la petición.
+ *
+ * La cookie de cuenta permite tener varias cuentas abiertas en el mismo
+ * navegador: cada cookie lleva SU PROPIO token.
+ *
+ * Revocación: rotar el `rid` (contraseña nueva, logout, cambio de cuenta)
+ * invalida de golpe TODOS los tokens de esa cuenta. Al no haber almacén no
+ * se puede revocar un solo token: la revocación es por cuenta. El checksum
+ * firma el estado de la cuenta (id, usuario, hash de contraseña y rid), de
+ * modo que un cambio de contraseña descuadra la sesión incluso si la
+ * rotación del rid fallase.
  */
 'use strict';
 
 const crypto = require('crypto');
+const jwt = require('jsonwebtoken');
 const { CONFIG, tlsState } = require('../config.js');
-const https = require('https');
 const { Stmt } = require('../db/statements.js');
-const { push } = require('../realtime/notify.js');
-const { AUTH_SESSION_TTL, sessionCache, users } = require('../state.js');
+const { users } = require('../state.js');
 const { loadUserFromRow } = require('../users/store.js');
+const { computeChecksum, generateRid } = require('./rid.js');
 
-// Auth (sessions en RAM + SQLite)
-const hashSessionToken = t => crypto.createHash('sha256').update(t).digest('hex');
+/* Vida del token: la misma que tenía la sesión (30 días por defecto). El
+   TTL es la red de seguridad para un token filtado que nunca se rote: con
+   rid + checksum la sesión no caduca por sí sola (la revocación es el
+   evento), pero un token robado sin rotar moriría igualmente a los 30
+   días. */
+const TOKEN_TTL_MS = CONFIG.authSessionTtlMs;
+const TOKEN_ISSUER = 'zlapy-session';
+const TOKEN_TTL_SECONDS = Math.max(60, Math.floor(TOKEN_TTL_MS / 1000));
+
+/* Secreto de firma estable: se DERIVA de la llave maestra (HKDF-SHA256 con
+   dominio propio), igual que el resto de material criptográfico de la
+   instalación. La maestra nace de la credencial del propietario, así que el
+   secreto sobrevive a reinicios sin estar guardado en ninguna parte (ni en
+   el .env) y cambia si cambia la credencial: una base robada con sus tokens
+   sigue inútil sin ella. */
+const TOKEN_SECRET = (() => {
+    const { masterKey } = require('../crypto/setup.js');
+    return Buffer.from(crypto.hkdfSync('sha256', masterKey.export(), Buffer.alloc(0), Buffer.from('zlapy/session-token/v1', 'utf8'), 32));
+})();
+
+/* Crea un token para la cuenta con el checksum de su estado vigente.
+   HS256 FIJADO en la firma; en la verificación se PINA la lista de
+   algoritmos admitidos (solo HS256): sin pinarla, un token manipulado
+   podría pedir `alg: none` o confundir claves — la vuln clásica de las
+   librerías JWT mal usadas. */
+function newSession(user) {
+    /* `jti` aleatorio: sin él, dos tokens del mismo usuario firmados dentro
+       del mismo segundo serían IDÉNTICOS (el payload es determinista y el
+       iat/exp de JWT tienen precisión de segundos). La cookie principal y la
+       de cuenta vinculada se emiten en la misma respuesta: si compartieran
+       token, el cambio de cuenta mataría la sesión principal. */
+    /* `nbf` con 30 s de margen: rechaza tokens emitidos "en el futuro" por
+       un reloj adelantado sin morir por skew de reloj entre servidores. */
+    return jwt.sign({
+        sub: user.id,
+        iss: TOKEN_ISSUER,
+        nbf: Math.floor(Date.now() / 1000) - 30,
+        jti: crypto.randomBytes(8).toString('base64url'),
+        checksum: computeChecksum(user)
+    }, TOKEN_SECRET, { algorithm: 'HS256', expiresIn: TOKEN_TTL_SECONDS });
+}
+
+/* Verifica firma y caducidad SIN tocar la base: devuelve el payload
+   normalizado o null. NO comprueba que la cuenta exista ni que el checksum
+   siga vigente (eso lo hace sessionFromToken, que necesita la cuenta). */
+function decodeToken(token) {
+    try {
+        const payload = jwt.verify(String(token || ''), TOKEN_SECRET, { algorithms: ['HS256'], clockTolerance: 30 });
+        if (!payload || typeof payload !== 'object') return null;
+        if (typeof payload.sub !== 'string' || !payload.sub ||
+            typeof payload.checksum !== 'string' || !payload.checksum ||
+            typeof payload.exp !== 'number' || payload.exp * 1000 <= Date.now()) return null;
+        return {
+            userId: payload.sub,
+            checksum: payload.checksum,
+            issuedAt: Number.isInteger(payload.iat) ? payload.iat : null,
+            expiresAt: payload.exp * 1000
+        };
+    } catch { return null; } // firma inválida, token expirado o formato roto
+}
+
+/* Comparación en tiempo constante: el checksum viaja en el token, así que
+   un atacante puede proponer valores; la comparación no debe revelar por
+   el tiempo cuántos bytes acertó. */
+const checksumCoincide = (a, b) => {
+    const ba = Buffer.from(String(a), 'utf8'), bb = Buffer.from(String(b), 'utf8');
+    return ba.length === bb.length && crypto.timingSafeEqual(ba, bb);
+};
+
+/* ¿El token se emitió ANTES de este instante? Se compara a granularidad de
+   SEGUNDO (iat de JWT ya es en segundos; las marcas de la base van en ms):
+   comparar en ms hacía que un token emitido en el mismo segundo del cambio
+   pareciera anterior a él y quedabas fuera hasta emitir otro. */
+const emitidoAntes = (issuedAtSec, msTimestamp) =>
+    Number.isInteger(issuedAtSec) && Number.isFinite(msTimestamp) && msTimestamp > 0 &&
+    Math.floor(msTimestamp / 1000) > issuedAtSec;
+
+/* Resuelve la cuenta del token: firma y caducidad válidas, la cuenta existe
+   y el checksum del token sigue CUADRANDO con el estado vigente. Un token
+   emitido antes de una rotación del rid devuelve null AUNQUE la firma sea
+   buena: es la revocación (por cuenta, sin almacén). */
+function sessionFromToken(token) {
+    const data = decodeToken(token);
+    if (!data) return null;
+    let acc = users.get(data.userId);
+    if (!acc) {
+        const row = Stmt.getUserById.get(data.userId);
+        if (row) acc = loadUserFromRow(row);
+    }
+    if (!acc || !acc.rid) return null;
+    if (!checksumCoincide(computeChecksum(acc), data.checksum)) return null;
+    /* Defensa en profundidad: aunque la rotación del rid fallase (hueco de
+       caché, escritura perdida), un token emitido antes del último cambio de
+       contraseña o logout de la cuenta se rechaza igual. */
+    if (emitidoAntes(data.issuedAt, acc.passwordChangedAt) || emitidoAntes(data.issuedAt, acc.loggedOutAt)) return null;
+    return acc;
+}
+
+/* Cookie → token → cuenta. */
+function sessionUser(req) {
+    return sessionFromToken(sessionCookie(req));
+}
+
+/* Versión para cookies de cuentas vinculadas (nombre de cookie arbitrario). */
+function sessionUserFromCookie(req, name) {
+    return sessionFromToken(cookieValue(req, name));
+}
+
 function cookieValue(req, name) {
     const raw = req.headers.cookie || '';
     const prefix = name + '=';
@@ -45,32 +164,6 @@ function accountCookies(req) {
 function appendCookie(res, value) {
     const current = res.getHeader('Set-Cookie');
     res.setHeader('Set-Cookie', current ? [...(Array.isArray(current) ? current : [current]), value] : value);
-}
-function getSessionFromCache(hash) {
-    let s = sessionCache.get(hash);
-    if (s && s.expiresAt > Date.now()) return s;
-    if (s) sessionCache.delete(hash);
-    const row = Stmt.getSession.get(hash);
-    if (!row || row.expires_at <= Date.now()) return null;
-    s = { userId: row.user_id, expiresAt: row.expires_at };
-    sessionCache.set(hash, s);
-    return s;
-}
-function sessionUser(req) {
-    const token = sessionCookie(req);
-    if (!token) return null;
-    const hash = hashSessionToken(token);
-    const s = getSessionFromCache(hash);
-    if (!s) return null;
-    const acc = users.get(s.userId);
-    if (acc) return acc;
-    // La cuenta no está en RAM: puede existir en la base (se recarga) o haber
-    // sido borrada (la sesión queda huérfana y se elimina).
-    const row = Stmt.getUserById.get(s.userId);
-    if (row) return loadUserFromRow(row);
-    sessionCache.delete(hash);
-    try { Stmt.deleteSession.run(hash); } catch { }
-    return null;
 }
 /* ¿El último salto de la petición llegó cifrado?
  *
@@ -106,47 +199,39 @@ function isLoopbackPeer(req) {
 }
 function setSessionCookie(res, req, token) {
     const secure = cookieSecure(req);
-    appendCookie(res, `chatlocal_session=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(AUTH_SESSION_TTL / 1000)}${secure ? '; Secure' : ''}`);
+    appendCookie(res, `chatlocal_session=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(TOKEN_TTL_MS / 1000)}${secure ? '; Secure' : ''}`);
 }
 function setAccountSessionCookie(res, req, userId, token) {
     const secure = cookieSecure(req);
-    appendCookie(res, `${accountCookieName(userId)}=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(AUTH_SESSION_TTL / 1000)}${secure ? '; Secure' : ''}`);
+    appendCookie(res, `${accountCookieName(userId)}=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(TOKEN_TTL_MS / 1000)}${secure ? '; Secure' : ''}`);
 }
 function clearCookie(res, req, name) {
     const secure = cookieSecure(req);
     appendCookie(res, `${name}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secure ? '; Secure' : ''}`);
 }
 const clearSessionCookie = (res, req) => clearCookie(res, req, 'chatlocal_session');
-/* Tope de sesiones activas por cuenta: cada login de éxito insertaba una fila
-   nueva sin techo (y sin límite de éxitos), con el riesgo de tabla gigante y
-   cientos de sesiones válidas colgadas. Al crear una, se cierran las más
-   viejas que saturen el tope. */
-function pruneSessionsForUser(user) {
-    try {
-        const max = CONFIG.maxSessionsPerUser;
-        const rows = Stmt.listSessionHashesByUser.all(user.id);
-        for (const row of rows.slice(max)) {
-            Stmt.deleteSession.run(row.token_hash);
-            sessionCache.delete(row.token_hash);
-        }
-    } catch (error) { console.warn('[sessions] recorte de sesiones:', error.message); }
+
+/* Rota el `rid` de la cuenta: todos los tokens emitidos antes dejan de
+   validar (el checksum descuadra), incluidos los de otros dispositivos.
+   Además actualiza las marcas de tiempo que usa la segunda defensa
+   (iat vs. último cambio de contraseña / logout). La RAM queda al día para
+   que el siguiente token emitido lleve el checksum nuevo. Devuelve el rid. */
+function rotateRid(user) {
+    const now = Date.now();
+    const rid = generateRid(user.id);
+    Stmt.upsertRid.run(user.id, rid, now, now);
+    user.rid = rid;
+    user.passwordChangedAt = now;
+    user.loggedOutAt = now;
+    return rid;
 }
-/* Crea una sesión nueva para la cuenta y devuelve su token. */
-function newSession(user) {
-    const token = crypto.randomBytes(32).toString('base64url');
-    const hash = hashSessionToken(token);
-    const expiresAt = Date.now() + AUTH_SESSION_TTL;
-    Stmt.insertSession.run(hash, user.id, expiresAt);
-    sessionCache.set(hash, { userId: user.id, expiresAt });
-    pruneSessionsForUser(user);
-    return token;
-}
+
 function createSession(user, req, res) {
     setSessionCookie(res, req, newSession(user));
-    /* La cuenta queda además "conectada" en este navegador, pero con una
-       sesión PROPIA (no la misma que la principal): así el cambio de cuenta
-       puede revocar la sesión principal de la cuenta abandonada sin matar la
-       vinculada, y se puede volver a ella sin volver a iniciar sesión. */
+    /* La cuenta queda además "conectada" en este navegador, pero con un
+       token PROPIO (no el mismo que la principal): así el cambio de cuenta
+       puede re-emitir la cookie de la cuenta vinculada sin matar la
+       principal, y se puede volver a ella sin volver a iniciar sesión. */
     setAccountSessionCookie(res, req, user.id, newSession(user));
     return { id: user.id, username: user.username };
 }
@@ -166,19 +251,22 @@ function originAllowed(req) {
     try { return new URL(origin).host === req.headers.host; } catch { return false; }
 }
 /* El hash de las contraseñas de cuenta vive en `src/auth/password.js`
-   (bcrypt en un worker aparte). Aquí ya no se derivan contraseñas: sólo se
-   managean las sesiones y sus cookies. */
-
+   (bcrypt en un worker aparte). Aquí ya no se derivan contraseñas: solo se
+   gestionan los tokens firmados y sus cookies. */
 
 module.exports = {
-    hashSessionToken,
+    TOKEN_ISSUER,
+    TOKEN_TTL_MS,
+    decodeToken,
+    sessionFromToken,
+    sessionUser,
+    sessionUserFromCookie,
     cookieValue,
     sessionCookie,
     accountCookieName,
     accountCookies,
     appendCookie,
-    getSessionFromCache,
-    sessionUser,
+    rotateRid,
     setSessionCookie,
     setAccountSessionCookie,
     clearCookie,
