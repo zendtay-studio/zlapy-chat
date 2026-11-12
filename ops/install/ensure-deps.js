@@ -72,7 +72,15 @@ const nativeCheck = () => {
 function loadCheck(deps) {
     const lines = deps.map(dep => `
         try { require(${JSON.stringify(dep)}); ok.push(${JSON.stringify(dep)}); }
-        catch (e) { bad.push([${JSON.stringify(dep)}, (e && e.message) || String(e)]); }`).join('\n');
+        catch (e) {
+            const msg = (e && e.message) || String(e);
+            /* Los paquetes ESM puros (@noble/hashes, los wasm…) rechazan el
+               require de la RAÍZ a propósito: se importan por subruta. Están
+               instalados y sanos: no es algo que reinstalar arregle. */
+            if (/import submodules|cannot be imported|ERR_PACKAGE_PATH_NOT_EXPORTED|only support the ES module|only ESM|must be imported/i.test(msg))
+                ok.push(${JSON.stringify(dep)});
+            else bad.push([${JSON.stringify(dep)}, msg]);
+        }`).join('\n');
     const code = `const ok = [], bad = [];${lines}\nprocess.stdout.write(JSON.stringify({ ok, bad }));`;
     const r = spawnSync(process.execPath, ['-e', code], { cwd: ROOT, encoding: 'utf8', timeout: 60000 });
     if (r.error || r.status !== 0) return { ok: [], bad: deps.map(d => [d, r.error ? r.error.message : ` carga falló (status ${r.status})`]) };

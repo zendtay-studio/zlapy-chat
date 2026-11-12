@@ -137,6 +137,12 @@ const orderlyShutdown = signal => {
 };
 process.on('SIGTERM', () => orderlyShutdown('SIGTERM'));
 process.on('SIGINT', () => orderlyShutdown('SIGINT'));
+/* Aviso del supervisor por el canal IPC (solo existe bajo supervisor): llega
+   junto a la señal y dice quién pidió la parada. La señal es la que manda;
+   esto es por si el mensaje aterriza antes de que el kill se propague. */
+process.on('message', msg => {
+    if (msg && msg.t === 'stop') orderlyShutdown(msg.from || 'supervisor');
+});
 /* Guardas de proceso: el manejador de excepciones no capturadas vive en
    src/process-guards.js (registra en consola y data/log/errors.log; solo
    sale en errores fatales; el resto no tumba el servidor). El cierre
