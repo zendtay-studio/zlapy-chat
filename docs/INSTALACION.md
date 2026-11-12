@@ -169,12 +169,12 @@ npm run rebuild:sqlite
 > dependencies successfully" y no genera ningún binario), **tampoco con
 > `--build-from-source`**: no hay script que ejecutar. La única vía que
 > funciona es invocar `node-gyp` explícitamente, como hace
-> `npm run rebuild:sqlite` (`ops/build-sqlite.js`).
+> `npm run rebuild:sqlite` (`ops/install/build-sqlite.js`).
 >
 > Eso deja el binario en `node_modules/better-sqlite3/build/Release/better_sqlite3.node`,
 > que es una de las rutas que comprueba el `postinstall` del proyecto.
 >
-> El `postinstall` del proyecto (`ops/check-native.js`) **intenta compilar
+> El `postinstall` del proyecto (`ops/install/check-native.js`) **intenta compilar
 > solo** cuando falta el binario, así que en Android/Termux `npm ci` ya
 > compila el módulo sin pasos extra.
 
@@ -255,7 +255,7 @@ Equivale exactamente a:
 ```
 pkg update && pkg upgrade -y && pkg install python make clang sqlite
   && npm i --ignore-scripts && npm run rebuild:sqlite
-  && node ops/check-native.js && npm start
+  && node ops/install/check-native.js && npm start
 ```
 
 Es decir: instala los paquetes de Termux, instala las dependencias **sin**
@@ -504,7 +504,7 @@ del supervisor (`.zlapy.pid`) se escribe con `0600` desde el código.
 npm start
 ```
 
-Arranca `ops/supervisor.js`, que **no** es el servidor: es el guardián que lo
+Arranca `ops/runtime/supervisor.js`, que **no** es el servidor: es el guardián que lo
 mantiene vivo.
 
 | Qué hace el supervisor | Detalle |
@@ -618,7 +618,7 @@ User=zlapy
 Group=zlapy
 WorkingDirectory=/opt/zlapy-chat
 Environment=NODE_ENV=production
-ExecStart=/usr/bin/node /opt/zlapy-chat/ops/supervisor.js
+ExecStart=/usr/bin/node /opt/zlapy-chat/ops/runtime/supervisor.js
 Restart=always
 RestartSec=5
 # El cortacircuito del supervisor sale con código 70 (EX_SOFTWARE).
@@ -666,7 +666,7 @@ Notas:
 npm i -g pm2
 
 cd /ruta/zlapy-chat
-pm2 start ops/supervisor.js --name zlapy
+pm2 start ops/runtime/supervisor.js --name zlapy
 
 pm2 status              # estado
 pm2 logs zlapy          # logs en vivo
@@ -856,7 +856,7 @@ npm run backup                 # → backups/zlapy-backup-<fecha-hora>/
 npm run backup -- /ruta/dir    # destino a elegir (si ya existe, debe estar vacío)
 ```
 
-Qué hace (`ops/backup.js`):
+Qué hace (`ops/backup/backup.js`):
 
 | Paso | Detalle |
 | --- | --- |
@@ -1048,7 +1048,7 @@ cp zty.yml.example zty.yml      # y edita el dominio en `ingress`
 npm run tunnel
 ```
 
-Detalles del túnel (`ops/tunnel.js`):
+Detalles del túnel (`ops/net/tunnel.js`):
 
 - El token **nunca viaja en `argv`** (quedaría visible en `ps` y en
   `/proc/<pid>/cmdline`): se entrega por un fichero temporal `0600` dentro de
@@ -1074,7 +1074,7 @@ Riesgos y precauciones:
 | --- | --- |
 | `npm ci` | Instala las dependencias exactas del `package-lock.json` (reproducible) |
 | `npm install` | Instala/actualiza dependencias (ejecuta el `postinstall` que verifica el binario nativo) |
-| `npm start` | Arranca el servidor **con supervisor** (`ops/supervisor.js`) |
+| `npm start` | Arranca el servidor **con supervisor** (`ops/runtime/supervisor.js`) |
 | `node server.js` | Arranca el servidor **sin supervisor** (depuración) |
 | `npm test` | Suite completa (`node --test test/*.test.js`) |
 | `npm run backup [-- dir]` | Respaldo consistente de `zlapy.db` y `blob.db` (la llave va en el `.env`: cópialo aparte) |

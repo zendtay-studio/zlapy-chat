@@ -83,6 +83,14 @@ dispatcher.listen({ port: PORT, host: bindHost, exclusive: false }, () => {
     const nets = require('os').networkInterfaces();
     const ips = Object.values(nets).flat().filter(n => n && n.family === 'IPv4' && !n.internal).map(n => n.address);
     console.log(`\n✅ Zlapy (SQLite) en el puerto ${PORT}`);
+    /* Aviso al supervisor por el canal IPC (si existe): «ya estoy sirviendo».
+       El supervisor también lo deduce del banner por stdout, pero el mensaje
+       es la fuente fiable (no depende de que un texto concreto no cambie).
+       Sin canal (tests) es un no-op. */
+    try {
+        if (typeof process.send === 'function')
+            process.send({ t: 'ready', port: PORT, pid: process.pid });
+    } catch { /* el supervisor no escucha */ }
     /* Con el forzado de TLS activo solo se anuncian las URL cifradas: ofrecer
        la de HTTP invitaría a usar una vía que el servidor va a redirigir (y en
        la que, si FORCE_TLS estuviera apagado, la cookie viajaría sin proteger). */
@@ -129,16 +137,14 @@ const orderlyShutdown = signal => {
 };
 process.on('SIGTERM', () => orderlyShutdown('SIGTERM'));
 process.on('SIGINT', () => orderlyShutdown('SIGINT'));
-// Red de seguridad: registrar y morir con las bases consistentes.
-process.on('uncaughtException', err => {
-    console.error('[fatal] uncaughtException:', err);
+/* Guardas de proceso: el manejador de excepciones no capturadas vive en
+   src/process-guards.js (registra en consola y data/log/errors.log; solo
+   sale en errores fatales; el resto no tumba el servidor). El cierre
+   ordenado de las bases en ese caso se inyecta aquí, donde están abiertas. */
+const { setFatalHook } = require('../process-guards.js');
+setFatalHook(() => {
     try { db.pragma('wal_checkpoint(TRUNCATE)'); blobDb.pragma('wal_checkpoint(TRUNCATE)'); } catch { }
     try { db.close(); blobDb.close(); } catch { }
-    process.exit(1);
-});
-process.on('unhandledRejection', err => {
-    // Solo registrar: una promesa rechazada no debe tumbar el servidor.
-    console.error('[warn] unhandledRejection:', err);
 });
 
 module.exports = {

@@ -22,7 +22,7 @@
 const aadOf = column => Buffer.from(`field:${column}`, 'utf8');
 
 /* El módulo de cifrado se carga DENTRO de las funciones (no al importar
-   este fichero): el motor de re-cifrado (`ops/reencrypt-master.js`) necesita
+   este fichero): el motor de re-cifrado (`ops/crypto/reencrypt-master.js`) necesita
    el mapa de columnas de abajo, y no debe arrancar el servidor ni pedir la
    credencial del propietario sólo por leer ese mapa. */
 const cryptoSetup = () => require('./setup.js');
@@ -75,7 +75,7 @@ const isFieldEnvelope = value =>
 
 /* Tablas y columnas que se cifran en reposo con la llave maestra.
  *
- * El motor de re-cifrado (ops/reencrypt-master.js) recorre esta lista para
+ * El motor de re-cifrado (ops/crypto/reencrypt-master.js) recorre esta lista para
  * migrar de una credencial a otra, así que es la fuente de verdad del
  * "dominio de la llave maestra" fuera de los sobres genéricos (auth_key,
  * material de grupos, VAPID y blobs).

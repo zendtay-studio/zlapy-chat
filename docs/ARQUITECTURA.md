@@ -26,9 +26,9 @@ módulos por dominio**. Un único proceso Node.js:
 - envía notificaciones **Web Push** (RFC 8291 + VAPID) a los dispositivos
   suscritos.
 
-El backend se ejecuta siempre **bajo un supervisor** (`ops/supervisor.js`),
+El backend se ejecuta siempre **bajo un supervisor** (`ops/runtime/supervisor.js`),
 que lo relanza con backoff exponencial si muere y lo reinicia si se queda
-colgado (`npm start` → `node ops/supervisor.js`).
+colgado (`npm start` → `node ops/runtime/supervisor.js`).
 
 ### 1.2 Componentes
 
@@ -134,7 +134,7 @@ node server.js
 │      arrancando con un aviso; un fallo duro dejaría sin      │
 │      servicio. Antes de la tanda SECOA estos ficheros        │
 │      nacían 0755/0644: LECTURA para cualquier usuario local. │
-│      (ops/backup.js ya exigía estos permisos, pero nadie     │
+│      (ops/backup/backup.js ya exigía estos permisos, pero nadie     │
 │      los aplicaba en el arranque; ahora server.js lo hace.)  │
 └──────────────────────────────────────────────────────────────┘
       │
@@ -437,7 +437,7 @@ Definidas en `src/http/responses.js:17-39` y aplicadas a **toda** respuesta:
 | `src/push/` | Suscripciones push, VAPID y envío de notificaciones. | `routes.js`, `vapid.js` |
 | `src/meta/` | `/healthz` y volcado de configuración. | `routes.js` |
 | `src/shared/` | Utilidades puras sin estado: validación, límites, tipos, galería, apariencia, ruta estática, avatar. | `validation.js`, `limits.js`, `types.js`, `gallery.js`, `appearance.js`, `message-data.js`, `static-path.js`, `avatar.js` |
-| `ops/` | Scripts de operación (no forman parte del servidor). | `supervisor.js`, `tunnel.js`, `backup.js`, `owner-credentials.js`, `reencrypt-master.js`, `repair-unreadable-auth-keys.js` |
+| `ops/` | Scripts de operación (no forman parte del servidor). | `install/` (ensure-deps, check-native, build-sqlite), `runtime/supervisor.js`, `net/tunnel.js`, `backup/backup.js`, `auth/owner-credentials.js`, `crypto/reencrypt-master.js`, `crypto/repair-unreadable-auth-keys.js` |
 
 ### 4.2 Ficheros clave
 
@@ -1386,9 +1386,9 @@ guardarse: el servidor nunca los ve. Es el mismo modelo que los chats
 
 ## 9. Operación
 
-### 9.1 Supervisor (`ops/supervisor.js`)
+### 9.1 Supervisor (`ops/runtime/supervisor.js`)
 
-`npm start` → `node ops/supervisor.js`. El supervisor **no** habla con la
+`npm start` → `node ops/runtime/supervisor.js`. El supervisor **no** habla con la
 base: vigila el proceso hijo (`node server.js`).
 
 ```
@@ -1461,7 +1461,6 @@ rechazada no debe tumbar el servidor).
 | `repair-unreadable-auth-keys.js` | Repara las `auth_key` ilegibles con la llave actual (giro de llave con el servidor en marcha): respaldo, borra la fila y limpia el perfil cifrado con ella. | `npm run repair [-- --apply]`. Sin `--apply` simula. |
 | `env-writer.js` | Escritura atómica de secretos (temporal 0600 + fsync + rename), `setEnvValue` y lectura directa del `.env`. | Compartido por el generador y el motor de re-cifrado. |
 | `tunnel.js` | Levanta `cloudflared` con la configuración `zty.yml` y el token de `CLOUDFLARE_TUNNEL_TOKEN`. | `npm run tunnel`. El token **no viaja en `argv`** (se entrega por `--token-file` en un fichero 0600 dentro de un directorio 0700, o por `TUNNEL_TOKEN` en el entorno si el binario es antiguo), y la salida del proceso se **redacta** para que no pueda aparecer en los logs. |
-| `migrate-to-mtproto.js` | Convierte de golpe el contenido antiguo al esquema nuevo: mensajes `PCE2` → `PCE3` y el resto (resúmenes, notas, perfiles, llamadas, push, historias) a cifrado con la `auth_key` del usuario. | `npm run migrate:mtproto [-- --apply]`. Sin `--apply` es simulación. Hace un respaldo automático antes de escribir, es idempotente y **verifica cada registro ida y vuelta antes de tocarlo**. |
 
 ### 9.4 Copias de seguridad y llave maestra
 

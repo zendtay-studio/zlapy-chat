@@ -219,12 +219,12 @@ Cinco guardas evitan que esto vuelva a pasar:
 | --- | --- | --- |
 | **El servidor vigila el `.env`** | `src/crypto/master-key.js` → `watchCredentialFile()`, llamado desde `server.js` | Cada 15 s relee SOLO la credencial (usuario + contraseña) del `.env` y compara su huella. Si cambia con el proceso vivo, avisa y sale con código **75** (`EX_TEMPFAIL`): el supervisor lo reinicia ya con la credencial nueva. Editar cualquier otra variable del `.env` no dispara nada. |
 | **Auditoría al arrancar** | `src/crypto/setup.js` → `auditAuthKeys()`, llamado desde `server.js` | Comprueba, con la llave del proceso, si cada `auth_key` se descifra. Si **ninguna** se descifra, la credencial no es la de estos datos: el servidor **no arranca** (escribir con ella dejaría material que no descifra nadie). Si **alguna** falla, arranca pero avisa por el nombre de las cuentas afectadas y dice qué reparar. |
-| **La migración exige el servidor parado** | `ops/reencrypt-master.js` → `serverIsRunning()` | Antes de re-cifrar, comprueba el fichero de PID **de esa instalación** (`SUPERVISOR_PID_FILE`, por defecto `.zlapy.pid` junto al `.env`). Si el proceso sigue vivo, aborta: *"Hay un servidor de Zlapy en marcha… Deténlo antes de migrar la credencial"*. |
+| **La migración exige el servidor parado** | `ops/crypto/reencrypt-master.js` → `serverIsRunning()` | Antes de re-cifrar, comprueba el fichero de PID **de esa instalación** (`SUPERVISOR_PID_FILE`, por defecto `.zlapy.pid` junto al `.env`). Si el proceso sigue vivo, aborta: *"Hay un servidor de Zlapy en marcha… Deténlo antes de migrar la credencial"*. |
 | **La fila ilegible se distingue de la ausente** | `src/crypto/user-auth-keys.js` → `authKeyState()` | `ensureAuthKey()` ya no intenta un `INSERT` a ciegas sobre una fila que existe: lanza `AuthKeyUnreadableError` (`AUTH_KEY_UNREADABLE`), que explica la causa. El router lo traduce a **503** con un texto legible, no a un 500 genérico. |
-| **Auditoría de solo lectura** | `npm run owner -- check` (`ops/reencrypt-master.js` → `auditMasterKey()`) | Enumera TODO el material que no descifra con la credencial actual (auth_keys, material de grupos, meta, campos, adjuntos) y el contenido que depende de cada auth_key rota (mensajes, campos de perfil, notas). No escribe nada; sale con código 1 si hay material ilegible. |
+| **Auditoría de solo lectura** | `npm run owner -- check` (`ops/crypto/reencrypt-master.js` → `auditMasterKey()`) | Enumera TODO el material que no descifra con la credencial actual (auth_keys, material de grupos, meta, campos, adjuntos) y el contenido que depende de cada auth_key rota (mensajes, campos de perfil, notas). No escribe nada; sale con código 1 si hay material ilegible. |
 
 Reparación de una fila rota: `npm run repair` (simulación) y
-`npm run repair -- --apply` (`ops/repair-unreadable-auth-keys.js`). El
+`npm run repair -- --apply` (`ops/crypto/repair-unreadable-auth-keys.js`). El
 script hace una copia de `data/zlapy.db`, borra la fila de `user_auth_keys`
 ilegible y limpia los campos de perfil cifrados con esa clave (nombre, bio,
 nota). El contenido cifrado con la clave perdida (mensajes, notas, el
@@ -266,7 +266,7 @@ para con un mensaje que dice qué hacer.
 Todo lo demás (nombres visibles, biografías, notas, mensajes, fotos, fondos,
 nombres de grupos, códigos de invitación, listas de privacidad, silenciados,
 stickers, apariencia, historiales de llamada, endpoints de push) está cifrado
-en reposo. Lo comprueba `test/plaintext.test.js`, que lee los bytes crudos de
+en reposo. Lo comprueba `test/crypto/plaintext.test.js`, que lee los bytes crudos de
 las dos bases y falla si aparece cualquiera de esos textos.
 
 ## 3. Cifrado en reposo: los tres formatos PCE
@@ -385,7 +385,7 @@ queda **ligado** a su posición:
 
 Es decir: **mover una fila de mensaje a otro chat, cambiar su remitente,
 cambiar su destinatario o cambiar su tipo invalida la etiqueta y hace que el
-mensaje sea ilegible**. Verificado en `test/message-crypto.test.js:30-37`.
+mensaje sea ilegible**. Verificado en `test/crypto/message-crypto.test.js:30-37`.
 
 El descifrado (`message-crypto.js:78-94`) es estricto: si el prefijo no es
 `PCE1:` ni `PCE2:` lanza `Unsupported message encryption version.`; si el
@@ -466,7 +466,7 @@ Ventajas de tenerlo en claro:
 2. **Detecta la substitución de sobre**: si alguien cambia el `msg_key` de un
    sobre por el de otro, la clave derivada cambia y el descifrado falla (o el
    `msg_key` recalculado no coincide). Verificado en
-   `test/mtproto.test.js:68-74`.
+   `test/crypto/mtproto.test.js:68-74`.
 3. **No filtra nada útil**: con el `msg_key` solo NO se puede derivar el
    `aes_key`; hace falta además la `auth_key` (2048 bits) del autor. Quien
    tenga el `msg_key` y la base, pero no la `auth_key`, no descifra nada.
@@ -568,7 +568,7 @@ Puntos clave:
 - `keyFingerprint()` (`mtproto.js:193-195`) es exactamente el mismo
   `auth_key_id`, y se publica como `encryptionKeyId` en el perfil
   (`src/profile/routes.js:49`) — la "safety card" de MTProto. El test
-  `test/mtproto-server.test.js:56-65` comprueba que el formato es
+  `test/crypto/mtproto-server.test.js:56-65` comprueba que el formato es
   `/^[0-9a-f]{16}$/`.
 
 ### 4.3 El `msg_key`
@@ -644,7 +644,7 @@ function deriveKeys(authKey, msgKey, x = 0) {
 ```
 
 Esto es **idéntico** a la fórmula de MTProto 2.0. El test
-`test/mtproto.test.js:36-51` lo verifica byte a byte contra una
+`test/crypto/mtproto.test.js:36-51` lo verifica byte a byte contra una
 reimplementación independiente.
 
 El `aes_iv` completo son 32 bytes, pero **sólo se usan 16**:
@@ -733,7 +733,7 @@ Propiedades:
 - `INTERNAL_HEADER_BYTES + bodyLength + padding.length` es **múltiplo de 16**
   (salvo cuando el recorte a `PADDING_MAX` rompe la alineación: con
   `PADDING_MAX = 27` y cabecera de 32 bytes, el máximo alcanzable es 27; el
-  test `test/mtproto.test.js:83-93` comprueba la alineación para longitudes
+  test `test/crypto/mtproto.test.js:83-93` comprueba la alineación para longitudes
   de cuerpo de 1, 15, 16, 100 y 1000 bytes).
 - Los bytes son **aleatorios** (`crypto.randomBytes`), no un patrón fijo.
 - El relleno **entra en el cálculo del `msg_key`**, igual que en MTProto.
@@ -791,11 +791,11 @@ function msgIdAcceptable(msgId, now = Date.now()) {
                  └─ 30 s hacia DELANTE (tolerancia)
 ```
 
-Es la ventana de MTProto 2.0. Test en `test/mtproto.test.js:116-122`.
+Es la ventana de MTProto 2.0. Test en `test/crypto/mtproto.test.js:116-122`.
 
 > **Nota de estado**: `msgIdAcceptable()` está exportada y cubierta por tests,
 > pero **no la invoca ningún módulo de `src/`** (búsqueda exhaustiva: sólo
-> `src/crypto/mtproto.js` y `test/mtproto.test.js`). Es decir, la comprobación
+> `src/crypto/mtproto.js` y `test/crypto/mtproto.test.js`). Es decir, la comprobación
 > **no se aplica en tiempo de ejecución**: el servidor no rechaza por sí mismo
 > un `msg_id` fuera de ventana. La protección real en contra de repeticiones es
 > el AES-GCM con clave por mensaje (un mismo mensaje reenviado se descifra
@@ -1159,7 +1159,7 @@ el servidor **olvide** la clave anterior y los mensajes antiguos dejan de ser
 descifrables por el servidor (sólo queda la copia del otro extremo). En Zlapy
 el contenido del usuario **se re-cifra** con la clave nueva, de modo que **no
 se pierde el historial** (`src/users/store.js:188-193`, test
-`test/mtproto-server.test.js:67-97`).
+`test/crypto/mtproto-server.test.js:67-97`).
 
 **Qué pasa con los datos cifrados con la llave anterior**:
 
@@ -1278,23 +1278,23 @@ registro **sí** va cifrado en reposo con la `auth_key` del usuario
 
 ## 8. Migración al esquema en la nube
 
-Script: `ops/migrate-to-mtproto.js`.
+Script: `ops/crypto/reencrypt-master.js`.
 
 ### 8.1 Uso
 
 ```
-  node ops/migrate-to-mtproto.js            # SIMULACIÓN: no escribe nada
-  node ops/migrate-to-mtproto.js --apply    # migra de verdad
+  node ops/crypto/reencrypt-master.js            # SIMULACIÓN: no escribe nada
+  node ops/crypto/reencrypt-master.js --apply    # migra de verdad
 ```
 
-- El flag se lee en `migrate-to-mtproto.js:45`: `const APPLY = process.argv.includes('--apply');`
+- El flag se lee en `reencrypt-master.js:45`: `const APPLY = process.argv.includes('--apply');`
 - Recomendación del propio script: **parar el servidor** (o el supervisor)
-  antes de migrar (`migrate-to-mtproto.js:21-22`).
+  antes de migrar (`reencrypt-master.js:21-22`).
 
 ### 8.2 Flujo
 
 ```
-  1. ¿--apply?  → sí: backup() antes de nada        [migrate-to-mtproto.js:60-77,217-223]
+  1. ¿--apply?  → sí: backup() antes de nada        [reencrypt-master.js:60-77,217-223]
        · backups/pre-mtproto-<timestamp>/   (modo 0700)
        · db.backup() de zlapy.db  y  de blob.db  (copia consistente, sin WAL suelto)
        · chmod 0600 de los ficheros copiados
@@ -1380,7 +1380,7 @@ el nuevo**:
 
 Consecuencia: **el contenido viejo se va re-cifrando solo** a medida que se
 reescribe (un mensaje editado, una/poll vote, un mensaje nuevo). El script sólo
-sirve para convertir el histórico **de golpe** (`migrate-to-mtproto.js:11-15`):
+sirve para convertir el histórico **de golpe** (`reencrypt-master.js:11-15`):
 
 ```
  * Que NO hace
@@ -1391,7 +1391,7 @@ sirve para convertir el histórico **de golpe** (`migrate-to-mtproto.js:11-15`):
 ```
 
 El propio test lo comprueba: *"el servidor NO necesita el script (el script es
-eliminable sin romper nada)"* (`test/migrate-to-mtproto.test.js:1-4`).
+eliminable sin romper nada)"* (`test/crypto/master-rotation.test.js:1-4`).
 
 Motivos operativos de que sea manual:
 
@@ -1422,11 +1422,11 @@ Motivos operativos de que sea manual:
 | **PCE1 (AES-256-GCM) para adjuntos, grupos y VAPID** | Lectura del contenido sensible por quien tenga sólo la base | `src/chat/media.js:28`, `src/groups/store.js:112`, `src/push/vapid.js:31` |
 | **Cifrado por columna con AAD propio** | Pegar un texto cifrado de una columna en otra | `src/crypto/field-crypto.js` |
 | **Fail-fast de la credencial (exit 78)** | Arrancar con una llave nueva que dejaría ilegible todo el histórico | `src/crypto/owner-key.js` → `ensureOwnerCredential()`, `server.js` |
-| **`.env` con la credencial en modo 0600** | Lectura de la credencial por otros usuarios del sistema | `ops/env-writer.js` (escritura atómica + chmod) |
+| **`.env` con la credencial en modo 0600** | Lectura de la credencial por otros usuarios del sistema | `ops/config/env-writer.js` (escritura atómica + chmod) |
 | **Compatibilidad de lectura (`decryptAtRest` devuelve el texto tal cual)** | Perder contenido legacy al migrar | `src/crypto/message-crypto.js:35` |
 | **Regeneración de clave con re-cifrado** | Perder el historial al rotar la clave del usuario | `src/users/store.js:194-297` |
-| **Verificación de ida y vuelta en la migración** | Escribir un mensaje que luego no se puede releer | `ops/migrate-to-mtproto.js:134-136` |
-| **Respaldo previo a la migración** | Migración fallida irreversible | `ops/migrate-to-mtproto.js:60-77` |
+| **Verificación de ida y vuelta en la migración** | Escribir un mensaje que luego no se puede releer | `ops/crypto/reencrypt-master.js:134-136` |
+| **Respaldo previo a la migración** | Migración fallida irreversible | `ops/crypto/reencrypt-master.js:60-77` |
 | **Contraseñas de cuenta con bcrypt (coste 10, pre-hash SHA-256)** | Recuperación de la contraseña a partir de la base; truncado a 72 bytes | `src/crypto/kdf.js` → `hashPassword`/`bcryptInput`, `src/auth/password-core.js` |
 | **bcrypt en un worker aparte** | Que un login bloquee el servidor entero ~100 ms | `src/auth/password.js` + `src/auth/password-worker.js` |
 
@@ -1473,7 +1473,7 @@ Zlapy**; se listan aquí para que nadie asuma interoperabilidad.
 **Nota adicional sobre la versión de MTProto de referencia**: el propio
 código declara que replica la *estructura* de MTProto 2.0
 (`src/crypto/mtproto.js:16-17`), y su derivación de claves es **byte a byte
-idéntica** a la fórmula oficial (`test/mtproto.test.js:36-51`). Lo que cambia
+idéntica** a la fórmula oficial (`test/crypto/mtproto.test.js:36-51`). Lo que cambia
 es el modo de cifrado y el tratamiento del relleno, la cabecera y el `x`.
 
 ---
@@ -1740,7 +1740,7 @@ HKDF están implementados en `transport-crypto.js`. Solo se usa
 `crypto.getRandomValues()` para la aleatoriedad, que sí está disponible en
 contextos no seguros.
 
-Las primitivas se validan contra Node en `test/transport.test.js`: SHA-256,
+Las primitivas se validan contra Node en `test/http/transport.test.js`: SHA-256,
 HMAC, HKDF, X25519, ChaCha20 y el sobre completo producen los mismos bytes en
 ambos lados; además hay un vector de bloque de ChaCha20 (RFC 8439) y pruebas de
 ida y vuelta de 2 MB.
@@ -1811,7 +1811,7 @@ Otras notas:
 
 ### 11.9 Pruebas
 
-`test/transport.test.js` cubre:
+`test/http/transport.test.js` cubre:
 
 - Las primitivas del cliente contra las de Node (SHA-256, HMAC, HKDF, X25519,
   ChaCha20) y un vector de bloque del RFC 8439.
@@ -1866,28 +1866,28 @@ Otras notas:
 | `src/chat/messages.js:73` | `rowToMessage()` | Lee un mensaje: PCE3 / PCE2 / PCE1 + verifica la firma |
 | `src/users/store.js:194` | `regenerateAuthKey()` | Regenera y re-cifra |
 | `src/profile/routes.js:187` | `postAccountRegenerateKey()` | Ruta `POST /account/regenerate-key` |
-| `ops/migrate-to-mtproto.js` | (script) | Migración manual PCE2 → PCE3 |
-| `ops/owner-credentials.js` | (CLI `npm run owner`) | Credencial del propietario: `init`, `credential`, `rotate`, `check`, `show`, `unlock-check`, `export-kit`, `reset` |
+| `ops/crypto/reencrypt-master.js` | (script) | Migración manual PCE2 → PCE3 |
+| `ops/auth/owner-credentials.js` | (CLI `npm run owner`) | Credencial del propietario: `init`, `credential`, `rotate`, `check`, `show`, `unlock-check`, `export-kit`, `reset` |
 | `src/crypto/master-key.js` → `watchCredentialFile()` | (vigilante) | Si la credencial del `.env` cambia con el servidor vivo, sale con código 75 para reiniciar |
 | `src/crypto/user-auth-keys.js` → `authKeyState()` | (estado) | Distingue `ok` / `ausente` / `ilegible`; `ensureAuthKey()` lanza `AuthKeyUnreadableError` |
 | `src/crypto/setup.js` → `auditAuthKeys()` | (auditoría de arranque) | Si ninguna auth_key descifra, el servidor no arranca; si falla alguna, avisa por nombre |
-| `ops/reencrypt-master.js` → `serverIsRunning()` | (guarda) | La rotación aborta si hay un servidor vivo de esta instalación |
-| `ops/reencrypt-master.js` → `auditMasterKey()` | (auditoría) | Enumera el material ilegible con la llave actual (solo lectura) |
-| `ops/repair-unreadable-auth-keys.js` | (script) | `npm run repair [-- --apply]`: repara las auth_keys ilegibles |
+| `ops/crypto/reencrypt-master.js` → `serverIsRunning()` | (guarda) | La rotación aborta si hay un servidor vivo de esta instalación |
+| `ops/crypto/reencrypt-master.js` → `auditMasterKey()` | (auditoría) | Enumera el material ilegible con la llave actual (solo lectura) |
+| `ops/crypto/repair-unreadable-auth-keys.js` | (script) | `npm run repair [-- --apply]`: repara las auth_keys ilegibles |
 
 Tests relacionados:
 
 | Test | Qué cubre |
 | --- | --- |
-| `test/mtproto.test.js` | Derivación byte a byte, padding, cabecera, `msg_id`, ventana, autenticación, aislamiento entre claves |
-| `test/mtproto-server.test.js` | Clave por usuario, la maestra no descifra sola, `encryptionKeyId`, regeneración sin perder historial, `key_id` del autor en cada sobre |
-| `test/message-crypto.test.js` | `PCE2` con contexto ligado, firma válida/inválida, lectura de `PCE1` legacy |
-| `test/migrate-to-mtproto.test.js` | Simulación, migración real, conservación del contenido, script eliminable |
-| `test/owner-credential.test.js` | CLI de la credencial: init, credential, rotate, check, unlock-check, export-kit, reset |
-| `test/first-install.test.js` | Instalación nueva: el .env se crea, la credencial inicializa la base vacía, la base con datos NO se inicializa |
-| `test/kdf.test.js` | Derivación determinista, sal y usuario cambian la llave, pre-hash de bcrypt, detección de contraseñas débiles |
-| `test/field-crypto.test.js` | Cifrado por columna con AAD propio, valores vacíos, texto legacy |
-| `test/plaintext.test.js` | Los BYTES CRUDOS de las bases no contienen nada de lo sensible en claro |
-| `test/password.test.js` | bcrypt en worker, verificación del formato antiguo (scrypt), basura no revienta |
-| `test/master-rotation.test.js` | Migración con re-cifrado (auth_keys, grupos, meta, campos, adjuntos), reversión compensada, valores heredados en claro |
-| `test/master-key-guards.test.js` | Guardas de desincronización: fila ilegible ≠ ausente, auditoría, rotación con servidor vivo, vigilante del `.env`, script de reparación |
+| `test/crypto/mtproto.test.js` | Derivación byte a byte, padding, cabecera, `msg_id`, ventana, autenticación, aislamiento entre claves |
+| `test/crypto/mtproto-server.test.js` | Clave por usuario, la maestra no descifra sola, `encryptionKeyId`, regeneración sin perder historial, `key_id` del autor en cada sobre |
+| `test/crypto/message-crypto.test.js` | `PCE2` con contexto ligado, firma válida/inválida, lectura de `PCE1` legacy |
+| `test/crypto/master-rotation.test.js` | Simulación, migración real, conservación del contenido, script eliminable |
+| `test/auth/owner-credential.test.js` | CLI de la credencial: init, credential, rotate, check, unlock-check, export-kit, reset |
+| `test/runtime/first-install.test.js` | Instalación nueva: el .env se crea, la credencial inicializa la base vacía, la base con datos NO se inicializa |
+| `test/crypto/kdf.test.js` | Derivación determinista, sal y usuario cambian la llave, pre-hash de bcrypt, detección de contraseñas débiles |
+| `test/crypto/field-crypto.test.js` | Cifrado por columna con AAD propio, valores vacíos, texto legacy |
+| `test/crypto/plaintext.test.js` | Los BYTES CRUDOS de las bases no contienen nada de lo sensible en claro |
+| `test/auth/password.test.js` | bcrypt en worker, verificación del formato antiguo (scrypt), basura no revienta |
+| `test/crypto/master-rotation.test.js` | Migración con re-cifrado (auth_keys, grupos, meta, campos, adjuntos), reversión compensada, valores heredados en claro |
+| `test/crypto/master-key-guards.test.js` | Guardas de desincronización: fila ilegible ≠ ausente, auditoría, rotación con servidor vivo, vigilante del `.env`, script de reparación |

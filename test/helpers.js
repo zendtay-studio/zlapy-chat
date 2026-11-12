@@ -15,7 +15,7 @@ let generatedStickerPackDir = null;
 
 function getGeneratedStickerPackDir() {
     if (generatedStickerPackDir) return generatedStickerPackDir;
-    const generatorPath = path.join(ROOT, 'ops', 'scripts', 'generate-animated-bbot-pack.js');
+    const generatorPath = path.join(ROOT, 'ops', 'data', 'generate-animated-bbot-pack.js');
     generatedStickerPackDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zlapy-test-bbot-'));
     try {
         execFileSync(process.execPath, [generatorPath, generatedStickerPackDir], { stdio: 'ignore' });

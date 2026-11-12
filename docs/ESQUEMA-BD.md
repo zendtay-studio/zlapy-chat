@@ -3,7 +3,7 @@
 Esta es la referencia completa del almacenamiento de Zlapy. La base es
 SQLite (`data/zlapy.db`) y el esquema vive en **`src/db/schema.js`**,
 que es la única fuente de verdad: el servidor lo aplica al arrancar
-(`ensureSchema` → `applySchema`) y los tests (`test/schema.test.js`) lo verifican.
+(`ensureSchema` → `applySchema`) y los tests (`test/db/schema.test.js`) lo verifican.
 
 > **Antes (v1):** la tabla `users` tenía solo `id`, `username` y `data`, un
 > JSON gigante con la contraseña, las claves, el perfil, la privacidad, los
@@ -529,7 +529,7 @@ El número de versión vive en `meta.schema_version` (`SCHEMA_VERSION` en
 **El servidor no migra el CIFRADO al arrancar.** Lee los dos formatos de
 mensaje (el heredado `PCE2` y el nuevo `PCE3`) y escribe siempre el nuevo,
 así que el histórico se va re-cifrando solo a medida que se reescribe. Para
-convertirlo todo de golpe existe `ops/migrate-to-mtproto.js` (manual, con
+convertirlo todo de golpe existe `ops/crypto/reencrypt-master.js` (manual, con
 respaldo previo, idempotente y **eliminable**: el servidor no lo importa).
 
 El esquema incluye índices para las columnas hijas de las claves ajenas
@@ -617,12 +617,12 @@ db.prepare('SELECT username FROM users WHERE username = ?').all('ano');
 | `src/db/schema.js` | Esquema v12, migraciones idempotentes (v9→v12) y rutinas de borrado en cascada. |
 | `src/auth/rid.js` | Rid de cuenta, checksum canónico del token y generación del rid aleatorio. |
 | `src/crypto/peer-index.js` | Índice a ciegas de nombres de par (HMAC) para `calls.peer_hash`. |
-| `test/schema.test.js` | Tests de esquema, cascadas y restricciones. |
+| `test/db/schema.test.js` | Tests de esquema, cascadas y restricciones. |
 | `src/crypto/message-crypto.js` | Cifrado en reposo (`encryptAtRest` / `decryptAtRest`) y firmas Ed25519. |
 | `src/crypto/mtproto.js` | Cifrado en la nube (MTProto 2.0): `auth_key`, `msg_key`, `aes_key`/`aes_iv`, cabecera interna, relleno y ventana anti-repetición. |
 | `src/crypto/user-auth-keys.js` | `auth_key` por usuario y cifrado por usuario (lo usan el servidor y el script de migración). |
-| `ops/migrate-to-mtproto.js` | Migración **manual** al esquema de cifrado en la nube (no la hace el servidor al arrancar). |
-| `test/security-regressions.test.js` | Tests de regresión de la auditoría de seguridad del 2026-10-19. |
+| `ops/crypto/reencrypt-master.js` | Migración **manual** al esquema de cifrado en la nube (no la hace el servidor al arrancar). |
+| `test/http/security-regressions.test.js` | Tests de regresión de la auditoría de seguridad del 2026-10-19. |
 | `src/shared/appearance.js` | Validación de la apariencia del chat (`user_chat_settings`). |
 
 ### Documentación relacionada

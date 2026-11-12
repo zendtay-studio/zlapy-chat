@@ -137,7 +137,7 @@ function seedDefaultBbotStickers(db, assetDirectory = process.env.BBOT_STICKER_P
         return DEFAULT_BBOT_STICKERS.length;
     }
 
-    const generatorPath = path.resolve(__dirname, '../../ops/scripts/generate-animated-bbot-pack.js');
+    const generatorPath = path.resolve(__dirname, '../../ops/data/generate-animated-bbot-pack.js');
     let generatedDirectory = null;
     if (!assetDirectory)
         generatedDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'zlapy-bbot-pack-'));

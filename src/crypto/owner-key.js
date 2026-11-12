@@ -387,7 +387,7 @@ function ensureOwnerCredential(options = {}) {
  * @returns {boolean}
  */
 function baseConDatos(options = {}) {
-    const { hasMasterDataAtRest } = require('../../ops/reencrypt-master.js');
+    const { hasMasterDataAtRest } = require('../../ops/crypto/reencrypt-master.js');
     let dbPath = options.dbPath;
     let blobPath = options.blobPath;
     if (!dbPath || !blobPath) {

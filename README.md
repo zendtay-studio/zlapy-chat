@@ -155,7 +155,7 @@ npm start        # con supervisor: si el proceso se cae, lo reinicia
 
 | Comando | Qué hace |
 | --- | --- |
-| `npm start` | Arranca el servidor **bajo el supervisor** (`ops/supervisor.js`): health check, backoff exponencial (1 s → 30 s), reinicio automático y cortacircuito ante fallos de arranque |
+| `npm start` | Arranca el servidor **bajo el supervisor** (`ops/runtime/supervisor.js`): health check, backoff exponencial (1 s → 30 s), reinicio automático y cortacircuito ante fallos de arranque |
 | `npm test` | Suite completa (`node --test test/*.test.js`): unitarias + integración en instancias aisladas |
 | `npm run backup` | Respaldo consistente de las dos bases (la credencial va en el `.env`: copia también ese fichero) |
 | `npm run owner` | Credencial del propietario: `init`, `credential` (cambia la credencial y re-cifra todo), `rotate`, `check`, `show`, `unlock-check`, `export-kit`, `reset` |
@@ -191,8 +191,8 @@ Al arrancar, el servidor imprime las URLs:
 
 | Entorno | Cómo |
 | --- | --- |
-| **systemd** (Linux) | Unidad de servicio con `ExecStart=.../node .../ops/supervisor.js` y `Restart=always` → [`docs/INSTALACION.md`](docs/INSTALACION.md#51-systemd-linux) |
-| **pm2** | `pm2 start ops/supervisor.js --name zlapy && pm2 save && pm2 startup` |
+| **systemd** (Linux) | Unidad de servicio con `ExecStart=.../node .../ops/runtime/supervisor.js` y `Restart=always` → [`docs/INSTALACION.md`](docs/INSTALACION.md#51-systemd-linux) |
+| **pm2** | `pm2 start ops/runtime/supervisor.js --name zlapy && pm2 save && pm2 startup` |
 | **Termux:Boot** | Script en `~/.termux/boot/` que lanza `npm start` al arrancar el móvil |
 
 ---
@@ -478,8 +478,8 @@ dos veces: `PCE3( PCE3( "texto real" ) )`. A simple vista es basura, pero se
 puede desenvolver:
 
 ```bash
-node ops/repair-double-encrypted.js            # simulación: dice lo que haría
-node ops/repair-double-encrypted.js --apply    # repara (con respaldo previo en backups/)
+node ops/crypto/repair-double-encrypted.js            # simulación: dice lo que haría
+node ops/crypto/repair-double-encrypted.js --apply    # repara (con respaldo previo en backups/)
 ```
 
 Conviene **parar el servidor** mientras repara. Es **idempotente** y
@@ -664,7 +664,7 @@ los resultados como blobs cifrados en la base de datos. El generador procesa
 una expresión a la vez e informa en la terminal el porcentaje de fotogramas
 renderizados y codificados. No se sirven ni se guardan archivos del paquete
 en `public/`; las rutas antiguas de mensajes se resuelven desde la biblioteca.
-Las fuentes del generador están en `ops/scripts/assets/bbot-v3`.
+Las fuentes del generador están en `ops/data/assets/bbot-v3`.
 docs/                  documentación (ver el índice final)
 test/                  pruebas unitarias y de integración (node --test)
   server-http.test.js      rutas HTTP: registro, contactos, mensajes, grupos

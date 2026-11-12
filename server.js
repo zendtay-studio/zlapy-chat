@@ -32,6 +32,37 @@
 
 const fs = require('fs');
 const path = require('path');
+
+/* Preflight de dependencias: sin una librería instalada el arranque moriría
+   con un MODULE_NOT_FOUND imposible de entender, y el supervisor entraría en
+   bucle de reinicios hasta abrir el cortacircuito. Se detecta AQUÍ, LO
+   PRIMERO de todo (antes de cargar cualquier módulo que dependa de las
+   librerías: `config.js` usa dotenv, la base better-sqlite3…), y se sale con
+   un código propio (79): el supervisor instala lo que falte y relanza UNA
+   sola vez, sin backoff y sin gastar intentos de arranque. */
+const { verifyDeps } = require('./ops/install/ensure-deps.js');
+const depReport = verifyDeps();
+if (!depReport.ok) {
+    console.error('');
+    console.error('[deps] Faltan dependencias del proyecto:');
+    for (const f of depReport.missing) console.error(`  · ${f.name}: ${f.why}`);
+    console.error('');
+    console.error('  Con el supervisor (npm start) se instalan solas y el servidor relanza.');
+    console.error('  A mano: npm run deps');
+    console.error('');
+    try {
+        if (typeof process.send === 'function')
+            process.send({ t: 'deps-missing', missing: depReport.missing.map(f => f.name) });
+    } catch { /* sin canal: el código de salida ya avisa */ }
+    process.exit(79);
+}
+/* Guardas de proceso: errores globales registrados (consola + data/log/
+   errors.log); los fatales cierran la base y salen (exit 1) para que el
+   supervisor levante limpio; el resto NO tumban el servidor. También antes
+   de cargar el resto: un fallo ahí dentro debe responder a esta política. */
+const { installProcessGuards } = require('./src/process-guards.js');
+installProcessGuards();
+
 const { DATA, DB_PATH, BLOB_DB_PATH, ROOT } = require('./src/config.js');
 
 const { Stmt } = require('./src/db/statements.js');
@@ -92,7 +123,7 @@ if (ownerCredential && ownerCredential.nuevo)
    nacía 0755 y las bases SQLite 0644 (la auditoría SECOA-D-001/E-001 las
    midió así), es decir, LECTURAS por cualquier usuario local del equipo.
    El código de operación documentaba 0700 («dueño y grupo»: véase
-   ops/backup.js) pero nada lo aplicaba. Best-effort: si el chmod no es
+   ops/backup/backup.js) pero nada lo aplicaba. Best-effort: si el chmod no es
    posible (otro usuario, sistema sin permisos POSIX), se sigue en marcha
    avisando, porque un fallo duro aquí dejaría sin servicio. */
 try {
@@ -202,3 +233,10 @@ watchCredentialFile();
 
 // Al cargarlo, `src/http/servers.js` crea los servidores y empieza a escuchar.
 require('./src/http/servers.js');
+
+/* Latido hacia el supervisor (canal IPC): el health check HTTP tarda en
+   detectar un event loop bloqueado; el latido es la otra red de seguridad.
+   Sin canal (los tests arrancan server.js directamente) no hace nada. */
+const { startHeartbeat } = require('./src/process-guards.js');
+const hbMs = Number.parseInt(process.env.SUPERVISOR_HB_MS || '', 10);
+startHeartbeat({ intervalMs: Number.isInteger(hbMs) && hbMs >= 1000 ? hbMs : 10000 });
