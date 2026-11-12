@@ -664,7 +664,7 @@ los resultados como blobs cifrados en la base de datos. El generador procesa
 una expresión a la vez e informa en la terminal el porcentaje de fotogramas
 renderizados y codificados. No se sirven ni se guardan archivos del paquete
 en `public/`; las rutas antiguas de mensajes se resuelven desde la biblioteca.
-Las fuentes del generador están en `ops/data/assets/bbot-v3`.
+Las fuentes del generador están en `ops/data/generate-animated-bbot-pack.js` (generación procedural con semilla por expresión, sin assets externos).
 docs/                  documentación (ver el índice final)
 test/                  pruebas unitarias y de integración (node --test)
   server-http.test.js      rutas HTTP: registro, contactos, mensajes, grupos
