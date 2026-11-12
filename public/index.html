@@ -21861,15 +21861,15 @@
                 try {
                     if (!('serviceWorker' in navigator) || !('PushManager' in window)) { if (force) debugToast('Este navegador no soporta avisos push'); window.lastPushError = 'sin PushManager'; return false; }
                     if (Notification.permission === 'denied') {
-                        if (force) pushDeniedHelp();
-                        window.lastPushError = 'permiso denegado';
+                        if (force) debugToast('El navegador tiene bloqueados los avisos de este sitio (permiso denegado; actívalos en el candado junto a la dirección)');
+                        window.lastPushError = 'permiso denegado (bloqueado en el navegador: actívalo desde el candado junto a la dirección)';
                         return false;
                     }
                     if (Notification.permission === 'default') {
                         if (!force) return false;
                         let pr = 'default';
                         try { pr = await Notification.requestPermission(); } catch { pr = 'denied'; }
-                        if (pr !== 'granted') { pushDeniedHelp(); window.lastPushError = 'permiso no concedido'; return false; }
+                        if (pr !== 'granted') { debugToast('Permiso de avisos no concedido'); window.lastPushError = 'permiso no concedido'; return false; }
                     }
                     let reg = null;
                     /* Si el service worker no llegó a registrar (típico con
@@ -21887,7 +21887,7 @@
                             const msg = String((e && e.message) || e);
                             if (/certificate|SSL/i.test(msg) || (e && e.name === 'SecurityError')) {
                                 window.lastPushError = 'el navegador rechaza el certificado del sitio y no deja registrar el service worker (sin él no hay avisos con la app cerrada). Instala el certificado como autoridad confiable, o entra por localhost o por un túnel HTTPS válido.';
-                                pushCertHelp();
+                                debugToast('El certificado del sitio bloquea el service worker (aviso solo con la app abierta)');
                             } else {
                                 window.lastPushError = 'no se pudo registrar el service worker: ' + msg;
                                 debugToast('No se pudo activar el push del navegador');
@@ -21925,7 +21925,10 @@
                         }
                     }
                     if (!sub) {
-                        const esperas = [0, 2500, 6000];
+                        /* Los reintentos con espera solo los paga el interruptor
+                           (force): al arrancar se comprueba una sola vez y en
+                           silencio, sin modal ni mensajes que asusten. */
+                        const esperas = force ? [0, 2500, 6000] : [0];
                         for (let i = 0; i < esperas.length && !sub; i++) {
                             try {
                                 if (esperas[i]) { window.lastPushError = 'esperando ' + Math.round(esperas[i] / 1000) + 's antes de reintentar…'; await new Promise(r => setTimeout(r, esperas[i])); }
@@ -21940,17 +21943,16 @@
                         }
                     }
                     if (!sub) {
-                        /* El error real se conserva (nombre + mensaje): es lo
-                           que distingue "sin Google Play services" de "red que
-                           bloquea FCM" de "demasiados intentos". El texto
-                           genérico va detrás, nunca encima. */
+                        /* Sin modal: el error real del navegador queda a la
+                           vista en la línea de diagnóstico de Ajustes y en
+                           el motivo que se guarda abajo, en vez de saltar a
+                           cada arranque de la app o al tocar el interruptor. */
                         const real = window.lastPushError || '';
                         if (/push service/i.test(real))
-                            window.lastPushError = real + ' ⇒ el servicio de push del navegador rechazó la suscripción (navegador sin servicio de push propio, red/DNS que bloquea FCM o demasiados intentos seguidos).';
+                            window.lastPushError = real + ' ⇒ el servicio de push del navegador rechazó la suscripción: falta el servicio de push propio (Chrome sin Google Play services), la red o el DNS bloquean fcm.googleapis.com / mtalk.google.com, la optimización de batería de Chrome está activa, o hubo demasiados intentos seguidos; prueba con otro navegador y reintenta pasados unos minutos.';
                         else
                             window.lastPushError = 'no se pudo suscribir: ' + real;
-                        debugToast('No se pudo activar el push del navegador');
-                        pushFailHelp(window.lastPushError);
+                        if (force) debugToast('No se pudo activar el push del navegador');
                         return false;
                     }
                     let r = null;
@@ -21975,34 +21977,6 @@
                     if (reg && reg.pushManager) sub = (await reg.pushManager.getSubscription()) ? 'sí' : 'no';
                 } catch { sw = 'fallo'; }
                 el.textContent = `Estado: permiso ${perm} · service worker ${sw} · suscripción ${sub}` + (window.lastPushError ? ` · error: ${window.lastPushError}` : '');
-            }
-            function pushDeniedHelp() {
-                Modal.abrir({
-                    titulo: 'Permiso bloqueado',
-                    texto: 'El navegador tiene bloqueados los avisos para este sitio (no es el túnel: por túnel HTTPS sí funcionan).\n\nPara activarlos:\n1. Toca el candado al lado de la dirección\n2. Entra a Permisos o Configuración del sitio\n3. Pon Notificaciones en Permitir\n4. Recarga y activa el interruptor\n\nSi ya están permitidos y no llegan con la app cerrada: quita la optimización de batería de Chrome (Ajustes del teléfono > Apps > Chrome > Batería > Sin restricciones).',
-                    acciones: [{ txt: 'Entendido', valor: null }]
-                });
-            }
-            /* El navegador rechaza el certificado del sitio: sin service
-               worker no hay push (ni shell sin conexión). */
-            function pushCertHelp() {
-                Modal.abrir({
-                    titulo: 'El certificado bloquea los avisos',
-                    texto: 'Los avisos con la app cerrada necesitan el service worker, y el navegador se niega a registrarlo porque el certificado de este sitio es autofirmado (da igual haber pulsado «continuar»: el origen sigue sin ser de confianza para el service worker).\n\nSolución, en el orden que más fácil es:\n1. Instala el certificado del servidor como autoridad CONFIANZA en el dispositivo: copia cert.pem del servidor y, en Android, Ajustes > Seguridad > Cifrado y credenciales > Instalar certificado > CA. Recarga y activa los avisos.\n2. Entra por http://localhost:PUERTO desde el propio servidor (ahí sí funciona tal cual).\n3. O usa un túnel HTTPS válido (dominio real, certificado legítimo).\n\nLa prueba, con datos: contra el servidor real, el intento de registro del service worker sobre el certificado autofirmado da «SecurityError: An SSL certificate error occurred when fetching the script».',
-                    acciones: [{ txt: 'Entendido', valor: null }]
-                });
-            }
-            /* La suscripción push la crea el NAVEGADOR, no el servidor: si el
-               navegador no tiene servicio de push útil (Chrome sin Google Play
-               services, DNS/red que bloquea FCM) no hay nada que suscribir y
-               los avisos solo salen con la pestaña abierta. Este modal dice
-               cuál fue el error real y qué hacer en cada caso. */
-            function pushFailHelp(detalle) {
-                Modal.abrir({
-                    titulo: 'No se pudo activar el push',
-                    texto: `Error del navegador: ${detalle || 'desconocido'}\n\nLa suscripción la crea el navegador con su servicio de push (en Android, Chrome usa los Google Play services; sin ellos no puede suscribir NINGÚN navegador Chrome).\n\nPrueba en este orden:\n1. Si estás en Chrome y tu Android no tiene Google Play services (o está capado): instala Firefox y actívalo ahí, o usa los avisos dentro de la app.\n2. Comprueba que el móvil llega a fcm.googleapis.com y mtalk.google.com: si tu red o tu DNS (p. ej. Pi-hole) los bloquean, el registro falla con este mismo error.\n3. Quita la optimización de batería de Chrome (Ajustes del teléfono > Apps > Chrome > Batería > Sin restricciones) y espera un par de minutos: demasiados intentos seguidos también hacen que el servicio rechace.\n4. Recarga e inténtalo otra vez.\n\nEl servidor de Zlapy está listo: con una suscripción válida entrega correctamente (verificado contra el servicio de push real).`,
-                    acciones: [{ txt: 'Entendido', valor: null }]
-                });
             }
             async function setPushEnabled(on) {
                 if (on) { await setupPush(true); }
