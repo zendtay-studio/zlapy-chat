@@ -138,7 +138,7 @@ los cambios puestos.
 | SECOA-C-011 | la caché de páginas sostenía cientos de MB en RAM con páginas de adjuntos grandes | cota global de bytes `CHAT_PAGE_CACHE_MAX_BYTES` (64 MiB) + desalojo (`src/chat/messages.js`) |
 | SECOA-D-001 / E-001 | `data/` nacía `0755` y las bases `0644`: lectura para cualquier usuario local del equipo | `server.js` paso 0: `0700`/`0600` al arrancar, `best-effort` con aviso |
 | SECOA-E-006 | el anti-replay del canal se registraba **antes** de validar el MAC (flood de basura expulsable) | registro del nonce **tras** verificar HMAC + rechazo de nonce vacío (`src/http/transport.js`) |
-| SECOA-I-003 | sesiones sin tope por cuenta | `MAX_SESSIONS_PER_USER` = 20, recorta las más antiguas (`src/auth/sessions.js`) |
+| SECOA-I-003 | sesiones sin tope por cuenta | ~~`MAX_SESSIONS_PER_USER` = 20, recorta las más antiguas~~ *(quedó sin objeto en v9/v10: los tokens son JWT sin almacén, no hay sesiones que recortar — ver «Estado actual» más abajo)* |
 | SECOA-G | grupos sin tope de miembros (coste por mensaje lineal en N) | `MAX_GROUP_MEMBERS` = 200 en creación/`join`/`addMember` |
 | (limpieza) | `.zlapy.pid` en `0644` y un limitador (`keyLimiter`) sin consumidor | PID `0600`; `keyLimiter` eliminado |
 
@@ -150,10 +150,12 @@ mostró que **ya estaban resueltos**. Queda aquí para no volver a "arreglarlos"
 - **Mismo-origen/CSRF en `POST`**: Origin + `sec-fetch-site` ya se comprobaban
   en `src/http/router.js`, y el *upgrade* WebSocket tiene su propia comprobación
   de origen (`src/realtime/websocket.js`).
-- **Índices de `sessions`**: `idx_sessions_user` y `idx_sessions_exp` existen
-  desde el esquema v3 (`src/db/schema.js`).
-- **Caché de sesiones sin validar caducidad**: `getSessionFromCache` ya
-  descarta las expiradas (`src/auth/sessions.js`).
+- **Índices de `sessions`**: ~~`idx_sessions_user` y `idx_sessions_exp` existen
+  desde el esquema v3~~ *(sin objeto desde v9: la tabla `sessions` se soltó al
+  pasar a JWT sin almacén; el debate no aplica — ver «Estado actual»)*.
+- **Caché de sesiones sin validar caducidad**: ~~`getSessionFromCache` ya
+  descarta las expiradas~~ *(sin objeto desde v9: no hay caché de sesiones que
+  validar; la caducidad la comprueba `jsonwebtoken` al verificar el token)*.
 - **`data.from` falsificable en `/story`**: el router lo sobrescribe con el
   actor antes de llamar a la ruta.
 - **Duplicación de blobs por `INSERT OR IGNORE`**: el almacén es idempotente
@@ -189,3 +191,33 @@ rutas personales del host** que se habían colado en dos documentos de auditorí
 el contenido (commits y mensajes) es el mismo, con hashes nuevos. Los informes
 originales viven **fuera del repositorio** y se citan solo con rutas relativas
 (`zlapy-chat/run-1/REPORT.md`).
+
+---
+
+# Estado actual (v9 → v12): decisiones que hay que saber antes de tocar
+
+Las rondas de arriba quedaron en su momento histórico. Desde entonces el
+esquema avanzó sin pérdida de datos (`docs/ESQUEMA-BD.md` §5 tiene las
+migraciones) y hay cuatro decisiones nuevas que **parecen fallos** si se leen
+sin contexto. No se arreglan "porque sí":
+
+- **`signing_public_key` se queda en `messages`.** Es un ahorro de espacio
+  tentador (recalcular la clave Ed25519 es determinista), pero la clave de
+  firma deriva de la `auth_key`, que el usuario **regenera** desde
+  `POST /account/regenerate-key`: tras regenerarla, los mensajes que el
+  re-cifrado no pudo migrar (dañados) solo se verifican con la clave que
+  viajó con ellos. Quitar la columna los marcaría como adulterados para
+  siempre. Optimización rechazada tras analizarla.
+- **Renombrar la cuenta re-emite la cookie de sesión** (no es un logout
+  accidental): el `checksum` del token lleva el `username`, así que sin
+  re-emitirla quien renombra saldría de su propia sesión. Las cookies de
+  otros navegadores quedan bloqueadas a propósito: cambio de identidad.
+- **`calls` tiene una fila por extremo** (PK `(owner, id)`, v12). Antes el
+  `INSERT OR REPLACE` borraba la del llamador: el histórico de llamadas solo
+  sobrevivía para quien recibía. La historia ya perdida **no** se recupera
+  con la migración; lo que se garantiza es que no se pierda más.
+- **`sessions` no existe** (v9/v10): los tokens son JWT sin tabla ni caché.
+  Cualquier propuesta de "restaurar los índices de sesiones" o "topar
+  sesiones por cuenta" parte de un modelo que ya no es este; la revocación
+  se hace rotando el `rid` (`user_rid`). Modelo completo en
+  `docs/ESQUEMA-BD.md` §3.13 y `docs/CRIPTOGRAFIA.md` §6.5.

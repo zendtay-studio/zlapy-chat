@@ -310,7 +310,7 @@ Se ejecuta con `npm test` → `node --test test/*.test.js`.
 | `docs/ARQUITECTURA.md` | 1495 | Arquitectura del backend: arranque, ciclo HTTP, algoritmos y reglas de negocio. |
 | `docs/CRIPTOGRAFIA.md` | 1769 | El sistema criptográfico completo: llave maestra, PCE1/PCE2/PCE3, firmas y canal de transporte. |
 | `docs/INSTALACION.md` | 1072 | Instalación por plataforma, configuración inicial, permisos y operación. |
-| `docs/decisiones-auditoria.md` | 191 | Decisiones de diseño tomadas tras las auditorías (V-12, V-18, CSP, SECOA…): qué se decidió no cambiar y por qué. |
+| `docs/DECISIONES-AUDITORIA.md` | 223 | Decisiones de diseño tomadas tras las auditorías (V-12, V-18, CSP, SECOA…): qué se decidió no cambiar y por qué, más el estado actual (v9→v12) de las decisiones que parecen fallos sin contexto. |
 | `docs/esquema/esquema.js` | 980 | Datos del visor 2D del esquema de la base (transcritos de `src/db/schema.js`). |
 | `docs/esquema/index.html` | 64 | Página del visor del esquema. |
 | `docs/esquema/esquema.css` | 510 | Estilos del visor del esquema. |
