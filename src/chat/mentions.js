@@ -9,7 +9,8 @@
 'use strict';
 
 const { renamePeerInSummaries } = require('./summaries.js');
-const { decField, encField } = require('../crypto/field-crypto.js');
+const { encField } = require('../crypto/field-crypto.js');
+const { peerHash } = require('../crypto/peer-index.js');
 const { db } = require('../db/database.js');
 const { Stmt } = require('../db/statements.js');
 const { readGroup, writeGroupMeta } = require('../groups/store.js');
@@ -63,10 +64,10 @@ function propagateUsernameChange(previous, next) {
     }
     // El historial de llamadas guarda el NOMBRE del par (cifrado): hay que
     // mantenerlo al día para que el borrado por cuenta lo encuentre tras un
-    // renombre. Al ir cifrado, se recorre, se descifra y se re-cifra.
-    for (const row of Stmt.listCallsWithPeer.all())
-        if (decField('calls.peer', row.peer) === previous)
-            Stmt.updateCallPeer.run(encField('calls.peer', next), row.id);
+    // renombre. Las filas se encuentran por el blind index del nombre viejo
+    // (peer_hash, O(log n)) en vez de descifrar todo el historial.
+    for (const row of Stmt.listCallsByPeerHash.all(peerHash(previous)))
+        Stmt.updateCallPeer.run(encField('calls.peer', next), peerHash(next), row.id);
 
     if (callFiles.has(previous)) {
         const calls = callFiles.get(previous);

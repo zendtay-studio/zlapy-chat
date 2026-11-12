@@ -66,7 +66,7 @@ try {
 }
 
 const { loadFromDb } = require('./src/users/store.js');
-const { backfillUserRids } = require('./src/db/schema.js');
+const { backfillUserRids, backfillCallPeerHashes } = require('./src/db/schema.js');
 
 /* El manifiesto de integridad del ENLACE credencial ↔ base (sal, keycheck,
    usuario, key_id): si alguien manipuló esas filas con el servidor parado,
@@ -147,6 +147,18 @@ try {
     console.error('  Las cuentas sin rid no aceptan ningún token: arréglalo antes de continuar.');
     console.error('');
     process.exit(78);
+}
+
+/* Migración v11: `calls.peer_hash` (índice a ciegas del par) para las filas
+   de bases anteriores. Igual que el rid: necesita la llave maestra, así que
+   corre aquí y no dentro de applySchema. Idempotente. */
+try {
+    const conHash = backfillCallPeerHashes(db);
+    if (conHash) console.log(`[db] calls.peer_hash: ${conHash} fila(s) recibieron su índice de par.`);
+} catch (error) {
+    // No es letal: las filas sin hash siguen encontrándose por comparación
+    // lenta (purga por cuenta). Avisar para que se vea.
+    console.error(`[db] aviso: no se pudo completar el backfill de calls.peer_hash: ${error && error.message ? error.message : error}`);
 }
 
 loadFromDb();

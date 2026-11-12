@@ -1,10 +1,12 @@
-// Tests del esquema v10 de la base de datos:
+// Tests del esquema v11 de la base de datos:
 //   · el esquema se aplica en bases nuevas (idempotente, sin migraciones),
 //   · borrar una cuenta arrastra TODO en cascada (y libera el usuario),
 //     sin purgar grupos cuyo gid contenga el uuid de la víctima,
 //   · las restricciones (UNIQUE, CHECK, claves ajenas) hacen su trabajo,
 //   · la migración v10 crea `user_rid` (rid + marcas de revocación) en las
 //     instalaciones anteriores sin tocar las sesiones vivas de más,
+//   · la migración v11 añade `calls.peer_hash` (índice a ciegas del par)
+//     soltando el índice que indexaba el texto cifrado,
 //   · la migración v9 (privacidad 'online') sigue aplicándose donde falte.
 const assert = require('node:assert/strict');
 const test = require('node:test');
@@ -15,6 +17,7 @@ const {
     SCHEMA_SQL,
     ensureSchema,
     backfillUserRids,
+    backfillCallPeerHashes,
     tableExists,
     tableColumns,
     tableSql,
@@ -316,6 +319,63 @@ test('la migración v10 crea user_rid, suelta sessions y respeta la privacidad v
     assert.equal(db.prepare('SELECT COUNT(*) AS c FROM user_privacy').get().c, 0);
     assert.equal(db.prepare('SELECT COUNT(*) AS c FROM user_rid').get().c, 0, 'el rid se borra con la cuenta');
     assert.deepEqual(db.pragma('foreign_key_check'), []);
+    db.close();
+});
+
+test('la migración v11 añade calls.peer_hash y suelta el índice del texto cifrado', () => {
+    const db = newDb();
+    // Base "v10": calls SIN peer_hash, CON el índice que indexaba el texto
+    // cifrado (idx_calls_peer) y SIN el índice nuevo.
+    const v10 = SCHEMA_SQL
+        .replace(/\n\s*peer_hash TEXT,/, '')
+        .replace(/CREATE INDEX IF NOT EXISTS idx_calls_peer_hash ON calls\(peer_hash\);\n?/, '');
+    db.exec(v10);
+    db.exec('CREATE INDEX idx_calls_peer ON calls(peer)');
+    assert.ok(!tableColumns(db, 'calls').has('peer_hash'), 'la base simulada v10 no tiene peer_hash');
+    assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_calls_peer'").get(),
+        'la base simulada v10 tiene el índice obsoleto');
+
+    // Una cuenta y una llamada hacia 'caro' con el par CIFRADO, como deja
+    // producción. Una segunda fila con un sobre ROTO (daño en la base): el
+    // backfill no debe romperse con ella. (Un peer SIN sobre se pasa por el
+    // descifrador tal cual —passthrough legado—, así que sí recibiría hash.)
+    db.prepare(`INSERT INTO users (id, username, password_hash, password_salt, add_policy, created_at)
+        VALUES (?, 'ana', 'h', 's', 'request', 1)`).run(ids.a);
+    const { encField } = require('../src/crypto/field-crypto.js');
+    const insertCall = db.prepare('INSERT INTO calls (id, owner, peer, ts, data) VALUES (?, ?, ?, ?, ?)');
+    insertCall.run('c1', ids.a, encField('calls.peer', 'Caro'), 1, 'x');
+    insertCall.run('c2', ids.a, 'PCE1v2:zmal:XXXX', 2, 'x');
+
+    ensureSchema(db);
+
+    // La columna se añade, el índice nuevo existe y el del cifrado se suelta.
+    assert.ok(tableColumns(db, 'calls').has('peer_hash'), 'peer_hash se añade en la migración');
+    assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_calls_peer_hash'").get(),
+        'el índice del hash existe');
+    assert.ok(!db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_calls_peer'").get(),
+        'el índice del texto cifrado se suelta');
+
+    // El backfill (lo que hace server.js al arrancar) calcula el hash de las
+    // filas legibles y deja las indecifrables con NULL, sin romperse.
+    const { peerHash } = require('../src/crypto/peer-index.js');
+    assert.equal(backfillCallPeerHashes(db), 1, 'una fila recibe su hash');
+    assert.equal(backfillCallPeerHashes(db), 0, 'el backfill es idempotente');
+    const hash = db.prepare('SELECT peer_hash FROM calls WHERE id = ?').get('c1').peer_hash;
+    assert.equal(hash, peerHash('Caro'), 'el hash sale del nombre DESCIFRADO');
+    assert.equal(hash, peerHash('caro'), 'el hash es insensible a mayúsculas (comparación por nombre normalizado)');
+    assert.equal(db.prepare('SELECT peer_hash FROM calls WHERE id = ?').get('c2').peer_hash, null,
+        'la fila indecifrable queda con hash NULL (la purga lenta la cubre)');
+
+    // La purga por cuenta borrada (deleteAccountRows) encuentra las llamadas
+    // de OTRAS cuentas por hash: borrar 'caro' se lleva la fila c1.
+    db.prepare(`INSERT INTO users (id, username, password_hash, password_salt, add_policy, created_at)
+        VALUES (?, 'caro', 'h', 's', 'request', 3)`).run(ids.b);
+    const removed = deleteAccountRows(db, ids.b, 'caro');
+    assert.ok(Array.isArray(removed.hashes));
+    assert.equal(db.prepare('SELECT COUNT(*) AS c FROM calls WHERE id = ?').get('c1').c, 0,
+        'la llamada hacia la cuenta borrada se purga por peer_hash');
+    assert.equal(db.prepare('SELECT COUNT(*) AS c FROM calls WHERE id = ?').get('c2').c, 1,
+        'la fila sin hash no se toca (su par no es la cuenta borrada)');
     db.close();
 });
 

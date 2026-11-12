@@ -186,6 +186,14 @@ async function postAccountProfile(req, res, url, data, actor) {
         console.error('[profile] No se pudo guardar el perfil:', error);
         return json(res, 409, { error: 'No se pudo guardar el perfil. Elige otro nombre de usuario.' });
     }
+    /* v10: el checksum del token lleva el NOMBRE de la cuenta, así que un
+       renombre lo descuadra y cerraría la sesión de quien renombra (y de
+       todos sus dispositivos). Como en el cambio de contraseña: cookie
+       nueva con el checksum del estado ya actualizado, para que quien lo
+       hizo no salga disparado. (Las cookies de cuenta de OTROS navegadores
+       quedan bloqueadas y pedirán contraseña al cambiarse a esta cuenta:
+       cambio de identidad, revocación razonable.) */
+    if (renamedFrom) createSession(req.authUser, req, res);
     broadcastUsers();
     return json(res, 200, { ok: true, user: { id: req.authUser.id, username: req.authUser.username } });
 }

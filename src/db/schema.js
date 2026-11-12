@@ -34,7 +34,7 @@
  */
 'use strict';
 
-const SCHEMA_VERSION = 10;
+const SCHEMA_VERSION = 11;
 
 // Esquema v8
 // Orden de creación: primero las tablas padre (users, groups) para que las
@@ -391,14 +391,19 @@ CREATE INDEX IF NOT EXISTS idx_stories_ts ON stories(ts DESC);
    'peer' guarda el nombre de usuario del otro extremo a propósito: el historial
    sobrevive a que esa cuenta cambie de nombre o se borre. */
 CREATE TABLE IF NOT EXISTS calls (
-    id    TEXT PRIMARY KEY,
-    owner TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    peer  TEXT,
-    ts    INTEGER NOT NULL,
-    data  TEXT
+    id        TEXT PRIMARY KEY,
+    owner     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    peer      TEXT,
+    peer_hash TEXT,
+    ts        INTEGER NOT NULL,
+    data      TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_calls_owner_ts ON calls(owner, ts DESC);
-CREATE INDEX IF NOT EXISTS idx_calls_peer ON calls(peer);
+/* Índice a ciegas del par (HMAC del nombre, src/crypto/peer-index.js): el
+   texto va cifrado, así que el índice directo sobre "peer" jamás sirvió
+   para buscar. Con el hash, purgar las llamadas de una cuenta borrada o
+   renombrarla es O(log n) en vez de un barrido descifrando. */
+CREATE INDEX IF NOT EXISTS idx_calls_peer_hash ON calls(peer_hash);
 
 /* ---------------- 18. Notificaciones push ---------------- */
 CREATE TABLE IF NOT EXISTS push_subs (
@@ -495,6 +500,14 @@ function migratePrivacyFeatures(db) {
 }
 
 function applySchema(db) {
+    // v11: `calls.peer_hash` (índice a ciegas del par) se añade ANTES de
+    // ejecutar el esquema: `idx_calls_peer_hash` referencia la columna, y
+    // una instalación v10 aún no la tiene → ALTER primero, índice después.
+    if (tableExists(db, 'calls') && !tableColumns(db, 'calls').has('peer_hash'))
+        db.exec('ALTER TABLE calls ADD COLUMN peer_hash TEXT');
+    // v11: el índice antiguo de "peer" indexaba el TEXTO CIFRADO (nunca
+    // pudo servir para buscar). Con peer_hash queda obsoleto: se suelta.
+    try { db.exec('DROP INDEX IF EXISTS idx_calls_peer'); } catch { }
     db.exec(SCHEMA_SQL);
     // Altas de columna idempotentes para instalaciones con tablas existentes.
     if (!tableColumns(db, 'user_chat_prefs').has('archived'))
@@ -663,9 +676,19 @@ function deleteAccountRows(db, userId, username, options = {}) {
     deleteRowsByFieldName(db, 'user_privacy_users', 'rowid', 'target_name',
         'target_id IS NULL', sameUsername, options);
     // 5b) Historial de llamadas donde era el otro extremo. El nombre del par
-    //     va CIFRADO: el borrado recorre las filas y delega la comparación en
-    //     quien tiene la llave.
-    deleteRowsByFieldName(db, 'calls', 'id', 'peer', '', sameUsername, options);
+    //     va CIFRADO y se localiza por su blind index (peer_hash): un DELETE
+    //     O(log n) en vez de recorrer y descifrar todo el historial. Sin
+    //     llave para calcular el hash (o con filas cuyo nombre ya no se
+    //     puede descifrar) se usa la comparación lenta de siempre, para no
+    //     dejar nada atrás.
+    try {
+        const { peerHash } = require('../crypto/peer-index.js');
+        const hashCuenta = peerHash(usernameKey);
+        if (hashCuenta) db.prepare('DELETE FROM calls WHERE peer_hash = ?').run(hashCuenta);
+        deleteRowsByFieldName(db, 'calls', 'id', 'peer', 'peer_hash IS NULL', sameUsername, options);
+    } catch {
+        deleteRowsByFieldName(db, 'calls', 'id', 'peer', '', sameUsername, options);
+    }
     // 6) El borrado de la cuenta: aquí caen TODAS las cascadas del esquema.
     db.prepare('DELETE FROM users WHERE id = ?').run(userId);
 
@@ -687,12 +710,36 @@ function backfillUserRids(db) {
     return faltan.length;
 }
 
+/* Migración v11: calcula `calls.peer_hash` para las filas que aún no lo
+   tienen. Necesita la llave maestra (descifrar el nombre y calcular su
+   HMAC), así que corre desde server.js al arrancar, como backfillUserRids.
+   Idempotente. Las filas cuyo nombre ya no se puede descifrar (daño en la
+   base) quedan con hash NULL: la purga por cuenta las busca con la
+   comparación lenta de siempre, así que no se pierden. */
+function backfillCallPeerHashes(db) {
+    const pendientes = db.prepare('SELECT id, peer FROM calls WHERE peer IS NOT NULL AND peer_hash IS NULL').all();
+    if (!pendientes.length) return 0;
+    const { peerHash } = require('../crypto/peer-index.js');
+    const { decField } = require('../crypto/field-crypto.js');
+    const update = db.prepare('UPDATE calls SET peer_hash = ? WHERE id = ?');
+    let hechos = 0;
+    for (const row of pendientes) {
+        let nombre;
+        try { nombre = decField('calls.peer', row.peer); } catch { nombre = null; }
+        if (!nombre) continue;
+        const hash = peerHash(nombre);
+        if (hash) { update.run(hash, row.id); hechos++; }
+    }
+    return hechos;
+}
+
 module.exports = {
     SCHEMA_VERSION,
     SCHEMA_SQL,
     applySchema,
     ensureSchema,
     backfillUserRids,
+    backfillCallPeerHashes,
     tableExists,
     tableColumns,
     tableSql,

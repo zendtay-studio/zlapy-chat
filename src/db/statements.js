@@ -357,12 +357,14 @@ const Stmt = {
     deleteExpiredStories: db.prepare('DELETE FROM stories WHERE ts <= ?'),
 
     // Calls
-    insertCall: db.prepare('INSERT OR REPLACE INTO calls (id, owner, peer, ts, data) VALUES (?, ?, ?, ?, ?)'),
+    insertCall: db.prepare('INSERT OR REPLACE INTO calls (id, owner, peer, peer_hash, ts, data) VALUES (?, ?, ?, ?, ?, ?)'),
     updateCallData: db.prepare('UPDATE calls SET data = ? WHERE id = ? AND owner = ?'),
-    /* El par de una llamada va cifrado: las consultas por nombre de par (borrar
-       la cuenta, renombrar la cuenta) se resuelven descifrando y comparando. */
-    listCallsWithPeer: db.prepare('SELECT id, owner, peer FROM calls WHERE peer IS NOT NULL'),
-    updateCallPeer: db.prepare('UPDATE calls SET peer = ? WHERE id = ?'),
+    /* El par de una llamada va cifrado y su localización por nombre va por el
+       blind index `peer_hash` (src/crypto/peer-index.js): O(log n), sin
+       descifrar nada. updateCallPeer recibe (cifrado, hash, id). */
+    listCallsByPeerHash: db.prepare('SELECT id, owner, peer FROM calls WHERE peer_hash = ?'),
+    deleteCallsByPeerHash: db.prepare('DELETE FROM calls WHERE peer_hash = ?'),
+    updateCallPeer: db.prepare('UPDATE calls SET peer = ?, peer_hash = ? WHERE id = ?'),
     listCalls: db.prepare('SELECT * FROM calls WHERE owner = ? ORDER BY ts DESC LIMIT ?'),
     trimCalls: db.prepare(`DELETE FROM calls WHERE owner = ? AND id NOT IN (
         SELECT id FROM calls WHERE owner = ? ORDER BY ts DESC LIMIT ?)`),
