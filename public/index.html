@@ -2704,6 +2704,51 @@
             color: var(--accent-readable)
         }
 
+        /* La presencia ("Últ. vez 12 nov a las 04:01 p.m.") rompía el alto
+           de la cabecera partiéndose en dos líneas. Ahora no se parte: si no
+           cabe, el texto se desliza suave dentro de su ancho (ida y vuelta
+           con `transform`, que el navegador puede compositar). La distancia
+           y la duración las mide `slackChatSub`; el span interior es el que
+           se anima, así que medir el desborde no depende del estado. */
+        #chatSub {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: clip
+        }
+
+        #chatSubText {
+            display: inline-block;
+            white-space: nowrap
+        }
+
+        /* Ciclo: recorre el texto de un extremo a otro en línea recta
+           (linear), se queda parado al llegar y se regresa. Las pausas de
+           los extremos son los tramos sin cambio de valor (0-15 %, 45-57 %
+           y 87-100 %); como la duración es fija, paran siempre lo mismo. */
+        #chatSub.slide #chatSubText {
+            animation: chatSubSlide var(--sub-slide-ms, 8s) linear infinite
+        }
+
+        /* El borde derecho se desvanece: se ve que hay más texto sin
+           parecer un corte. Solo con deslizamiento activo (si el texto
+           cabe, no se enmascara nada). */
+        #chatSub.slide {
+            -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 16px), transparent 100%);
+            mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 16px), transparent 100%)
+        }
+
+        @keyframes chatSubSlide {
+            0%, 15% {
+                transform: translateX(0)
+            }
+            45%, 57% {
+                transform: translateX(calc(-1 * var(--sub-slide, 0px)))
+            }
+            87%, 100% {
+                transform: translateX(0)
+            }
+        }
+
         #backBtn {
             display: none;
             background: none;
@@ -3955,6 +4000,59 @@
             height: 20px;
             accent-color: var(--accent);
             flex: none
+        }
+
+        /* Selector de contactos de Privacidad (“Solo…” / “Excepto…”): el
+           checkbox nativo se oculta y en su sitio va el mismo interruptor
+           de las filas de Ajustes. El input sigue ahí (accesible por
+           teclado) y el label entero alterna. */
+        #privacyContactList .mRow input[type=checkbox] {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            opacity: 0;
+            pointer-events: none;
+            order: 4
+        }
+
+        #privacyContactList .mRow .mSwitch {
+            order: 3;
+            margin-left: auto;
+            position: relative;
+            box-sizing: border-box;
+            width: 48px;
+            height: 28px;
+            flex: none;
+            border: 1px solid #454d57;
+            border-radius: 14px;
+            background: #343b44;
+            transition: background .18s
+        }
+
+        #privacyContactList .mRow .mSwitch::after {
+            content: '';
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: var(--surface);
+            transition: left .18s
+        }
+
+        #privacyContactList .mRow input:checked ~ .mSwitch {
+            border-color: transparent;
+            background: var(--accent)
+        }
+
+        #privacyContactList .mRow input:checked ~ .mSwitch::after {
+            left: 22px
+        }
+
+        #privacyContactList .mRow input:focus-visible ~ .mSwitch {
+            outline: 2px solid var(--accent);
+            outline-offset: 2px
         }
 
         .mList .mRow .avatar {
@@ -9413,6 +9511,83 @@
             font-size: 13px
         }
 
+        /* Ajustes > Datos locales: mismos colores y piezas que Cuenta
+           (setRow, accountSectionHead, mBtn/peligro). Nada de colores
+           nuevos: solo las variables del tema. */
+        #settingsMain .localDataSection > .mBtn {
+            width: 100%;
+            max-width: 100%
+        }
+
+        .ldTotal {
+            display: grid;
+            gap: 6px;
+            padding: 4px 2px 2px
+        }
+
+        .ldTotal b {
+            font-size: 15px
+        }
+
+        .ldTotal span {
+            color: var(--muted);
+            font-size: 12px
+        }
+
+        .ldBar {
+            height: 8px;
+            overflow: hidden;
+            border-radius: 99px;
+            background: var(--surface-raised)
+        }
+
+        .ldBar > div {
+            width: 0;
+            height: 100%;
+            transition: width .3s;
+            background: var(--accent)
+        }
+
+        .ldTiles {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+            gap: 8px
+        }
+
+        .ldTile {
+            display: grid;
+            gap: 3px;
+            padding: 12px;
+            border: 1px solid var(--line);
+            border-radius: 15px;
+            background: var(--surface-raised)
+        }
+
+        .ldTile b {
+            font-size: 13.5px;
+            color: var(--text)
+        }
+
+        .ldTile span {
+            color: var(--muted);
+            font-size: 12px
+        }
+
+        .ldTile i {
+            font-style: normal;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text)
+        }
+
+        .ldSize {
+            margin-left: 6px;
+            font-size: 11.5px;
+            font-weight: 600;
+            font-style: normal;
+            color: var(--muted)
+        }
+
         .appVersionDetails {
             display: grid;
             gap: 1px;
@@ -10071,7 +10246,7 @@
                 <div class="avatar sm" id="chatAvatar" onclick="event.stopPropagation();chatHeaderClick()"></div>
                 <div id="chatIdentity" style="flex:1;min-width:0" onclick="event.stopPropagation();chatHeaderClick()">
                     <div id="chatName"></div>
-                    <div class="sub" id="chatSub"></div>
+                    <div class="sub" id="chatSub"><span id="chatSubText"></span></div>
                 </div>
                 <button class="btn callBtn" onclick="event.stopPropagation();startCall(false)" title="Llamar"><svg
                         viewBox="0 0 24 24">
@@ -12892,6 +13067,51 @@
                 if (daysAgo === 1) return `Últ. vez ayer a las ${time}`;
                 return `Últ. vez ${d.toLocaleDateString([], { day: 'numeric', month: 'short' })} a las ${time}`;
             }
+            /* Escribe el subtítulo de la cabecera SIEMPRE por aquí: además
+               del texto, mide si desborda y activa el deslizamiento. El
+               texto va en un span interior (`chatSubText`) para poder
+               animarlo con `transform` sin tocar el contenedor. */
+            function setChatSubText(text, extraClass) {
+                const el = document.getElementById('chatSub');
+                const inner = document.getElementById('chatSubText');
+                if (!el || !inner) return;
+                el.className = 'sub' + (extraClass ? ' ' + extraClass : '');
+                inner.textContent = text == null ? '' : String(text);
+                slackChatSub();
+            }
+            /* Si el subtítulo no cabe en su ancho, en vez de partirlo en dos
+               líneas se desliza: se mide el desborde y se le pasa a la
+               animación (`chatSubSlide`) como distancia y duración. Si cabe,
+               se quita la animación y se queda quieto. */
+            function slackChatSub() {
+                const el = document.getElementById('chatSub');
+                if (!el) return;
+                el.classList.remove('slide');
+                const exceso = el.scrollWidth - el.clientWidth;
+                if (exceso <= 1) {
+                    el.scrollLeft = 0;
+                    el.title = '';
+                    return;
+                }
+                el.style.setProperty('--sub-slide', exceso + 'px');
+                /* Duración FIJA: los tramos de pausa de los keyframes son
+                   porcentajes, así que con una duración constante la parada
+                   en cada extremo dura siempre lo mismo (~1 s) sin importar
+                   cuánto texto sobre. */
+                el.style.setProperty('--sub-slide-ms', '8000ms');
+                /* Si queda recortado, el ratón muestra el texto entero y
+                   los lectores de pantalla lo anuncian completo. */
+                el.title = el.textContent;
+                void el.offsetWidth; /* reinicia la animación si ya corrió antes */
+                el.classList.add('slide');
+            }
+            /* Al cambiar el ancho de la ventana el ancho del subtítulo
+               cambia con él: re-medir (no en cada píxel, una vez parado). */
+            let slackSubTimer = 0;
+            window.addEventListener('resize', () => {
+                if (slackSubTimer) clearTimeout(slackSubTimer);
+                slackSubTimer = setTimeout(() => { slackSubTimer = 0; slackChatSub(); }, 120);
+            });
             async function loadMyAvatar() {
                 const p = await getProfile(me.username);
                 setAvatar(document.getElementById('myAvatar'), p);
@@ -14086,7 +14306,7 @@
             }
             function updateGroupHeader() {
                 if (activeKind !== 'group' || !activeGroup) return;
-                document.getElementById('chatSub').textContent = activeGroup.members.length + ' participantes';
+                setChatSubText(activeGroup.members.length + ' participantes');
                 const admin = activeGroup.admins.includes(me.username);
                 const textAllowed = activeGroup.writePolicy !== 'admins' || admin;
                 const input = document.getElementById('msgInput');
@@ -14782,7 +15002,7 @@
                 updateSendBtn();
                 const cachedMessages = conversationFor(name).messages;
                 if (u === '__saved__') {
-                    document.getElementById('chatSub').textContent = 'Solo tú puedes ver esto';
+                    setChatSubText('Solo tú puedes ver esto');
                     showNoteCard(null);
                     renderAll(true);
                 } else if (cachedMessages.length && !isBlocked(name) && !blockedByThem(name)) {
@@ -14848,10 +15068,9 @@
                 const c = contacts.find(x => x.username === u);
                 const el = document.getElementById('chatSub');
                 if (!el || active !== u) return;
-                if (recState['dm:' + u]) { el.textContent = 'grabando audio...'; el.className = 'sub rec'; return; }
-                if (typingState['dm:' + u]) { el.textContent = 'escribiendo...'; el.className = 'sub typing'; return; }
-                el.className = 'sub';
-                el.textContent = presenceText(c);
+                if (recState['dm:' + u]) { setChatSubText('grabando audio...', 'rec'); return; }
+                if (typingState['dm:' + u]) { setChatSubText('escribiendo...', 'typing'); return; }
+                setChatSubText(presenceText(c));
             }
 
             async function toggleChatMenu(e) {
@@ -19894,6 +20113,7 @@
                 llamadas: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 3h3l2 5-2.5 1.5a11 11 0 006 6L16 13l5 2v3a2 2 0 01-2.2 2A16 16 0 014 5.2 2 2 0 016 3z"/></svg>',
                 mensajes: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5h16v11H9l-5 4V5z"/></svg>',
                 online: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></svg>',
+                datos: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><ellipse cx="12" cy="5.5" rx="7.5" ry="2.8"/><path d="M4.5 5.5v6.2c0 1.6 3.4 2.8 7.5 2.8s7.5-1.2 7.5-2.8V5.5"/><path d="M4.5 11.7V18c0 1.6 3.4 2.8 7.5 2.8s7.5-1.2 7.5-2.8v-6.3"/></svg>',
                 compartir: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M10 9V5l-7 7 7 7v-4c5 0 8.5 1.6 11 5-1-5-4-10-11-11z"/></svg>'
             };
             const WALLS = [
@@ -20384,6 +20604,7 @@
                     ['chats', 'Chats', 'Estilo, fondo, ajustes del chat'],
                     ['media', 'Video y voz', 'Cámara, micrófono y altavoces'],
                     ['notif', 'Notificaciones', 'Avisos, sonidos y diagnóstico'],
+                    ['datos', 'Datos locales', 'Caché, almacenamiento y limpieza'],
                     ['version', 'Información técnica', 'Aplicación, navegador y servidor']
                 ];
                 el.innerHTML =
@@ -20461,7 +20682,7 @@
                 const split = window.innerWidth > 768 && settingsSection !== 'hub';
                 sh.classList.toggle('split', split);
                 document.getElementById('settingsTitle').textContent = settingsSection === 'hub' ? 'Ajustes' :
-                    { perfil: 'Perfil', cuenta: 'Cuenta', chats: 'Chats', media: 'Video y voz', notif: 'Notificaciones', priv: 'Privacidad', version: 'Información técnica' }[settingsSection] || 'Ajustes';
+                    { perfil: 'Perfil', cuenta: 'Cuenta', chats: 'Chats', media: 'Video y voz', notif: 'Notificaciones', priv: 'Privacidad', datos: 'Datos locales', version: 'Información técnica' }[settingsSection] || 'Ajustes';
                 if (settingsSection === 'hub') {
                     await renderSettingsHub(main, hub);
                     return;
@@ -20872,11 +21093,175 @@
                     };
                     return;
                 }
+                if (settingsSection === 'datos') {
+                    paintLocalDataSection();
+                    return;
+                }
                 if (settingsSection === 'priv') {
                     if (settingsPrivKey) { paintPrivEditor(); return; }
                     paintPrivRows();
                     return;
                 }
+            }
+            /* ---- Datos locales (Ajustes > Datos locales) ----
+               Mide lo que la app guarda en el dispositivo (caché sin
+               conexión, localStorage, sessionStorage, cookies visibles y
+               RAM) y permite limpiarlo por categorías. La cookie de sesión
+               es HttpOnly: nunca se lee ni se escribe desde aquí, así que
+               la sesión sobrevive a cualquier limpieza. */
+            function ldContext() {
+                return {
+                    caches: window.caches,
+                    localStorage: window.localStorage,
+                    sessionStorage: window.sessionStorage,
+                    document: window.document,
+                    storage: navigator.storage,
+                    serviceWorker: navigator.serviceWorker,
+                    messages: typeof conversationMessageById === 'undefined' ? [] : conversationMessageById,
+                    location: window.location,
+                    releaseRam: async () => {
+                        /* Las pistas de voz guardan su URL de objeto en
+                           audioUrls: se revocan aquí. Las fotos y el resto
+                           de adjuntos se liberan con la recarga (mueren
+                           con la pestaña); por eso "memoria" recarga. */
+                        let freed = 0;
+                        try {
+                            for (const url of audioUrls.values()) { URL.revokeObjectURL(url); freed++; }
+                            audioUrls.clear();
+                        } catch { }
+                        return freed;
+                    }
+                };
+            }
+            async function paintLocalDataSection() {
+                const main = document.getElementById('settingsMain');
+                main.innerHTML =
+                    `<div class="settingsSectionContent localDataSection">
+            <div class="setRow"><div class="pic">${SET_ICON.datos}</div><div class="meta"><b>Datos locales</b><span>Lo que esta app guarda en este dispositivo. Limpiarlo no cierra tu sesión: la cookie de sesión es del navegador y no se toca.</span></div></div>
+            <div class="ldTotal"><div class="ldBar"><div id="ldBarFill"></div></div><b id="ldTotal">Consultando…</b><span id="ldQuota"></span></div>
+            <div class="setHead accountSectionHead"><b>Guardado por categoría</b><span>Caché sin conexión, almacenamiento del navegador y memoria de esta pestaña.</span></div>
+            <div class="ldTiles" id="ldTiles">Consultando…</div>
+            <div class="setHead accountSectionHead"><b>Limpiar</b><span>Activa los interruptores de lo que quieras borrar. Lo que quede apagado se conserva.</span></div>
+            <div id="ldForm">
+                <div class="switchRow"><div class="meta"><b>Caché sin conexión <i class="ldSize" id="ldSzCache"></i></b><span>Shell de la app para entrar sin red. Se regenera solo al recargar.</span></div><button class="tgl" id="ldSelCache" role="switch" aria-checked="false" aria-label="Limpiar la caché sin conexión"></button></div>
+                <div class="switchRow"><div class="meta"><b>Multimedia en memoria <i class="ldSize" id="ldSzRam"></i></b><span>Fotos, vídeos y audios descifrados de esta pestaña. La app se recarga para soltarlos.</span></div><button class="tgl" id="ldSelRam" role="switch" aria-checked="false" aria-label="Liberar la multimedia en memoria"></button></div>
+                <div class="switchRow"><div class="meta"><b>Datos de pestaña <i class="ldSize" id="ldSzSession"></i></b><span>Vistas previas de grupos y grupo abierto. Solo de esta pestaña.</span></div><button class="tgl" id="ldSelSession" role="switch" aria-checked="false" aria-label="Limpiar los datos de pestaña"></button></div>
+                <div class="switchRow"><div class="meta"><b>Cookies visibles <i class="ldSize" id="ldSzCookies"></i></b><span>Las que el navegador deja ver. La de sesión (HttpOnly) ni aparece.</span></div><button class="tgl" id="ldSelCookies" role="switch" aria-checked="false" aria-label="Borrar las cookies visibles"></button></div>
+                <div class="switchRow"><div class="meta"><b>Service worker <i class="ldSize" id="ldSzSw"></i></b><span>Se desregistra y se reinstala limpio al recargar.</span></div><button class="tgl" id="ldSelSw" role="switch" aria-checked="false" aria-label="Desregistrar el service worker"></button></div>
+                <div id="ldGroups"></div>
+            </div>
+            <button class="mBtn" id="ldRefresh">Actualizar medidas</button>
+            <button class="mBtn peligro" id="ldClean">Limpiar lo seleccionado</button>
+            <div class="sub" id="ldStatus" style="padding:8px 10px"></div></div>`;
+                /* Interruptores: el mismo gesto que en Notificaciones (un
+                   clic alterna y el estado vive en la clase 'on'). */
+                main.querySelectorAll('.localDataSection .tgl').forEach(button => {
+                    button.onclick = () => {
+                        const on = !button.classList.contains('on');
+                        button.classList.toggle('on', on);
+                        button.setAttribute('aria-checked', String(on));
+                    };
+                });
+                document.getElementById('ldRefresh').onclick = () => ldRefreshSection();
+                document.getElementById('ldClean').onclick = () => ldCleanSelected();
+                await ldRefreshSection();
+            }
+            /* Vuelve a medir y repinta totales, tarjetas y casillas (las
+               casillas marcadas se conservan: medir no es limpiar). */
+            async function ldRefreshSection() {
+                const ZL = window.ZlapyLocalData;
+                if (!ZL) { const s = document.getElementById('ldStatus'); if (s) s.textContent = 'No se pudo cargar el medidor de datos locales.'; return; }
+                const status = document.getElementById('ldStatus');
+                if (status) status.textContent = 'Midiendo…';
+                let report = null;
+                try { report = await ZL.collectReport(ldContext()); } catch (error) { console.error('[datos locales] Medición:', error); }
+                if (!report) { if (status) status.textContent = 'No se pudo medir el almacenamiento de este navegador.'; return; }
+                const usage = report.quota ? report.quota.usage : report.cache.bytes + report.local.bytes + report.session.bytes + report.cookies.bytes;
+                const quota = report.quota ? report.quota.quota : 0;
+                const fill = document.getElementById('ldBarFill');
+                if (fill) fill.style.width = quota > 0 ? Math.min(100, (usage / quota) * 100).toFixed(2) + '%' : '0%';
+                const total = document.getElementById('ldTotal');
+                if (total) total.textContent = 'Ocupado: ' + ZL.formatBytes(usage);
+                const q = document.getElementById('ldQuota');
+                if (q) q.textContent = quota > 0 ? 'de ' + ZL.formatBytes(quota) + ' disponibles para esta app' : 'el navegador no informa del límite';
+                const tile = (title, detail, bytes) => `<div class="ldTile"><b>${title}</b><span>${detail}</span><i>${ZL.formatBytes(bytes)}</i></div>`;
+                const ram = report.ram;
+                const ramDetalle = ram.total
+                    ? [ram.images && ram.images + ' fotos', ram.videos && ram.videos + ' vídeos', ram.audios && ram.audios + ' audios', ram.files && ram.files + ' archivos', ram.stickers && ram.stickers + ' stickers'].filter(Boolean).join(' · ') + ' (se sueltan al recargar)'
+                    : 'nada en esta pestaña';
+                const tiles = document.getElementById('ldTiles');
+                if (tiles) tiles.innerHTML =
+                    tile('Caché sin conexión', `${report.cache.count} archivos · ${report.cache.images} imágenes`, report.cache.bytes) +
+                    tile('Almacenamiento local', `${report.local.count} llaves en ${report.local.groups.length} categorías`, report.local.bytes) +
+                    tile('Datos de pestaña', report.session.count ? `${report.session.count} llaves` : 'vacío', report.session.bytes) +
+                    tile('Cookies visibles', report.cookies.count ? `${report.cookies.count} cookies` : 'ninguna', report.cookies.bytes) +
+                    tile('Multimedia en memoria', ramDetalle, 0) +
+                    tile('Service worker', report.serviceWorker.active ? 'activo' + (report.serviceWorker.scope ? ' · ' + escapeHtml(report.serviceWorker.scope) : '') : 'no instalado', 0);
+                const put = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
+                put('ldSzCache', ZL.formatBytes(report.cache.bytes));
+                put('ldSzSession', ZL.formatBytes(report.session.bytes));
+                put('ldSzCookies', report.cookies.count ? ZL.formatBytes(report.cookies.bytes) : '');
+                put('ldSzRam', '');
+                put('ldSzSw', report.serviceWorker.active ? 'activo' : '');
+                /* Filas de los grupos de localStorage: mismo patrón que las
+                   fijas (interruptor a la derecha). Los grupos vacíos no
+                   aparecen: solo se ofrece limpiar lo que existe. */
+                const groups = document.getElementById('ldGroups');
+                if (groups) {
+                    const stillOn = new Set([...groups.querySelectorAll('.ldGroupToggle.on')].map(button => button.dataset.group));
+                    groups.innerHTML = report.local.groups.map(g =>
+                        `<div class="switchRow"><div class="meta"><b>${escapeHtml(g.label)} <i class="ldSize">${ZL.formatBytes(g.bytes)}</i></b><span>${escapeHtml(g.hint)} · ${g.count} llave${g.count === 1 ? '' : 's'}</span></div><button class="tgl ldGroupToggle${stillOn.has(g.id) ? ' on' : ''}" type="button" data-group="${g.id}" role="switch" aria-checked="${stillOn.has(g.id)}" aria-label="Limpiar ${escapeHtml(g.label)}"></button></div>`).join('');
+                    groups.querySelectorAll('.ldGroupToggle').forEach(button => {
+                        button.onclick = () => {
+                            const on = !button.classList.contains('on');
+                            button.classList.toggle('on', on);
+                            button.setAttribute('aria-checked', String(on));
+                        };
+                    });
+                }
+                if (status) status.textContent = 'Medido. Revisa las casillas y limpia lo que quieras.';
+            }
+            async function ldCleanSelected() {
+                const ZL = window.ZlapyLocalData;
+                if (!ZL) return;
+                const seleccion = {
+                    groups: [...document.querySelectorAll('.ldGroupToggle.on')].map(button => button.dataset.group),
+                    caches: document.getElementById('ldSelCache').classList.contains('on'),
+                    sessionStorage: document.getElementById('ldSelSession').classList.contains('on'),
+                    cookies: document.getElementById('ldSelCookies').classList.contains('on'),
+                    ram: document.getElementById('ldSelRam').classList.contains('on'),
+                    serviceWorker: document.getElementById('ldSelSw').classList.contains('on')
+                };
+                if (!seleccion.groups.length && !seleccion.caches && !seleccion.sessionStorage && !seleccion.cookies && !seleccion.ram && !seleccion.serviceWorker) {
+                    toast('No has marcado nada que limpiar');
+                    return;
+                }
+                const partes = [];
+                if (seleccion.caches) partes.push('la caché sin conexión');
+                if (seleccion.ram) partes.push('la multimedia en memoria');
+                if (seleccion.sessionStorage) partes.push('los datos de pestaña');
+                if (seleccion.cookies) partes.push('las cookies visibles');
+                if (seleccion.serviceWorker) partes.push('el service worker');
+                if (seleccion.groups.length) partes.push(seleccion.groups.length + ' categoría' + (seleccion.groups.length === 1 ? '' : 's') + ' del almacenamiento local');
+                if (!confirm('Se borrará ' + partes.join(', ') + '.\n\nTu sesión NO se cierra (la cookie del navegador no se toca). ¿Continuar?')) return;
+                const boton = document.getElementById('ldClean');
+                boton.disabled = true;
+                boton.textContent = 'Limpiando…';
+                let resumen = null;
+                try { resumen = await ZL.cleanLocalData(seleccion, ldContext()); } catch (error) { console.error('[datos locales] Limpieza:', error); }
+                if (!resumen) { toast('No se pudo completar la limpieza'); boton.disabled = false; boton.textContent = 'Limpiar lo seleccionado'; return; }
+                const r = resumen.removed;
+                const hechas = [];
+                if (r.caches) hechas.push(r.caches + ' caché(s)');
+                if (r.localStorageKeys) hechas.push(r.localStorageKeys + ' llave(s) local(es)');
+                if (r.sessionStorage) hechas.push(r.sessionStorage + ' dato(s) de pestaña');
+                if (r.cookies) hechas.push(r.cookies + ' cookie(s)');
+                if (r.ram) hechas.push(r.ram + ' pista(s) de voz');
+                toast(hechas.length ? 'Borrado: ' + hechas.join(' · ') : 'Nada que borrar');
+                boton.disabled = false;
+                boton.textContent = 'Limpiar lo seleccionado';
+                if (resumen.reload) { await new Promise(resolve => setTimeout(resolve, 400)); location.reload(); return; }
+                ldRefreshSection();
             }
             function syncPushToggle(id) {
                 const button = document.getElementById(id);
@@ -21038,7 +21423,7 @@
                 return Modal.vivo({
                     titulo: title || (mode === 'only' ? 'Solo estos pueden verlo' : 'Todos excepto'),
                     html: `${scopeText ? `<div class="mText" style="font-size:12.5px;color:#8696a0">${scopeText}</div>` : ''}
-      <div class="mList" id="privacyContactList">${lista.length ? lista.map(c => `<label class="mRow"><input type="checkbox" value="${escapeHtml(c.username)}" ${selected.includes(c.username) ? 'checked' : ''}><div class="avatar sm">${avOrLetter(c.username)}</div><div class="meta"><div class="name">${escapeHtml((profilesCache[c.username] && profilesCache[c.username].name) || c.username)}</div></div></label>`).join('') : '<div class="sub" style="padding:8px">Todavía no tienes contactos</div>'}</div>`,
+      <div class="mList" id="privacyContactList">${lista.length ? lista.map(c => `<label class="mRow"><input type="checkbox" value="${escapeHtml(c.username)}" ${selected.includes(c.username) ? 'checked' : ''}><span class="mSwitch" aria-hidden="true"></span><div class="avatar sm">${avOrLetter(c.username)}</div><div class="meta"><div class="name">${escapeHtml((profilesCache[c.username] && profilesCache[c.username].name) || c.username)}</div></div></label>`).join('') : '<div class="sub" style="padding:8px">Todavía no tienes contactos</div>'}</div>`,
                     acciones: [{ txt: 'Cancelar', valor: null }, { txt: 'Aplicar', valor: '__OK__', tipo: 'ok' }],
                     onMount(sheet, cerrar) {
                         const list = sheet.querySelector('#privacyContactList');
@@ -22525,7 +22910,7 @@
                     console.error('[auth] Could not restore session:', error);
                     location.replace('/login.html');
                 });
-                if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js?v=41', { scope: '/', updateViaCache: 'none' }).catch(error => console.error('[service worker] No se pudo actualizar:', error));
+                if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js?v=42', { scope: '/', updateViaCache: 'none' }).catch(error => console.error('[service worker] No se pudo actualizar:', error));
                 console.info(`[build] zlapy v${APP_BUILD_VERSION} · refresco de metadatos y layout móvil`);
                 window.addEventListener('pageshow', e => {
                     if (!e.persisted || !me) return;
@@ -22693,6 +23078,7 @@
     <script src="/js/popmenu.js?v=5"></script>
     <script src="/js/emoji-picker.js?v=6"></script>
     <script src="/js/autogrow.js?v=1"></script>
+    <script src="/js/local-data.js?v=1"></script>
 
 </body>
 
