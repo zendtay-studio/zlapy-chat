@@ -11,6 +11,7 @@
 const { renamePeerInSummaries } = require('./summaries.js');
 const { encField } = require('../crypto/field-crypto.js');
 const { peerHash } = require('../crypto/peer-index.js');
+const { decryptForUser, encryptForUser } = require('../crypto/setup.js');
 const { db } = require('../db/database.js');
 const { Stmt } = require('../db/statements.js');
 const { readGroup, writeGroupMeta } = require('../groups/store.js');
@@ -62,12 +63,31 @@ function propagateUsernameChange(previous, next) {
     for (const story of stories) {
         if (story.from === previous) story.from = next;
     }
-    // El historial de llamadas guarda el NOMBRE del par (cifrado): hay que
-    // mantenerlo al día para que el borrado por cuenta lo encuentre tras un
-    // renombre. Las filas se encuentran por el blind index del nombre viejo
-    // (peer_hash, O(log n)) en vez de descifrar todo el historial.
-    for (const row of Stmt.listCallsByPeerHash.all(peerHash(previous)))
-        Stmt.updateCallPeer.run(encField('calls.peer', next), peerHash(next), row.id);
+    // El historial de llamadas guarda el NOMBRE del par en DOS sitios: la
+    // columna `peer` (cifrada, para localizar y purgar) y DENTRO del blob
+    // cifrado `data` del dueño (el JSON del registro que el historial
+    // muestra). Las filas se encuentran por el blind index del nombre viejo
+    // (peer_hash, O(log n)) y se reescriben las dos copias; antes solo se
+    // tocaba la columna y tras reiniciar el historial mostraba el nombre
+    // viejo. El UPDATE va acotado al owner: el mismo callId vive en dos
+    // filas (una por extremo) y solo la que apunta al renombrado se mueve.
+    for (const row of Stmt.listCallsByPeerHash.all(peerHash(previous))) {
+        Stmt.updateCallPeer.run(encField('calls.peer', next), peerHash(next), row.id, row.owner);
+        const dueño = users.get(row.owner);
+        if (!dueño) continue;
+        try {
+            const registro = decryptForUser(dueño.id, row.data);
+            if (registro && registro.peer === previous) {
+                registro.peer = next;
+                Stmt.updateCallData.run(encryptForUser(dueño.id, JSON.stringify(registro)), row.id, dueño.id);
+            }
+        } catch { /* blob ilegible: la columna peer ya quedó reescrita */ }
+    }
+    // Y en RAM, las listas de los DEMÁS usuarios que apunten al nombre viejo
+    // (la del renombrado se renombra más abajo con callFiles.has(previous)).
+    for (const [, lista] of callFiles)
+        for (const c of lista || [])
+            if (c && c.peer === previous) c.peer = next;
 
     if (callFiles.has(previous)) {
         const calls = callFiles.get(previous);

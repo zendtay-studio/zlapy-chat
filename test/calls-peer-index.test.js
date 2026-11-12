@@ -74,16 +74,20 @@ test('una llamada queda con el par cifrado y su hash de índice correcto', async
     const cuentas = await prepareContacts(srv.base);
     const { aws, bws } = await ofrecerLlamada(srv, cuentas.ana, cuentas.beto);
 
-    // Beto ofrece a ana. Los dos extremos comparten el callId y la clave
-    // primaria es el id: en disco queda UNA fila (la del último extremo
-    // escrito, la de ana) con el par cifrado y su hash.
+    // Beto ofrece a ana: DOS filas con el mismo callId, una por extremo
+    // (PK (owner, id), v12). Cada una lleva el par del otro, cifrado, con
+    // su hash de índice.
     const rows = callRows();
-    assert.equal(rows.length, 1, 'el callId compartido persiste una sola fila');
-    const row = rows[0];
-    assert.notEqual(row.peer_hash, null, 'la fila lleva peer_hash');
-    assert.match(row.peer, /^PCE1v2:/, 'el nombre del par va cifrado (sobre PCE), no en claro');
-    assert.equal(row.peer_hash, peerHash('beto'), 'el hash sale del nombre del par, normalizado');
-    assert.notEqual(row.peer_hash, 'beto', 'el hash no es el nombre en claro');
+    assert.equal(rows.length, 2, 'cada extremo persiste su registro');
+    const deAna = rows.find(r => r.owner === 'ana');
+    const deBeto = rows.find(r => r.owner === 'beto');
+    assert.ok(deAna && deBeto, 'una fila por cuenta');
+    assert.equal(deAna.peer_hash, peerHash('beto'), 'el índice de ana apunta a beto');
+    assert.equal(deBeto.peer_hash, peerHash('ana'), 'el índice de beto apunta a ana');
+    for (const row of rows) {
+        assert.match(row.peer, /^PCE1v2:/, 'el nombre del par va cifrado (sobre PCE), no en claro');
+        assert.notEqual(row.peer_hash, 'beto', 'el hash no es el nombre en claro');
+    }
 
     aws.destroy(); bws.destroy();
 });
@@ -111,18 +115,41 @@ test('renombrar una cuenta actualiza el índice de las llamadas ajenas', async (
     assert.equal(sigue.json.authenticated, true, 'el token re-emitido valida tras el renombre');
 
     const filas = callRows();
-    const deAna = filas[0];
+    const deAna = filas.find(r => r.owner === 'ana');
     assert.equal(deAna.peer_hash, peerHash('beto2'), 'el índice apunta al nombre nuevo');
     assert.equal(decField('calls.peer', deAna.peer), 'beto2', 'el nombre cifrado también se reescribió');
     assert.notEqual(deAna.peer_hash, antes, 'el hash cambió con el nombre');
     // Buscar por el nombre VIEJO ya no devuelve nada (quedó reindexado).
     assert.equal(filas.filter(r => r.peer_hash === peerHash('beto')).length, 0);
+    // La fila del PROPIO renombrado (par ana) NO se toca: su peer es ana.
+    const deBeto = filas.find(r => r.owner === 'beto2');
+    assert.equal(deBeto.peer_hash, peerHash('ana'), 'el registro del renombrado sigue apuntando a ana');
+    assert.equal(decField('calls.peer', deBeto.peer), 'ana', 'y su par cifrado intacto');
 
     aws.destroy(); bws.destroy();
 });
 
+test('tras reiniciar, el historial de CADA extremo sobrevive (v12)', async () => {
+    // v12 (PK (owner, id)): antes, la fila del llamador era machacada por la
+    // del receptor y al reiniciar solo un historial volvía a cargar.
+    await stop(srv);
+    srv = await startServer({ dataDir });
+
+    const loginAna = await api(srv.base, 'POST', '/auth/login', { username: 'ana', password: 'pruebachat1' });
+    const loginBeto = await api(srv.base, 'POST', '/auth/login', { username: 'beto2', password: 'pruebachat1' });
+    const ana = await api(srv.base, 'POST', '/call/log', {}, sessionCookieFrom(loginAna.setCookie));
+    const beto = await api(srv.base, 'POST', '/call/log', {}, sessionCookieFrom(loginBeto.setCookie));
+    assert.equal(ana.status, 200);
+    assert.equal(ana.json.calls.length, 1, 'ana conserva la llamada entrante');
+    assert.equal(ana.json.calls[0].dir, 'in');
+    assert.equal(ana.json.calls[0].peer, 'beto2');
+    assert.equal(beto.json.calls.length, 1, 'beto2 conserva la llamada saliente');
+    assert.equal(beto.json.calls[0].dir, 'out');
+    assert.equal(beto.json.calls[0].peer, 'ana');
+});
+
 test('borrar la cuenta purga las llamadas ajenas por peer_hash', async () => {
-    assert.equal(callRows().length, 1, 'sigue la fila del renombre anterior');
+    assert.equal(callRows().length, 2, 'siguen las filas del reinicio anterior');
 
     // Borrar la cuenta exige la contraseña (irreversible).
     const beto2 = await api(srv.base, 'POST', '/auth/login', { username: 'beto2', password: 'pruebachat1' });
@@ -130,6 +157,8 @@ test('borrar la cuenta purga las llamadas ajenas por peer_hash', async () => {
         { password: 'pruebachat1' }, sessionCookieFrom(beto2.setCookie));
     assert.equal(salida.status, 200, 'la cuenta se borra');
 
+    // Se van las DOS filas: la de ana (par beto2) por peer_hash, y la propia
+    // de beto2 por la cascada de su cuenta.
     assert.equal(callRows().length, 0,
         'el historial de ana ya no tiene la llamada hacia la cuenta borrada');
 });

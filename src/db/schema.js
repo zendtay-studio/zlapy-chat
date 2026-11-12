@@ -34,7 +34,7 @@
  */
 'use strict';
 
-const SCHEMA_VERSION = 11;
+const SCHEMA_VERSION = 12;
 
 // Esquema v8
 // Orden de creación: primero las tablas padre (users, groups) para que las
@@ -391,12 +391,18 @@ CREATE INDEX IF NOT EXISTS idx_stories_ts ON stories(ts DESC);
    'peer' guarda el nombre de usuario del otro extremo a propósito: el historial
    sobrevive a que esa cuenta cambie de nombre o se borre. */
 CREATE TABLE IF NOT EXISTS calls (
-    id        TEXT PRIMARY KEY,
+    id        TEXT NOT NULL,
     owner     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     peer      TEXT,
     peer_hash TEXT,
     ts        INTEGER NOT NULL,
-    data      TEXT
+    data      TEXT,
+    /* La llamada de CADA extremo es su propio registro: llamador y receptor
+       comparten callId pero cada cuenta conserva la suya ('out' y 'in').
+       Con PK(id) global, el INSERT OR REPLACE del segundo extremo machacaba
+       la fila del primero: tras reiniciar, el historial de llamadas solo
+       existía para quien recibió la llamada. */
+    PRIMARY KEY (owner, id)
 );
 CREATE INDEX IF NOT EXISTS idx_calls_owner_ts ON calls(owner, ts DESC);
 /* Índice a ciegas del par (HMAC del nombre, src/crypto/peer-index.js): el
@@ -505,6 +511,31 @@ function applySchema(db) {
     // una instalación v10 aún no la tiene → ALTER primero, índice después.
     if (tableExists(db, 'calls') && !tableColumns(db, 'calls').has('peer_hash'))
         db.exec('ALTER TABLE calls ADD COLUMN peer_hash TEXT');
+    // v12: la PK de `calls` era `id` GLOBAL; los dos extremos de una llamada
+    // comparten callId, así que el segundo INSERT OR REPLACE machacaba la
+    // fila del primero y al reiniciar solo un historial sobrevivía. La PK
+    // correcta es (owner, id): una fila por extremo. SQLite no altera una
+    // PK in situ → reconstrucción: nueva tabla, copia, suelta, renombra.
+    // Antes de db.exec(SCHEMA_SQL) para que él recree los índices sobre la
+    // tabla ya reconstruida (los índices de la vieja caen con ella).
+    if (tableExists(db, 'calls') && !/PRIMARY KEY\s*\(owner,\s*id\)/i.test(tableSql(db, 'calls') || '')) {
+        db.exec(`CREATE TABLE calls_v12 (
+            id        TEXT NOT NULL,
+            owner     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            peer      TEXT,
+            peer_hash TEXT,
+            ts        INTEGER NOT NULL,
+            data      TEXT,
+            PRIMARY KEY (owner, id)
+        )`);
+        // Filas de owners que ya no existan (no deberían: FK siempre activa)
+        // se descartan: la FK nueva las rechazaría y tumbaría el arranque.
+        db.exec(`INSERT INTO calls_v12 (id, owner, peer, peer_hash, ts, data)
+            SELECT id, owner, peer, peer_hash, ts, data FROM calls
+            WHERE owner IN (SELECT id FROM users)`);
+        db.exec('DROP TABLE calls');
+        db.exec('ALTER TABLE calls_v12 RENAME TO calls');
+    }
     // v11: el índice antiguo de "peer" indexaba el TEXTO CIFRADO (nunca
     // pudo servir para buscar). Con peer_hash queda obsoleto: se suelta.
     try { db.exec('DROP INDEX IF EXISTS idx_calls_peer'); } catch { }

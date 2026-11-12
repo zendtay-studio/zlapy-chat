@@ -7,6 +7,8 @@
 //     instalaciones anteriores sin tocar las sesiones vivas de más,
 //   · la migración v11 añade `calls.peer_hash` (índice a ciegas del par)
 //     soltando el índice que indexaba el texto cifrado,
+//   · la migración v12 reconstruye `calls` con PK (owner, id): los dos
+//     extremos de una llamada conservan su registro tras reiniciar,
 //   · la migración v9 (privacidad 'online') sigue aplicándose donde falte.
 const assert = require('node:assert/strict');
 const test = require('node:test');
@@ -376,6 +378,65 @@ test('la migración v11 añade calls.peer_hash y suelta el índice del texto cif
         'la llamada hacia la cuenta borrada se purga por peer_hash');
     assert.equal(db.prepare('SELECT COUNT(*) AS c FROM calls WHERE id = ?').get('c2').c, 1,
         'la fila sin hash no se toca (su par no es la cuenta borrada)');
+    db.close();
+});
+
+test('la migración v12 reconstruye calls con PK (owner, id): el historial de los DOS extremos persiste', () => {
+    const db = newDb();
+    // Base "v10" combinada: calls SIN peer_hash y CON la PK vieja (id global)
+    // y el índice del texto cifrado. Regexes sobre el esquema actual.
+    const v10 = SCHEMA_SQL
+        .replace(/    id        TEXT NOT NULL,\n(\s*owner     TEXT NOT NULL REFERENCES users\(id\) ON DELETE CASCADE,)/,
+            '    id        TEXT PRIMARY KEY,\n$1')
+        .replace(/\n\s*peer_hash TEXT,/, '')
+        .replace(/,\n\s*\/\* La llamada de CADA extremo[\s\S]*?PRIMARY KEY \(owner, id\)\n\);/, '\n);')
+        .replace(/CREATE INDEX IF NOT EXISTS idx_calls_peer_hash ON calls\(peer_hash\);\n?/, '');
+    db.exec(v10);
+    db.exec('CREATE INDEX idx_calls_peer ON calls(peer)');
+    const viejo = tableSql(db, 'calls') || '';
+    assert.ok(/id\s+TEXT PRIMARY KEY/.test(viejo), 'la base simulada tiene la PK vieja (id global)');
+    assert.ok(!tableColumns(db, 'calls').has('peer_hash'), 'sin peer_hash todavía');
+
+    // La llamada tal como la dejaba la PK vieja: una sola fila (la del
+    // extremo que escribió último; la otra YA se perdió y ninguna migración
+    // puede resucitarla). El valor de v12 es que a partir de ahora ninguna
+    // se pierda más.
+    db.prepare(`INSERT INTO users (id, username, password_hash, password_salt, add_policy, created_at)
+        VALUES (?, 'ana', 'h', 's', 'request', 1)`).run(ids.a);
+    db.prepare(`INSERT INTO users (id, username, password_hash, password_salt, add_policy, created_at)
+        VALUES (?, 'beto', 'h', 's', 'request', 2)`).run(ids.b);
+    db.prepare('INSERT INTO calls (id, owner, peer, ts, data) VALUES (?, ?, ?, ?, ?)')
+        .run('call-1', ids.a, 'par-cifrado-ana', 1, 'x'); // registro de ana (in) — el único que sobrevivió
+
+    ensureSchema(db);
+
+    // La PK nueva es (owner, id) y la fila sobrevive a la reconstrucción.
+    assert.ok(/PRIMARY KEY\s*\(owner,\s*id\)/i.test(tableSql(db, 'calls')), 'la PK es (owner, id)');
+    assert.equal(db.prepare('SELECT COUNT(*) AS c FROM calls WHERE id = ?').get('call-1').c, 1,
+        'la fila preexistente se conserva');
+    // A partir de ahora, el registro del OTRO extremo puede existir junto al
+    // suyo: mismo callId, owners distintos, sin machacarse.
+    db.prepare('INSERT INTO calls (id, owner, peer, ts, data) VALUES (?, ?, ?, ?, ?)')
+        .run('call-1', ids.b, 'par-cifrado-beto', 1, 'x');
+    assert.equal(db.prepare('SELECT COUNT(*) AS c FROM calls WHERE id = ?').get('call-1').c, 2,
+        'las dos filas del mismo callId conviven');
+    assert.deepEqual(
+        db.prepare('SELECT owner, peer FROM calls WHERE id = ? ORDER BY owner').all('call-1'),
+        [{ owner: ids.a, peer: 'par-cifrado-ana' }, { owner: ids.b, peer: 'par-cifrado-beto' }]
+    );
+    // Sigue habiendo UNA fila por (owner, id): repetir el insert del mismo
+    // extremo reemplaza la suya, no la del otro.
+    db.prepare('INSERT OR REPLACE INTO calls (id, owner, peer, ts, data) VALUES (?, ?, ?, ?, ?)')
+        .run('call-1', ids.b, 'par-cifrado-beto-2', 5, 'x');
+    assert.equal(db.prepare('SELECT COUNT(*) AS c FROM calls').get().c, 2, 'el REPLACE queda acotado al owner');
+    assert.equal(db.prepare('SELECT peer FROM calls WHERE id = ? AND owner = ?').get('call-1', ids.b).peer,
+        'par-cifrado-beto-2', 'el registro del segundo extremo se actualizó');
+    assert.equal(db.prepare('SELECT peer FROM calls WHERE id = ? AND owner = ?').get('call-1', ids.a).peer,
+        'par-cifrado-ana', 'el registro del primer extremo intacto');
+    // Índices de la tabla reconstruida, presentes y sin huérfanos.
+    assert.deepEqual(db.pragma('foreign_key_check'), []);
+    assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_calls_owner_ts'").get(),
+        'idx_calls_owner_ts recreado sobre la tabla nueva');
     db.close();
 });
 
