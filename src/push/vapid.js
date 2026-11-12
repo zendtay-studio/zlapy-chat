@@ -112,10 +112,21 @@ async function notifyUser(username, payload) {
     for (const sub of [...subs]) {
         const result = await pushTo(sub, payload);
         results.push(result);
-        if (result.status === 404 || result.status === 410) {
+        /* 404/410: la suscripción ya no existe (des-suscrita o expirada).
+           403 «the VAPID credentials … do not correspond»: la suscripción se
+           creó con OTRA clave VAPID (la del servidor cambió, p. ej. al
+           restaurar la base) y el servicio la rechazará SIEMPRE: los avisos
+           no llegarían nunca con la app cerrada y la zombi quedaría
+           silenciosa para siempre. Se elimina para que el dispositivo
+           re-suscriba con la clave actual (el cliente detecta el
+           desajuste de clave al arrancar y re-suscribe solo). */
+        const rechazoClave = result.status === 403 && /vapid|credential|authoriz/i.test(result.error || '');
+        if (result.status === 404 || result.status === 410 || rechazoClave) {
             const row = findPushSubRow(id, sub.endpoint);
             if (row) Stmt.deletePushSubByRowid.run(row.rowid);
             pushSubs.set(id, (pushSubs.get(id) || []).filter(s => s.endpoint !== sub.endpoint));
+            if (rechazoClave)
+                console.warn(`[push] suscripción eliminada (${sub.endpoint.slice(0, 48)}…): el servicio de push la rechaza porque fue creada con otra clave VAPID; el dispositivo re-suscribirá con la clave actual al cargar la app o activar el interruptor`);
         }
     }
     // Las notificaciones que no llegan no deben ser invisibles.

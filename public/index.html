@@ -21058,7 +21058,7 @@
                             const r = await response.json();
                             if (!response.ok) throw new Error(r.error || 'HTTP ' + response.status);
                             const remoteResult = !r.total
-                                ? 'servidor sin suscripción'
+                                ? 'servidor sin suscripción: desactiva y reactiva el interruptor de avisos para re-suscribirte'
                                 : r.sent
                                     ? 'push service aceptó ' + r.sent + ' envío(s); aceptación no confirma entrega al teléfono'
                                     : 'push rechazado: ' + r.results.map(x => x.status + (x.error ? ' (' + x.error + ')' : '')).join(', ');
@@ -21901,6 +21901,29 @@
                     try { vk = await fetch('/push/vapid', { cache: 'no-store' }).then(r => r.json()); } catch { debugToast('Sin conexión con el servidor'); window.lastPushError = 'sin /push/vapid'; return false; }
                     if (!vk || !vk.publicKey) { debugToast('Servidor sin clave push'); window.lastPushError = 'sin clave VAPID'; return false; }
                     let sub = await reg.pushManager.getSubscription();
+                    /* La suscripción recuerda la clave VAPID con la que se
+                       creó. Si el servidor ya usa otra (la clave se
+                       regeneró, p. ej. al restaurar la base), el servicio de
+                       push rechaza cada envío con 403 y los avisos no llegan
+                       NUNCA con la app cerrada aunque el interruptor parezca
+                       activo y la prueba «funcione» con la página abierta
+                       (esos avisos vienen del WebSocket, no del push).
+                       Comparar la clave de la suscripción con la actual: si
+                       difieren, se re-suscribe con la de hoy en vez de
+                       reutilizar la zombi. */
+                    if (sub && vk.publicKey && sub.options && sub.options.applicationServerKey) {
+                        let claveDeLaSub = '';
+                        try {
+                            const k = sub.options.applicationServerKey;
+                            const u8 = k instanceof ArrayBuffer ? new Uint8Array(k) : (ArrayBuffer.isView(k) ? new Uint8Array(k.buffer, k.byteOffset, k.byteLength) : null);
+                            if (u8) { let s = ''; for (const b of u8) s += String.fromCharCode(b); claveDeLaSub = btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
+                        } catch { }
+                        if (claveDeLaSub && claveDeLaSub !== vk.publicKey) {
+                            window.lastPushError = 'la suscripción guardada usa otra clave push (el servidor cambió la suya): re-suscribiendo…';
+                            try { await sub.unsubscribe(); } catch { }
+                            sub = null;
+                        }
+                    }
                     if (!sub) {
                         const esperas = [0, 2500, 6000];
                         for (let i = 0; i < esperas.length && !sub; i++) {
