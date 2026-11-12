@@ -88,7 +88,7 @@ python3 --version && make --version && g++ --version
 | `openssl` | Solo si quieres HTTPS autofirmado (Linux: `sudo apt install openssl`; Termux: `pkg install openssl`) |
 | `cloudflared` | Solo si quieres exponer el servidor a internet (`npm run tunnel`) |
 | `curl` | Para comprobar `/healthz` |
-| Espacio en disco | Dependencias + bases + adjuntos (los vídeos y audios se guardan como blobs en `data/blob.db`) |
+| Espacio en disco | Dependencias + bases + adjuntos (los vídeos y audios se guardan como blobs en `data/zlapy-zlapy-blob.db`) |
 
 ---
 
@@ -103,7 +103,7 @@ python3 --version && make --version && g++ --version
    `mkdir -p data`.
 
 > **El directorio de datos debe existir.** El código abre `data/zlapy.db` y
-> `data/blob.db` con SQLite, y SQLite **no crea el directorio**: si falta, el
+> `data/zlapy-zlapy-blob.db` con SQLite, y SQLite **no crea el directorio**: si falta, el
 > arranque aborta con `Cannot open database because the directory does not exist`.
 > Si configuras `DATA_DIR` a otra ruta, crea también ese directorio.
 
@@ -372,7 +372,7 @@ reiniciar el servidor.**
 | Variable | Por defecto | Qué hace | Rango válido |
 | --- | ---: | --- | --- |
 | `PORT` | `3000` | Puerto TCP donde escucha el servidor (http **y** https en el mismo puerto) | 1–65535 |
-| `DATA_DIR` | `data` | Carpeta de `zlapy.db` y `blob.db`. Vacío = `data/` dentro del proyecto | Ruta (relativa al CWD) |
+| `DATA_DIR` | `data` | Carpeta de `zlapy.db` y `zlapy-zlapy-blob.db`. Vacío = `data/` dentro del proyecto | Ruta (relativa al CWD) |
 | `DB_USER` | *(vacío)* | Usuario del propietario: con `DB_PASSWORD` forma la credencial de la que se deriva la llave maestra | Texto |
 | `DB_PASSWORD` | *(vacío)* | Contraseña del propietario (o usa `DB_PASSWORD_FILE` con la contraseña en un fichero `0600`) | Texto |
 | `DB_NAME` / `BLOB_DB_NAME` | `zlapy` / `zlapy-blob` | Nombre (o ruta) de las bases; el de adjuntos se deriva del principal (`<DB_NAME>-blob`) si no se fija | Texto/ruta |
@@ -415,6 +415,9 @@ Solo tienen efecto sobre `npm start` (el supervisor), no sobre `node server.js`.
 | `SUPERVISOR_MAX_RESTARTS` | `10` | Fallos de **arranque** consecutivos antes de abrir el cortacircuito (0 = sin tope) |
 | `SUPERVISOR_HOT_CRASH_THRESHOLD` | `5` | Caídas en caliente seguidas a partir de las cuales se avisa del crash-loop (el servicio **no** se apaga) |
 | `SUPERVISOR_STABLE_MS` | `60000` | Tiempo sano necesario para olvidar la racha de fallos anteriores |
+| `SUPERVISOR_HB_MS` | `10000` | Latido servidor → supervisor por el canal IPC (ms) |
+| `SUPERVISOR_HB_STALE_MS` | `45000` | Sin latido durante ese tiempo estando en marcha → reinicio con log (event loop bloqueado) |
+| `SUPERVISOR_DEPS_INSTALL_ATTEMPTS` | `3` | Intentos de instalar dependencias que faltan (el servidor sale con 79) antes de rendirse (0 = sin tope) |
 
 ### 3.2 La credencial del propietario y la llave maestra
 
@@ -487,7 +490,7 @@ chmod 700 data            # bases + adjuntos
 
 El **servidor los aplica solo en cada arranque** (`server.js`, paso 0): fija
 `0700` en `data/` (y en `data2/`/`backups/` si existen) y `0600` en
-`zlapy.db`, `blob.db` y `.env`. Los comandos de arriba solo hacen falta si
+`zlapy.db`, `zlapy-zlapy-blob.db` y `.env`. Los comandos de arriba solo hacen falta si
 copias bases a mano fuera del servidor. El `chmod` es *best-effort*: si el
 sistema no lo permite (otro dueño, sistema sin permisos POSIX), el servidor
 sigue arrancando y lo dice por el log (`[perms] no se pudieron ajustar …`);
@@ -504,7 +507,10 @@ del supervisor (`.zlapy.pid`) se escribe con `0600` desde el código.
 npm start
 ```
 
-Arranca `ops/runtime/supervisor.js`, que **no** es el servidor: es el guardián que lo
+`npm start` ejecuta primero `node ops/install/ensure-deps.js` (si falta alguna
+librería, la instala; si el servidor saliera con 79 por una lib ausente, el
+supervisor la instala y relanza una sola vez) y luego
+`ops/runtime/supervisor.js`, que **no** es el servidor: es el guardián que lo
 mantiene vivo.
 
 | Qué hace el supervisor | Detalle |
@@ -618,7 +624,7 @@ User=zlapy
 Group=zlapy
 WorkingDirectory=/opt/zlapy-chat
 Environment=NODE_ENV=production
-ExecStart=/usr/bin/node /opt/zlapy-chat/ops/runtime/supervisor.js
+ExecStart=/usr/bin/npm start --prefix /opt/zlapy-chat
 Restart=always
 RestartSec=5
 # El cortacircuito del supervisor sale con código 70 (EX_SOFTWARE).
@@ -666,7 +672,7 @@ Notas:
 npm i -g pm2
 
 cd /ruta/zlapy-chat
-pm2 start ops/runtime/supervisor.js --name zlapy
+pm2 start npm --name zlapy -- start
 
 pm2 status              # estado
 pm2 logs zlapy          # logs en vivo
@@ -737,10 +743,10 @@ curl http://localhost:3000/healthz
 Respuesta esperada (200):
 
 ```json
-{"ok":true,"schema":4,"uptime":42}
+{"ok":true,"schema":12,"uptime":42}
 ```
 
-- `ok: true` → el servidor responde **y ambas bases** (`zlapy.db` y `blob.db`)
+- `ok: true` → el servidor responde **y ambas bases** (`zlapy.db` y `zlapy-zlapy-blob.db`)
   contestan a una consulta.
 - `schema: 3` → versión del esquema de la base de datos.
 - `uptime` → segundos desde el arranque.
@@ -777,12 +783,13 @@ Para las **llamadas con cámara/micrófono** en el móvil usa la dirección
 npm test
 ```
 
-Ejecuta `node --test test/*.test.js` (Node resuelve el patrón por su cuenta, así
-que funciona igual en PowerShell, CMD y shells Unix). La suite levanta
+Ejecuta `node --test --require ./test/bootstrap.js "test/**/*.test.js"` (Node
+expande el glob recursivo; funciona igual en PowerShell, CMD y shells Unix). Las
+pruebas están partidas por dominios en subcarpetas de `test/`. La suite levanta
 servidores en puertos libres con directorios de datos temporales, no toca tu
 `data/` y no interfiere con el servidor en marcha.
 
-Referencia actual: **92 pruebas, todas en verde** (~20 s).
+Referencia actual: **292 casos en 56 ficheros, todas en verde** (~4 min).
 
 ---
 
@@ -861,7 +868,7 @@ Qué hace (`ops/backup/backup.js`):
 | Paso | Detalle |
 | --- | --- |
 | Copia `zlapy.db` | Con la API `backup()` de SQLite: **consistente aunque el servidor esté corriendo y con WAL activo** |
-| Copia `blob.db` | Igual (adjuntos deduplicados por hash) |
+| Copia `zlapy-zlapy-blob.db` | Igual (adjuntos deduplicados por hash) |
 | Credencial | Copia el `.env` como `credencial.env`: sin `DB_USER` + `DB_PASSWORD` el respaldo es inservible |
 | Permisos | Directorio `0700`, ficheros `0600` (contienen usuarios, sesiones, hashes y mensajes cifrados) |
 | Destino ocupado | Si la carpeta existe y **no está vacía**, aborta: no sobrescribe nada |
@@ -886,12 +893,12 @@ La credencial y las bases **siempre van juntas**: sin `DB_USER` +
    defecto `data/`):
    ```bash
    cp backups/zlapy-backup-<fecha>/zlapy.db data/zlapy.db
-   cp backups/zlapy-backup-<fecha>/blob.db data/blob.db
+   cp backups/zlapy-backup-<fecha>/zlapy-zlapy-blob.db data/zlapy-zlapy-blob.db
    ```
    Borra los ficheros `-wal` y `-shm` que quedaron en `data/` (son de la base
    anterior):
    ```bash
-   rm -f data/zlapy.db-wal data/zlapy.db-shm data/blob.db-wal data/blob.db-shm
+   rm -f data/zlapy.db-wal data/zlapy.db-shm data/zlapy-zlapy-blob.db-wal data/zlapy-zlapy-blob.db-shm
    ```
 3. **Restaura la credencial** (el `.env` del respaldo):
    ```bash
@@ -901,7 +908,7 @@ La credencial y las bases **siempre van juntas**: sin `DB_USER` +
 4. **Arranca y comprueba**:
    ```bash
    npm start
-   curl http://localhost:3000/healthz     # → {"ok":true,"schema":4,...}
+   curl http://localhost:3000/healthz     # → {"ok":true,"schema":12,...}
    ```
    Si el arranque falla con *"La credencial no corresponde a esta base de
    datos: el keycheck no descifra"*, es que el paso 3 no se hizo bien.
@@ -926,11 +933,15 @@ npm ci
 sudo systemctl restart zlapy     # o: pm2 restart zlapy / Ctrl+C y npm start
 ```
 
-### Aviso importante: no hay migraciones
+### Aviso importante: qué migra y qué no
 
-El esquema se aplica **de forma idempotente** al arrancar (`CREATE TABLE IF
-NOT EXISTS`), pero **no existen migraciones**. Si una versión nueva cambia el
-formato de la base, el servidor **se niega a arrancar**:
+El **esquema** se aplica de forma idempotente al arrancar (`CREATE TABLE IF
+NOT EXISTS`) y **sí tiene migraciones por pasos** (v9→v12: suelta `sessions`
+y `users.auth_version`, añade `calls.peer_hash`, reconstruye la PK de `calls`
+y las columnas que se añadieron después) — corren solas y sin perder datos.
+
+Lo que **no** se migra es el **formato de cifrado**: si cambia, el servidor
+**se niega a arrancar**:
 
 - `Formato de cifrado de la base no compatible (crypto_version=N)` →
   restaura la base desde un respaldo de `backups/` o arranca con una base
@@ -943,15 +954,17 @@ Planifica las actualizaciones con esta regla: **si el esquema ha cambiado,
 restaurar desde un respaldo o empezar con una base vacía**. No existe un
 "upgrade" automático.
 
-El script `npm run migrate:mtproto` es otra cosa: es la migración **manual** del
-cifrado de los mensajes al formato de nube MTProto 2.0, no del esquema.
+NO existe `npm run migrate:mtproto` ni un "upgrade" automático del contenido: el
+servidor lee los dos formatos de cifrado y reescribe siempre el actual, así que
+el histórico se va convirtiendo solo a medida que se reescribe. Para re-cifrar
+**todo** de golpe (o cambiar la credencial) está `npm run owner -- credential`,
+que respalda antes y revierte compensado si algo falla:
 
 ```bash
-npm run migrate:mtproto            # simulación: dice lo que haría, no escribe nada
-npm run migrate:mtproto -- --apply # migra de verdad (hace antes un respaldo)
+npm run owner -- credential     # cambio de credencial con re-cifrado completo
 ```
 
-Conviene **parar el servidor** mientras migra. Es idempotente y verifica cada
+Conviene **parar el servidor** mientras lo hace. Es idempotente y verifica cada
 registro antes de tocarlo.
 
 ---
@@ -964,11 +977,13 @@ registro antes de tocarlo.
 | El supervisor entra en bucle de «fallo de arranque» | El hijo muere antes de servir: casi siempre un error de configuración o de la base | Mira el error del hijo en la salida del supervisor; el mensaje concreto está unas líneas más arriba |
 | `CIRCUITO ABIERTO: 10 fallos de arranque consecutivos …` y el proceso sale con **código 70** | Se agotó `SUPERVISOR_MAX_RESTARTS` (10) porque el servidor **nunca llegó a servir** | **Corrige la causa y arranca a mano** (`node server.js` para ver el error completo). Con systemd y `Restart=always`, systemd lo reintentará: usa `Restart=on-failure` + `SuccessExitStatus=70` si quieres que se quede parado |
 | `CAÍDA EN CALIENTE (code=…, uptime=…) … El servicio no se queda apagado.` | El servidor ya servía y se ha caído. El supervisor reinicia **siempre** con el backoff topado y avisa a partir de 5 caídas | Mira el error del hijo (el supervisor reenvía su stdout/stderr tal cual). Suele ser un `uncaughtException` o una base inaccesible |
-| `salud fallida x3 (el health check no responde); reiniciando pid …` | El proceso está **vivo pero colgado**: no devuelve un 2xx en `/healthz` | Comprueba a mano `curl http://localhost:3000/healthz`; si el puerto del `.env` no es el real, ajusta `SUPERVISOR_HEALTH_PORT` (el supervisor lo corrige solo con el banner, pero solo si el hijo llega a imprimirlo) |
+| `sin latido del hijo desde hace 45s` / `salud fallida x3 …` | El proceso está **vivo pero colgado**: el event loop bloqueado (o la base no responde) | Comprueba a mano `curl http://localhost:3000/healthz`; si el puerto del `.env` no es el real, ajusta `SUPERVISOR_HEALTH_PORT` (el supervisor lo corrige solo con el banner, pero solo si el hijo llega a imprimirlo) |
 | `Cannot open database because the directory does not exist` | La carpeta de datos no existe: SQLite **no crea directorios** | `mkdir -p data` (o `mkdir -p "$DATA_DIR"`); el directorio debe existir **antes** de arrancar |
 | `No se pudo desbloquear la base con la credencial del propietario` (salida 78) | `DB_USER`/`DB_PASSWORD` faltan en el `.env` o no son los de esta base (`src/crypto/owner-key.js`) | **Restaura la credencial del kit de recuperación en el `.env`** (no inventes una nueva: dejaría ilegibles todos los datos cifrados) |
-| `Formato de cifrado de la base no compatible (crypto_version=N)` / `Database crypto version is incompatible with this server.` | La base es de una versión anterior del formato de cifrado. **No hay migraciones** | Restaura la base desde `backups/` o arranca con una base nueva (mueve `data/` a otra parte) |
-| `Database schema is incompatible: messages.<columna> is missing.` | La base no tiene el esquema v3 | Igual que arriba: restaurar o empezar de cero |
+| `Formato de cifrado de la base no compatible (crypto_version=N)` / `Database crypto version is incompatible with this server.` | La base es de una versión anterior del formato de cifrado. El formato **no** se migra | Restaura la base desde `backups/` o arranca con una base nueva (mueve `data/` a otra parte) |
+| `Database schema is incompatible: messages.<columna> is missing.` | La base no tiene el esquema v12 | Igual que arriba: restaurar o empezar de cero |
+| `[deps] Faltan dependencias del proyecto: …` (salida **79**) | Falta una librería de `package.json` | `npm run deps` (con `npm start`, el supervisor lo hace solo: instala y relanza una vez, hasta `SUPERVISOR_DEPS_INSTALL_ATTEMPTS`) |
+| `[uncaughtException] se sigue sirviendo: …` | Un error aislado en caliente: no es fatal (no es pérdida de disco ni base corrupta), así que el servidor sigue en pie | Revisa `data/log/errors.log` (pila completa, girado a 2 MB). Si se repite, arréglalo: el watchdog del supervisor reinicia si el proceso se zombieiza |
 | `No se encuentra el binario nativo de better-sqlite3 para android-arm64` (o `linux-x64`, …) | El `postinstall` del proyecto comprueba que exista el binario nativo y no lo encuentra | En Linux/macOS/Windows con arquitectura soportada: `npm install` descarga el prebuild; si falla, instala el toolchain (python3, make, g++) y compila (ver §2.1). **En Termux hay que compilar** (ver §2.2) |
 | `npm rebuild better-sqlite3` dice «rebuilt dependencies successfully» pero no compila nada (tampoco con `--build-from-source`) | `better-sqlite3@13.0.3` **no tiene script `install`** y declara `"gypfile": false`: no hay nada que `npm rebuild` pueda ejecutar | Compila explícitamente: `cd node_modules/better-sqlite3 && npm exec -- node-gyp rebuild --release --force_build=1` |
 | Error de `node-gyp` al instalar (`Python executable not found`, `g++ not found`, `make: command not found`) | Falta el toolchain de compilación | Debian/Ubuntu: `sudo apt install python3 make g++ build-essential`; Fedora: `sudo dnf install python3 make gcc-c++`; Arch: `sudo pacman -S base-devel python`; Termux: `pkg install python make clang sqlite` |
@@ -1074,20 +1089,23 @@ Riesgos y precauciones:
 | --- | --- |
 | `npm ci` | Instala las dependencias exactas del `package-lock.json` (reproducible) |
 | `npm install` | Instala/actualiza dependencias (ejecuta el `postinstall` que verifica el binario nativo) |
-| `npm start` | Arranca el servidor **con supervisor** (`ops/runtime/supervisor.js`) |
+| `npm start` | Preflight de dependencias + arranque **con supervisor** (`ops/install/ensure-deps.js` → `ops/runtime/supervisor.js`) |
 | `node server.js` | Arranca el servidor **sin supervisor** (depuración) |
-| `npm test` | Suite completa (`node --test test/*.test.js`) |
-| `npm run backup [-- dir]` | Respaldo consistente de `zlapy.db` y `blob.db` (la llave va en el `.env`: cópialo aparte) |
+| `npm test` | Suite completa (`node --test --require ./test/bootstrap.js "test/**/*.test.js"`; 292 casos en subcarpetas por dominio) |
+| `npm run deps` | Solo el preflight: comprueba las dependencias e instala las que falten |
+| `npm run backup [-- dir]` | Respaldo consistente de `zlapy.db` y `zlapy-zlapy-blob.db` (la llave va en el `.env`: cópialo aparte) |
 | `npm run owner -- <comando>` | Credencial del propietario: `init`, `credential`, `rotate`, `check`, `show`, `unlock-check`, `export-kit`, `reset` |
 | `npm run tunnel` | Túnel de Cloudflare (`cloudflared` + `zty.yml` + token en el `.env`) |
 | `npm run termux` | Actualiza paquetes, instala el toolchain y arranca (en Termux) |
-| `npm run migrate:mtproto [-- --apply]` | Migración manual del cifrado de los mensajes (no del esquema) |
+| `npm run repair` / `npm run repair:double-encrypted [-- --apply]` | Reparan `auth_key` ilegibles / perfiles cifrados dos veces |
+| `npm run dbview` / `npm run sqliteview` | Visores de la base de solo lectura (`127.0.0.1:3001` / `:3002`) |
+| `npm run generate:emojis` | Regenera los índices de emojis del cliente |
 
 | Ruta | Contenido |
 | --- | --- |
 | `.env` | Configuración (plantilla: `.env.example`). **No se sube al repo** |
 | `cert.pem`, `key.pem` | Certificado HTTPS autofirmado. **No se sube al repo** |
-| `data/` | `zlapy.db` (datos) y `blob.db` (adjuntos). **No se sube al repo** |
+| `data/` | `zlapy.db` (datos) y `zlapy-zlapy-blob.db` (adjuntos). **No se sube al repo** |
 | `backups/` | Respaldos manuales. **No se sube al repo** |
 | `zty.yml` | Configuración del túnel (plantilla: `zty.yml.example`). **No se sube al repo** |
 | `.zlapy.pid` | PID del servidor hijo mientras corre el supervisor |

@@ -236,8 +236,8 @@ El cliente debe descifrarla con `X-Zlapy-Resp-Nonce` y el AAD
 | Ruta | Auth | Descripción | Parámetros | Respuesta |
 |---|---|---|---|---|
 | `/config` | Pública | Límites del servidor que el cliente necesita conocer y clave pública del canal | — | `{ directMessageCharacters, groupMessageCharacters, storyCharacters, profileDescriptionCharacters, maxAudioDurationMs, storyTtlMs, noteTtlMs, maxMessageDataChars, maxGalleryItems, maxGalleryEncodedChars, transportAlgorithm, transportPublicKey }` |
-| `/healthz` | Pública | Comprobación de salud; consulta las dos bases y publica la clave del canal | — | `200 { ok: true, schema, uptime, transportAlgorithm, transportPublicKey }` / `503 { ok: false, error: "database unavailable" }` |
-| `/avatar/:user.svg` | Sesión | Avatar SVG generado en el servidor. `:user` es un UUID o un nombre de usuario | — | `200 image/svg+xml` (`Cache-Control: private, max-age=31536000, immutable` si es UUID, `private, max-age=3600` si es nombre) / `404 { error: "avatar not found" }` |
+| `/healthz` | Pública | Comprobación de salud; consulta las dos bases y publica la clave del canal. Acepta `GET` y `HEAD` | — | `200 { ok: true, schema, cryptoVersion, serverVersion, uptime, transportAlgorithm, transportPublicKey }` (`schema` = `SCHEMA_VERSION`, hoy **12`) / `503 { ok: false, error: "database unavailable" }` |
+| `/avatar/:user.svg` | Sesión | Avatar SVG generado en el servidor. `:user` es un UUID o un nombre de usuario; con el prefijo `g_` es el avatar de un **grupo** (`g_<idGrupo>`) | — | `200 image/svg+xml` (`Cache-Control: private, max-age=31536000, immutable` si es UUID, `private, max-age=3600` si es nombre) / `404 { error: "avatar not found" }` |
 | `/auth/session` | Pública | Estado de la sesión actual | — | `200 { authenticated: true, user: { id, username } }` o `200 { authenticated: false }` o `200 { authenticated: false, gone: true, accountId }` (la cuenta ya no existe) |
 | `/push/vapid` | Pública | Clave pública VAPID para suscribir el service worker | — | `200 { publicKey }` |
 | `/giphy/search` | Sesión | Proxy de búsqueda de stickers; la clave de GIPHY no sale del servidor | `?q` (≤100), `?offset` (1-4 dígitos), `?limit` (1-3 dígitos) | `200` con el JSON de Giphy tal cual / `503 { error: "Stickers no configurados." }` / `502 { error: "Giphy no disponible." }` |
@@ -257,6 +257,9 @@ El cliente debe descifrarla con `X-Zlapy-Resp-Nonce` y el AAD
 | `/groups/:id/messages` | Sesión | Página de mensajes de un grupo | `?beforeId`, `?limit` (por defecto 30) | `200 { messages: [ … ], more: bool }` |
 | `/calls` | Sesión | Registro de llamadas de la cuenta | — | `200 { calls: [ { id, ts, peer, dir, video, state, duration? } ] }` |
 | `/stickers` | Sesión | Stickers favoritos de la cuenta | — | `200 { stickers: [ … ] }` |
+| `/stickers/discover` | Sesión | Biblioteca pública de stickers publicados por los usuarios (búsqueda sin acentos y paginación) | `?q` (≤100), `?offset`, `?limit` | `200 { stickers: [ … ], more }` |
+| `/stickers/blob/:hash` | Sesión | Contenido (data-URL WebP/GIF) de un sticker de la biblioteca pública por hash SHA-256 | — | `200 text/plain`, `ETag`, `Cache-Control: private, max-age=86400` / `404 {}` |
+| `/stickers/bbot-v3/:exp.webp` | Sesión | Sticker del paquete local bbot-v3 por expresión (compatibilidad con rutas antiguas) | — | `200 image/webp` / `404 {}` |
 | `/chat/preferences` | Sesión | Contactos silenciados | — | `200 { mutedPeers: [ "<username>" ] }` |
 | `/account/chat-settings` | Sesión | Apariencia del chat de la cuenta | — | `200 { settings: { wall, opacity, blur, sender, receiver, senderText, receiverText, image, fontSize, autoText } \| null }` |
 | `/profile` | Sesión | Perfil de una cuenta con la privacidad aplicada | `?username` | `200 { username, signingPublicKey, encryptionKeyId, id?, name?, permisos, online?, lastSeen?, note?, noteTs?, blocked?, privacy?, avatar?, desc?, blockedBy? }` |
@@ -282,6 +285,8 @@ puede suplantar a otro usuario.
 | `/key` | Sesión | Guarda la clave pública de cifrado de la cuenta | `{ pubKey }` (objeto) | `200 { ok: true }`. `400 { error: "clave inválida" }` |
 | `/groups/:id/groupkey` | Sesión | Publica los *keyboxes* cifrados del grupo para los destinatarios indicados | `{ recipients: [ { recipient, iv, ct } ] }` | `200 { ok: true }`. `400 { error: "id inválido" }`, `404 { error: "no existe" }`, `403 { error: "no eres miembro" }` |
 | `/stickers` | Sesión | Guarda los stickers favoritos (máx. 30) | `{ stickers: [ "<url https de giphy>" ] }` | `200 { ok: true, stickers: [ … ] }`. `400 { error: "stickers must be an array" }` |
+| `/stickers/create` | Sesión | Publica un sticker en la biblioteca pública (WebP/GIF cuadrado ≤512×512, ≤8 MB; el hash debe coincidir con el contenido) | `{ data: "<data-URL>", hash, tags: [ … ] }` | `201 { ok: true, hash, sticker, stickers, published }`. `400 { error: "El stricker debe ser WebP o GIF…" }`, `400 { error: "El hash del stricker no coincide con su contenido." }`, `400 { error: "Añade al menos una etiqueta para publicar en Zlapy." }`, `413 { error: "Has alcanzado el límite de almacenamiento de adjuntos." }` |
+| `/message/reaction` | Sesión | Pone o quita una reacción en un mensaje de chat o de grupo | `{ messageId, emoji?, groupId? }` | `200 { ok: true }` o `200 { ok: false }`, con el mensaje actualizado por WebSocket. `400 { error: "Reacción inválida." }`, `404 { error: "Mensaje no disponible." }` |
 | `/chat/preferences` | Sesión | Silencia o quita el silencio de un chat | `{ peer, muted }` (`muted` booleano) | `200 { ok: true, mutedPeers: [ … ] }`. `400 { error: "Preferencia de chat inválida." }` |
 | `/poll/vote` | Sesión | Vota (o retira el voto) en una encuesta | `{ messageId, optionId }` | `200 { ok: true, message: { … } }`. `400 { error: "Opción de encuesta inválida." }`, `403`, `404 { error: "Encuesta no disponible." }` |
 | `/contacts` | Sesión | Envía una solicitud de contacto | `{ username }` | `200 { ok: true, status: "contact" \| "request" }`. `404 { error: "No account found." }`, `400`, `403 { error: "No acepta contactos." }` / `{ error: "Bloqueo activo." }` |
@@ -356,8 +361,21 @@ Tipos de contenido (`groupPolicies`, `src/groups/store.js:23-32`): `text`, `imag
 
 ---
 
-## 3. Objetos JSON principales
+### 2.4 Visores de base de datos (servidores aparte, de solo lectura)
 
+No forman parte de la API del chat: son dos servidores HTTP independientes que
+se arrancan a mano y nunca mientras el servicio principal usa las mismas bases.
+
+| Servidor | Arranque | Escucha | Rutas |
+|---|---|---|---|
+| `ops/db/db-viewer.js` | `npm run dbview` | `127.0.0.1:3001` (`VIEWER_HOST`/`VIEWER_PORT`) | `/`, `/index.html`, `/viewer.css`, `/viewer.js`, `GET/HEAD /api/schema`, `/api/graph`, `/api/table`, `/api/table?name=&offset=&limit=&reveal=1`, `/api/row/<tabla>/<rowid>` |
+| `ops/db/sqliteview.js` | `npm run sqliteview` | `127.0.0.1:3002` (`SQLITEVIEW_HOST`/`SQLITEVIEW_PORT`) | `/`, `/index.html`, `/sqliteview.css`, `/sqliteview.js`, `GET/HEAD /api/overview`, `/api/table/<nombre>?offset=&limit=&reveal=1` |
+
+`?reveal=1` muestra valores descifrados (lo que ve el operador en su propia
+máquina). Cualquier otro método responde `405`, una ruta desconocida `404` y un
+error interno `500`.
+
+## 3. Objetos JSON principales
 ### 3.1 Mensaje
 
 Construido en `src/chat/summaries.js:24-34` (`decorateForClient`) y `src/chat/messages.js:107-119`:

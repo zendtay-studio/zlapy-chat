@@ -150,19 +150,22 @@ síntomas → causa → solución.
 ## Arranque
 
 ```bash
-npm start        # con supervisor: si el proceso se cae, lo reinicia
+npm start        # comprueba las dependencias y arranca con supervisor: si el proceso se cae, lo reinicia
 ```
 
 | Comando | Qué hace |
 | --- | --- |
-| `npm start` | Arranca el servidor **bajo el supervisor** (`ops/runtime/supervisor.js`): health check, backoff exponencial (1 s → 30 s), reinicio automático y cortacircuito ante fallos de arranque |
-| `npm test` | Suite completa (`node --test test/*.test.js`): unitarias + integración en instancias aisladas |
+| `npm start` | **`node ops/install/ensure-deps.js && node ops/runtime/supervisor.js`**: instala las dependencias que falten (si el servidor llega a salir con 79 sin una librería, el supervisor la instala y relanza una sola vez) y arranca el servidor **bajo el supervisor**: preflight, spawn con canal IPC, watchdog de `/healthz` + latido (10 s/45 s), backoff exponencial (1 s → 30 s) y cortacircuito ante fallos de arranque. Exit 78 (credencial) no se reintenta |
+| `npm run deps` | Solo el preflight de dependencias (comprueba e instala lo que falte) |
+| `npm test` | Suite completa (`node --test --require ./test/bootstrap.js "test/**/*.test.js"`): unitarias + integración en instancias aisladas |
 | `npm run backup` | Respaldo consistente de las dos bases (la credencial va en el `.env`: copia también ese fichero) |
 | `npm run owner` | Credencial del propietario: `init`, `credential` (cambia la credencial y re-cifra todo), `rotate`, `check`, `show`, `unlock-check`, `export-kit`, `reset` |
 | `npm run rebuild:sqlite` | Compila `better-sqlite3` en el sitio (obligatorio en Android/Termux) |
+| `npm run repair` / `npm run repair:double-encrypted` | Reparan `auth_key` ilegibles / perfiles cifrados dos veces |
 | `npm run termux` | Todo en uno para Termux: actualiza, instala herramientas, compila y arranca |
 | `npm run tunnel` | Publica el servidor con un túnel de Cloudflare |
-| `npm run migrate:mtproto` | Migración **manual** del histórico al esquema de cifrado en la nube (`--apply` la ejecuta de verdad) |
+| `npm run dbview` / `npm run sqliteview` | Visores de la base de solo lectura (en `127.0.0.1:3001` / `:3002`) |
+| `npm run generate:emojis` | Regenera los índices JSON de emojis del cliente |
 
 Para arrancar **sin** supervisor (útil para depurar, porque la salida va directa
 a la consola):
@@ -191,8 +194,8 @@ Al arrancar, el servidor imprime las URLs:
 
 | Entorno | Cómo |
 | --- | --- |
-| **systemd** (Linux) | Unidad de servicio con `ExecStart=.../node .../ops/runtime/supervisor.js` y `Restart=always` → [`docs/INSTALACION.md`](docs/INSTALACION.md#51-systemd-linux) |
-| **pm2** | `pm2 start ops/runtime/supervisor.js --name zlapy && pm2 save && pm2 startup` |
+| **systemd** (Linux) | Unidad de servicio con `ExecStart=/usr/bin/npm start --prefix /ruta/del/proyecto` y `Restart=always` (así se ejecuta también el preflight de dependencias) → [`docs/INSTALACION.md`](docs/INSTALACION.md#51-systemd-linux) |
+| **pm2** | `pm2 start npm --name zlapy -- start && pm2 save && pm2 startup` (pm2 ejecuta el script `start`, que incluye `ensure-deps`) |
 | **Termux:Boot** | Script en `~/.termux/boot/` que lanza `npm start` al arrancar el móvil |
 
 ---
@@ -231,10 +234,10 @@ cp .env.example .env   # crea tu configuración local
 | `AUTH_SESSION_TTL_MS` | `2592000000` | Vigencia de la sesión (30 días) |
 | `CHAT_PAGE_CACHE_MAX` / `CHAT_PAGE_CACHE_TTL_MS` | `20` / `10000` | Caché de páginas de chat (0 desactiva) |
 | `SQLITE_CACHE_SIZE_KB` / `SQLITE_BUSY_TIMEOUT_MS` | `64000` / `5000` | Caché y espera de SQLite |
-| `BBOT_STICKER_PACK_DIR` | `data/bbot-stickers` | Carpeta persistente de los WebP animados bbot generados o recuperados al iniciar |
+| `BBOT_STICKER_PACK_DIR` | `src/bbot-stickers` | Carpeta persistente de los WebP animados bbot generados o recuperados al iniciar |
 | `GIPHY_API_KEY` | vacío | Stickers de Giphy (solo la usa el servidor) |
 | `CLOUDFLARE_TUNNEL_TOKEN` | vacío | Token del túnel de Cloudflare |
-| `SUPERVISOR_*` | ver `.env.example` | Intervalo del health check, backoff, tope de reinicios, fichero de PID |
+| `SUPERVISOR_*` | ver `.env.example` | Intervalo del health check, backoff, tope de reinicios, fichero de PID, **latido IPC (10 s) y su watchdog (45 s)** e **intentos de instalar dependencias** (exit 79) |
 
 Los valores se **validan al arrancar**: un límite incoherente (por ejemplo,
 `MAX_MESSAGE_DATA_CHARS > MAX_HTTP_BODY_BYTES`) detiene el arranque con un
@@ -623,38 +626,56 @@ WebSocket): [`docs/API.md`](docs/API.md).
 ## Estructura de ficheros
 
 ```
-server.js              punto de entrada: comprueba la base, carga los datos y arranca
+server.js              punto de entrada: comprueba las dependencias y las guardas de proceso primero, luego la base, y arranca
 src/                   el backend, partido por dominios
   config.js            configuración (fichero .env y valores por defecto)
   state.js             estado compartido en memoria (cuentas, grupos, sesiones, caché)
-  auth/                sesiones, cookies y rutas de autenticación
+  process-guards.js    errores globales: no fatales se registran y se sigue sirviendo; fatales cierran y salen (exit 1); latido IPC
+  bbot-stickers/        WebP animados del paquete bbot (BBOT_STICKER_PACK_DIR; no se versionan)
+  auth/               sesiones, cookies y rutas de autenticación
   users/               cuentas, perfiles y privacidad por función
   profile/             perfil, notas y ajustes de la cuenta
   contacts/            contactos, solicitudes y bloqueos
-  chat/                mensajes, resúmenes, adjuntos y menciones
+  chat/                mensajes, resúmenes, adjuntos, preferencias y menciones
   groups/              grupos, claves de grupo y sus rutas
   stories/             historias
   calls/               llamadas y su señalización
-  stickers/            catálogo, biblioteca y paquete bbot animado pre-renderizado
+  stickers/            catálogo, biblioteca pública y paquete bbot animado pre-renderizado
   push/                notificaciones push (VAPID)
   realtime/            WebSocket: framing, cifrado de frames, envío a los clientes y mensajes
   http/                router, respuestas, cabeceras, sobre cifrado y arranque de los servidores
   db/                  base de datos: apertura, sentencias, transacciones y esquema
   crypto/              llave maestra, cifrado en reposo, cifrado en la nube y claves del canal
-  shared/              validaciones y utilidades puras
+  shared/              validaciones, límites, tipos y utilidades puras
   meta/                configuración pública y health check
-ops/                   scripts de operación (se ejecutan a mano)
-  supervisor.js        arranca el servidor y lo revive si se cae (npm start)
-  tunnel.js            publica el servidor con Cloudflare (npm run tunnel)
-  backup.js            copia consistente de las bases (npm run backup)
-  owner-credentials.js    credencial del propietario (npm run owner: init, credential, rotate, check…)
-  repair-double-encrypted.js  repara los perfiles que quedaron cifrados dos veces
-  repair-unreadable-auth-keys.js  repara las auth_keys que no descifra la llave actual (npm run repair)
-public/                el cliente web (PWA): index.html, login.html, profile.html,
-                       view.html, stories.html, privacy.html, sw.js, theme.css,
-                       login.css, popmenu.css/js (menu desplegable comun),
-                       autogrow.js, avatar-editor.css/js, appearance.js,
-                       transport-crypto.js (primitivas) y transport.js (sobre y WS)
+ops/                   scripts de operación, partidos por dominios (se ejecutan a mano)
+  install/             ensure-deps.js (preflight de librerías, npm run deps),
+                       check-native.js (postinstall) y build-sqlite.js (npm run rebuild:sqlite)
+  runtime/supervisor.js   arranca el servidor y lo revive si se cae (npm start)
+  net/tunnel.js        publica el servidor con Cloudflare (npm run tunnel)
+  backup/backup.js     copia consistente de las bases (npm run backup)
+  auth/owner-credentials.js   credencial del propietario (npm run owner: init, credential, rotate, check…)
+  crypto/              reencrypt-master.js (motor de rotación de la llave), repair-unreadable-auth-keys.js
+                       (npm run repair) y repair-double-encrypted.js (npm run repair:double-encrypted)
+  db/                  db-viewer.js + db-viewer/ (npm run dbview, 127.0.0.1:3001) y
+                       sqliteview.js + sqliteview/ (npm run sqliteview, 127.0.0.1:3002)
+  data/                generate-emoji-data.js (npm run generate:emojis) y
+                       generate-animated-bbot-pack.js (pack bbot procedural)
+  config/env-writer.js escritura atómica de secretos del .env
+public/                el cliente web (PWA): las páginas sueltas en la raíz
+                       (index.html, login.html, profile.html, view.html, stories.html,
+                       privacy.html, group-*.html, sticker-creator.html, sw.js y
+                       transport-crypto.js —shims de 1-4 líneas— y manifest.webmanifest)
+  js/                  la lógica: sw.js (service worker real), transport.js y
+                       transport-crypto.js (primitivas), appearance.js, popmenu.js,
+                       autogrow.js, avatar-editor.js, group-create.js,
+                       group-details.js, group-details-demo.js, sticker-editor.js,
+                       emoji-picker.js, animated-webp.js, local-data.js,
+                       interaction-guard.js y vendor/ (caras bbot)
+  css/                 theme.css, login.css, popmenu.css, fonts.css, emoji-picker.css,
+                       avatar-editor.css, group-*.css, sticker-editor.css
+                       (liquid-glass.css está vacío)
+  files/               datos de emojis; image/ iconos webp; fonts/ Outfit
 Si faltan stickers bbot o cambia la versión del paquete, el servidor regenera
 al arrancar (usa rasterizador SVG y codificador WebP portables basados en
 WebAssembly, sin depender de programas instalados en el sistema) las 30
@@ -666,19 +687,15 @@ renderizados y codificados. No se sirven ni se guardan archivos del paquete
 en `public/`; las rutas antiguas de mensajes se resuelven desde la biblioteca.
 Las fuentes del generador están en `ops/data/generate-animated-bbot-pack.js` (generación procedural con semilla por expresión, sin assets externos).
 docs/                  documentación (ver el índice final)
-test/                  pruebas unitarias y de integración (node --test)
-  server-http.test.js      rutas HTTP: registro, contactos, mensajes, grupos
-  server-ws.test.js         WebSocket: frames, suscripciones y mensajes
-  transport.test.js        sobre cifrado HTTP y WebSocket (ida y vuelta y rechazos)
-  security-regressions.test.js  regresiones de la auditoría de seguridad (2026-10-19)
-  mtproto.test.js        tests del esquema de cifrado en la nube (MTProto 2.0)
-  mtproto-server.test.js tests de integración del cifrado en la nube en el servidor
-  legacy-read.test.js    el servidor lee el esquema de cifrado antiguo sin migrar
-  supervisor.test.js      arranque del supervisor y reinicio del hijo
+test/                  pruebas unitarias y de integración, partidas por dominio
+                         (node --test; 56 ficheros .test.js, 292 casos):
+  auth/  calls/  chat/  client/  crypto/  db/  groups/  http/
+  profile/  push/  runtime/  shared/  stickers/
+  bootstrap.js y helpers.js en la raíz son el arnés común
 .github/workflows/ci.yml        CI: npm ci + npm test
 data/                  persistencia (sobrevive reinicios; no se versiona)
   zlapy.db             SQLite: usuarios, mensajes, contactos, grupos, historias y llamadas
-  blob.db              archivos e imágenes deduplicados por hash SHA-256
+  zlapy-blob.db       archivos e imágenes deduplicados por hash SHA-256
 backups/               respaldos manuales (no se versiona)
 cert.pem / key.pem     HTTPS autofirmado (para cámara/micrófono en el móvil)
 .zlapy.pid             PID del servidor hijo mientras corre el supervisor (no se versiona)
@@ -695,7 +712,7 @@ tarea): [`docs/FICHEROS.md`](docs/FICHEROS.md).
 npm test
 ```
 
-La suite (101 pruebas) cubre:
+La suite (292 casos en 56 ficheros, todos en verde) cubre:
 
 - **Rutas HTTP** sobre instancias aisladas (directorio de datos y puerto
   temporales): registro, login, contactos, aceptación, mensajes, grupos,
@@ -748,16 +765,30 @@ Para **restaurar**:
 
 ## Operación
 
-- **Health check:** `GET /healthz` responde `{"ok":true,"schema":4,...}`
+- **Health check:** `GET /healthz` responde `{"ok":true,"schema":12,...}`
   comprobando ambas bases; es público y no expone datos.
-- **Cierre ordenado:** con `SIGTERM`/`SIGINT` el servidor deja de aceptar
-  conexiones, cierra los sockets de los clientes, hace *checkpoint* del WAL y
-  cierra las bases antes de salir. El supervisor propaga esas señales a su hijo.
-- **Supervisor:** `npm start` corre el servidor bajo el supervisor (backoff,
-  watchdog de salud y cortacircuito; publica el PID del hijo en `.zlapy.pid`).
+- **Cierre ordenado:** con `SIGTERM`/`SIGINT` (o el mensaje IPC `stop` del
+  supervisor) el servidor deja de aceptar conexiones, cierra los sockets de los
+  clientes, hace *checkpoint* del WAL y cierra las bases antes de salir.
+- **Supervisor:** `npm start` ejecuta antes `ensure-deps` (instala las
+  dependencias que falten) y luego el supervisor (backoff, watchdog de salud,
+  latido y cortacircuito; publica el PID del hijo en `.zlapy.pid`). El
+  supervisor habla con el servidor por un canal IPC: el hijo avisa `ready` al
+  escuchar, `deps-missing` si le falta una librería y latidos cada 10 s; el
+  padre avisa `stop` al apagar. Mientras el hijo está **vivo** nunca se le
+  mata ni se le relanza.
+  Códigos de salida que trata especialmente: **78** (la credencial no abre la
+  base: no reintenta, hace falta intervención), **79** (falta una dependencia:
+  la instala y relanza sin backoff, hasta `SUPERVISOR_DEPS_INSTALL_ATTEMPTS=3`)
+  y **75** (la credencial cambió con el servidor vivo: reinicio limpio).
   El cortacircuito (`exit 70`) protege solo de los **fallos de arranque**: una
   caída en caliente se reinicia siempre con backoff topado y una alerta, sin
   dejar el servicio apagado.
+- **Errores globales:** `src/process-guards.js` registra cualquier excepción
+  no capturada en consola y en `data/log/errors.log` (acotado a 2 MB). Los
+  errores **no fatales** no tumban el servidor; los **fatales** (base corrupta,
+  disco lleno, permisos) cierran las bases y salen con exit 1, y el supervisor
+  levanta un proceso nuevo.
 - **Túnel de Cloudflare:** `npm run tunnel` publica la instancia en internet.
   Necesita `cloudflared` instalado, `CLOUDFLARE_TUNNEL_TOKEN` en `.env` y
   `zty.yml` (copiado de `zty.yml.example`) con tu dominio. El token **no**

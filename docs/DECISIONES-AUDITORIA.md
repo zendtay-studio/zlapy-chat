@@ -221,3 +221,44 @@ sin contexto. No se arreglan "porque sí":
   sesiones por cuenta" parte de un modelo que ya no es este; la revocación
   se hace rotando el `rid` (`user_rid`). Modelo completo en
   `docs/ESQUEMA-BD.md` §3.13 y `docs/CRIPTOGRAFIA.md` §6.5.
+
+---
+
+# Ronda de noviembre de 2026: notificaciones, datos locales y arranque
+
+Decisiones de esta ronda que conviene conocer antes de tocar estas zonas:
+
+- **Las suscripciones push zombi se eliminan (403), no se ignoran.** Si el
+  servicio de push responde 403 «las credenciales VAPID no corresponden a las
+  usadas al crear la suscripción» (la clave del servidor cambió, p. ej. al
+  restaurar la base), esa suscripción **nunca** entregará: se borra la fila y
+  la entrada de RAM como si estuviera caducada (404/410), con aviso en el log.
+  Un 403 ajeno a credenciales no se considera muerte de la suscripción.
+- **El cliente re-suscribe solo si la clave no coincide.** Al arrancar (o al
+  activar el interruptor) se compara la `applicationServerKey` de la
+  suscripción guardada con la clave VAPID actual del servidor: si difieren, se
+  re-suscribe con la de hoy. Sin esto, un interruptor «encendido» con una
+  suscripción zombi parecía funcionar (los avisos con la página abierta vienen
+  del WebSocket) y nunca llegaba nada con la app cerrada.
+- **El service worker necesita origen de confianza, no solo «continuar».** Con
+  certificado autofirmado el navegador rechaza el registro del SW
+  (`SecurityError`) aunque el usuario haya ignorado el aviso: sin SW no hay
+  push. Las salidas son instalarlo como CA, usar `localhost` o un túnel HTTPS
+  válido. El diagnóstico lo dice con ese texto en vez de un mensaje genérico.
+- **Los errores globales no fatales no tumban el servidor.**
+  `uncaughtException`/`unhandledRejection` se registran SIEMPRE (consola +
+  `data/log/errors.log`, acotado a 2 MB). Los errores fatales (base corrupta,
+  disco lleno, permisos de `data/`) cierran las bases y salen con exit 1 para
+  que el supervisor levante limpio; el resto se registran y **se sigue
+  sirviendo**, con el watchdog (health check + latido) como red de seguridad.
+- **Las dependencias las instala el supervisor, no el servidor.** `npm start`
+  ejecuta `ensure-deps` antes del supervisor; si `server.js` detecta una
+  librería que falta, sale con código 79 y el supervisor la instala y relanza
+  **una** vez (sin backoff y sin gastar intentos de arranque). Instalar npm
+  dentro del proceso del servidor dejaría un `node_modules` a medio instalar.
+- **`ops/` y `test/` van por dominios**, como `src/`: `install/`, `runtime/`,
+  `db/`, `backup/`, `crypto/`, `auth/`, `net/`, `config/`, `data/` y
+  `auth/`, `calls/`, `chat/`, `client/`, `crypto/`, `db/`, `groups/`, `http/`,
+  `profile/`, `push/`, `runtime/`, `shared/`, `stickers/` respectivamente. Las
+  rutas de `package.json`, los `require` y toda la documentación se
+  actualizaron con el movimiento.

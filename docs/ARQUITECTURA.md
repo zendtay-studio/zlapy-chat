@@ -28,22 +28,24 @@ módulos por dominio**. Un único proceso Node.js:
 
 El backend se ejecuta siempre **bajo un supervisor** (`ops/runtime/supervisor.js`),
 que lo relanza con backoff exponencial si muere y lo reinicia si se queda
-colgado (`npm start` → `node ops/runtime/supervisor.js`).
+colgado (`npm start` → `node ops/install/ensure-deps.js && node ops/runtime/supervisor.js`:
+primero se aseguran las dependencias, luego arranca el supervisor).
 
 ### 1.2 Componentes
 
 | Componente | Dónde vive | Función |
 | --- | --- | --- |
-| Entrypoint | `server.js` | Comprueba la versión de cifrado de la base, hidrata la RAM y arranca los servidores. |
+| Entrypoint | `server.js` | **Preflight de dependencias** (exit 79 si falta una librería) y **guardas de proceso** (`src/process-guards.js`) antes de cargar nada; después comprueba la versión de cifrado de la base, hidrata la RAM y arranca los servidores. |
 | Configuración | `src/config.js` | Lee `.env` con `dotenv`, valida rangos y expone rutas (`DATA`, `DB_PATH`, `BLOB_DB_PATH`, `PUBLIC`). |
-| Estado en RAM | `src/state.js` | Caché compartida entre módulos (cuentas, grupos, sesiones, historias, notas, llamadas, push, caché de páginas). |
-| Base de datos | `src/db/` | Apertura (`database.js`), esquema v3 (`schema.js`), sentencias preparadas (`statements.js`), transacciones (`transactions.js`). |
+| Estado en RAM | `src/state.js` | Caché compartida entre módulos (cuentas, grupos, historias, notas, llamadas, push, caché de páginas). Las sesiones son JWT stateless: no hay estado. |
+| Errores globales | `src/process-guards.js` | `uncaughtException`/`unhandledRejection`: registra en consola y `data/log/errors.log`; los fatales cierran las bases y salen (exit 1), el resto no tumba el servidor. Latido hacia el supervisor. |
+| Base de datos | `src/db/` | Apertura (`database.js`), esquema v12 (`schema.js`), sentencias preparadas (`statements.js`), transacciones (`transactions.js`). |
 | Cifrado | `src/crypto/` | Llave maestra, cifrado en reposo, cifrado por usuario (MTProto 2.0), firmas Ed25519. |
 | HTTP | `src/http/` | Router, respuestas con cabeceras de seguridad, limitadores, arranque de servidores. |
 | Tiempo real | `src/realtime/` | Framing WebSocket, servidor WebSocket, envío de eventos a los clientes. |
 | Dominios | `src/auth/`, `users/`, `profile/`, `contacts/`, `chat/`, `groups/`, `stories/`, `calls/`, `stickers/`, `push/`, `meta/` | Reglas de negocio y rutas HTTP de cada área. |
-| Utilidades puras | `src/shared/` | Validación, límites, tipos, galería, apariencia, ruta estática segura, avatar SVG. |
-| Operación | `ops/` | Supervisor, túnel de Cloudflare, respaldo, llave maestra, migración de cifrado. |
+| Utilidades puras | `src/shared/` | Validación, límites, tipos, galería, apariencia, ruta estática segura, avatar SVG, caché LRU. |
+| Operación | `ops/` | Preflight de dependencias (`install/`), supervisor (`runtime/`), túnel (`net/`), respaldo (`backup/`), credencial y cripto (`auth/`, `crypto/`), visores de base (`db/`), generadores (`data/`), `.env` (`config/`). |
 
 ### 1.3 Diagrama de componentes
 
@@ -120,14 +122,24 @@ colgado (`npm start` → `node ops/runtime/supervisor.js`).
 
 ### 2.1 Secuencia exacta
 
-`server.js` es deliberadamente corto: cinco pasos.
+`server.js` es deliberadamente corto: comprueba lo mínimo antes de servir.
+La secuencia real empieza **antes** de tocar la base:
 
 ```
 node server.js
       │
       ▼
 ┌──────────────────────────────────────────────────────────────┐
-│ 0. Endurecimiento de permisos del almacenamiento            │
+│ 0. PREFLIGHT DE DEPENDENCIAS (ops/install/ensure-deps.js)    │
+│      falta una librería → mensaje claro + EXIT 79            │
+│      (el supervisor la instala y relanza UNA vez)            │
+│ 0.b GUARDAS DE PROCESO (src/process-guards.js): errores      │
+│      globales registrados; fatales → exit 1, el resto sigue  │
+└──────────────────────────────────────────────────────────────┘
+      │
+      ▼
+┌──────────────────────────────────────────────────────────────┐
+│ 1. Endurecimiento de permisos del almacenamiento            │
 │      data/, data2/ y backups/  → 0700  (chmod)               │
 │      zlapy.db, blob.db, .env  → 0600  (chmod)                │
 │      best-effort: si falla (p. ej. dueño distinto) se sigue  │
@@ -140,56 +152,64 @@ node server.js
       │
       ▼
 ┌──────────────────────────────────────────────────────────────┐
-│ 1. require('./src/db/statements')  →  require('./src/db/database')
+│ 2. Credencial, bases y esquema                                │
+│      · credencial del propietario: falla el keycheck →       │
+│        EXIT 78 (no se reintenta: hace falta intervención)    │
 │      · new Database(DATA/zlapy.db)   + pragmas:
 │          journal_mode=WAL, synchronous=NORMAL, foreign_keys=ON,
 │          busy_timeout=CONFIG.sqliteBusyTimeoutMs (5000 ms),
 │          cache_size=-CONFIG.sqliteCacheSizeKb (-64000 KiB),
 │          temp_store=MEMORY
-│      · new Database(DATA/blob.db)  → misma configuración
+│      · new Database(DATA/zlapy-blob.db)  → misma configuración
 │          + CREATE TABLE IF NOT EXISTS blobs (hash PK, data)
 │      · CHECK de compatibilidad: meta.crypto_version ≠ '2' → throw
 │      · ensureSchema(db)  → aplica SCHEMA_SQL (todo IF NOT EXISTS,
-│          idempotente) y escribe meta.schema_version = 3
+│          idempotente) y escribe meta.schema_version = 12
 │      · verifica que messages.crypto_version / crypto_group_id /
 │        signature / signing_public_key existen
 └──────────────────────────────────────────────────────────────┘
       │
       ▼
 ┌──────────────────────────────────────────────────────────────┐
-│ 2. Comprobación de versión de cifrado (server.js:39-46)      │
+│ 3. Comprobación de versión de cifrado (server.js:39-46)      │
 │      cryptoVersion = Stmt.getMeta.get('crypto_version')      │
 │      if (cryptoVersion !== '2'):                             │
 │          si hay mensajes o la versión existe → THROW         │
 │          si no → Stmt.setMeta('crypto_version','2')          │
 │      (base vacía → se marca; base con datos → no se arranca) │
+│      + ninguna fila con crypto_version ≠ 3: solo se lee PCE3 │
 └──────────────────────────────────────────────────────────────┘
       │
       ▼
 ┌──────────────────────────────────────────────────────────────┐
-│ 3. loadFromDb()  (src/users/store.js:133-184)                │
-│      · users ← SELECT * FROM users  → users + usernameIndex  │
-│      · hydrateUserFromDb(acc) por cada cuenta:               │
-│          perfil (nombre/bio/nota descifrados), contactos,    │
-│          stickers (≤30), grupos vistos, clave del dispositivo│
-│          nota personal, privacidad, apariencia del chat      │
-│          silenciados, bloqueados                             │
-│      · sesiones no caducadas → sessionCache; borra caducadas │
-│      · push_subs → pushSubs (descifrado por usuario)         │
-│      · calls (100 por usuario) → callFiles                   │
-│      · historias vivas (ts > now-TTL) → stories              │
-│      · grupos → readGroup() uno a uno → groupCache           │
-│      · log: "[load] v3: N usuarios, M grupos, K historias"   │
+│ 4. Preparación de la RAM (server.js)                         │
+│      · imagen de respaldo lista (seedMediaFallback)          │
+│      · backfillUserRids: LETAL, si falla → EXIT 78           │
+│      · paquete bbot sembrado (default_stickers)              │
+│      · loadFromDb(): users, perfiles, contactos, grupos,     │
+│        push_subs, llamadas, historias…                       │
+│      · auditoría de auth_keys (todas ilegibles → throw)      │
+│      · backfillCallPeerHashes (no letal: avisa y sigue)      │
+│      · log: "[load] v12: N usuarios, M grupos, K historias"  │
 └──────────────────────────────────────────────────────────────┘
       │
       ▼
 ┌──────────────────────────────────────────────────────────────┐
-│ 4. require('./src/http/servers')                             │
-│      · crea httpSrv y (si existen cert.pem/key.pem) httpsSrv │
-│      · engancha 'upgrade' → wsUpgrade en ambos               │
-│      · crea el dispatcher net.Server y lo pone a escuchar    │
-│      · registra SIGTERM/SIGINT/uncaughtException/            │
-│        unhandledRejection                                    │
+│ 5. Vigilancia de la credencial (watchCredentialFile)         │
+│      si el .env cambia con el proceso vivo → EXIT 75         │
+│      (el supervisor reinicia ya con la credencial nueva)     │
+└──────────────────────────────────────────────────────────────┘
+      │
+      ▼
+┌──────────────────────────────────────────────────────────────┐
+│ 6. require('./src/http/servers')                             │
+│      · httpSrv y (si existen cert.pem/key.pem) httpsSrv      │
+│      · 'upgrade' → wsUpgrade en ambos                        │
+│      · dispatcher net.Server a la escucha                    │
+│      · SIGTERM/SIGINT y mensaje IPC 'stop' → cierre          │
+│        ordenado (los errores globales: process-guards)       │
+│      · mensaje IPC 'ready' al supervisor al empezar a oír    │
+│      · latido IPC cada 10 s (SUPERVISOR_HB_MS)               │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -197,7 +217,7 @@ Detalles que importan:
 
 - **El esquema es idempotente, no hay migraciones.** `ensureSchema()`
   (`src/db/schema.js:365`) ejecuta un `CREATE TABLE/INDEX IF NOT EXISTS`
-  sobre `SCHEMA_SQL` y luego registra `schema_version = 3`. Una base en un
+  sobre `SCHEMA_SQL`, aplica las migraciones idempotentes (v9→v12) y luego registra `schema_version = 12`. Una base en un
   formato anterior no es compatible: el servidor se niega a arrancar.
 - **Los permisos se aplican antes de abrir las bases**, en el paso 0: las
   bases SQLite y la carpeta de datos pasan a `0700`/`0600`. Si el `chmod`
@@ -421,7 +441,7 @@ Definidas en `src/http/responses.js:17-39` y aplicadas a **toda** respuesta:
 | --- | --- | --- |
 | `server.js` | Entrypoint: versión de cifrado → hidratación → arranque. | `server.js` |
 | `src/` (raíz) | Configuración y estado compartido. | `config.js`, `state.js` |
-| `src/db/` | Apertura de las dos bases, esquema v3, sentencias preparadas, transacciones y purga de blobs. | `database.js`, `schema.js`, `statements.js`, `transactions.js` |
+| `src/db/` | Apertura de las dos bases, esquema v12, sentencias preparadas, transacciones y purga de blobs. | `database.js`, `schema.js`, `statements.js`, `transactions.js` |
 | `src/crypto/` | Llave maestra, cifrado en reposo (AES-256-GCM), cifrado por usuario (MTProto 2.0), firmas Ed25519. | `master-key.js`, `message-crypto.js`, `mtproto.js`, `user-auth-keys.js`, `setup.js` |
 | `src/http/` | Router, respuestas con cabeceras, limitadores de frecuencia, arranque y cierre de servidores. | `router.js`, `servers.js`, `responses.js`, `helpers.js`, `rate-limit.js` |
 | `src/realtime/` | Framing RFC 6455, servidor WebSocket, envío de eventos a clientes. | `frames.js`, `websocket.js`, `notify.js` |
@@ -848,7 +868,6 @@ respuesta incluye la cabecera `Retry-After` en segundos
 | Galería codificada | 24 000 000 caracteres | `CONFIG.maxGalleryEncodedChars` |
 | Texto de historia | 140 | `CONFIG.storyCharacters` |
 | Descripción de perfil | 140 | `CONFIG.profileDescriptionCharacters` |
-| Sesiones activas por cuenta | 20 (`pruneSessionsForUser` borra las más antiguas al inicio de sesión) | `CONFIG.maxSessionsPerUser` |
 | Cuota de adjuntos | 512 MiB por cuenta, 20 GiB globales (`blobQuotaOk`) | `src/chat/media.js:29-30` |
 | Acuses de lectura | 120/min (`receiptLimiter`) | `src/chat/routes.js:376` |
 
@@ -1197,8 +1216,8 @@ suscripciones antiguas o DNS rebinding.
 ### 7.1 Protocolo de frames propio
 
 `src/realtime/frames.js` implementa el subconjunto de RFC 6455 que usa
-Zlapy. **No usa la librería `ws`**: las dependencias son solo
-`better-sqlite3` y `dotenv` (`package.json`).
+Zlapy. **No usa la librería `ws`**: las dependencias de runtime son
+`@noble/hashes`, `@resvg/resvg-wasm`, `bcryptjs`, `better-sqlite3`, `dotenv`, `jsonwebtoken`, `lru` y `webp-wasm` (`package.json`); el preflight de `npm start` se asegura de que estén antes de arrancar.
 
 | Límite | Valor | Efecto |
 | --- | --- | --- |
@@ -1388,18 +1407,31 @@ guardarse: el servidor nunca los ve. Es el mismo modelo que los chats
 
 ### 9.1 Supervisor (`ops/runtime/supervisor.js`)
 
-`npm start` → `node ops/runtime/supervisor.js`. El supervisor **no** habla con la
-base: vigila el proceso hijo (`node server.js`).
+`npm start` → `node ops/install/ensure-deps.js && node ops/runtime/supervisor.js`:
+el preflight deja las dependencias listas antes de que el supervisor lance el
+primer `server.js`. El supervisor **no** habla con la base: vigila el proceso
+hijo (`node server.js`) y se comunica con él por un canal **IPC**.
 
 ```
  supervisor
     │
+    ├─ preflight de dependencias (ensure-deps): si falta alguna, la instala
+    │     └─ si no se puede dejar todo instalado → exit(3), no arranca
     ├─ carga el MISMO .env (dotenv) antes de resolver su configuración
-    ├─ spawn(process.execPath, ['server.js'], { cwd: ROOT, env: process.env })
+    ├─ spawn(process.execPath, ['server.js'], { cwd: ROOT, stdio: ipc })
     ├─ stdout del hijo → se canaliza (pipe) y se reenvía tal cual
     │     └─ se busca el banner "✅ Zlapy (SQLite) en el puerto NNNN"
     │        para saber el puerto REAL en el que hay que sondear
     ├─ stderr del hijo → heredado
+    │
+    ├─ MENSAJES DEL HIJO (canal IPC):
+    │     · ready {port}   → el servidor escucha: fija el puerto, termina la
+    │                        gracia y comprueba la salud de inmediato
+    │     · hb {ts}        → latido cada SUPERVISOR_HB_MS (10 s)
+    │     · deps-missing   → el hijo saldrá con 79 (las instala el supervisor)
+    ├─ watchdog de latido: sin latido durante SUPERVISOR_HB_STALE_MS (45 s)
+    │     estando en marcha → reinicio (event loop bloqueado o excepción
+    │     en el bucle del servidor; el /healthz a veces no lo distingue)
     │
     ├─ watchdog de salud: cada SUPERVISOR_HEALTH_MS (15 s) sondea
     │     GET /healthz en 127.0.0.1:<puerto> con timeout de 5 s
@@ -1407,10 +1439,16 @@ base: vigila el proceso hijo (`node server.js`).
     │     · 3 fallos consecutivos → killUnhealthy() → SIGTERM → SIGKILL a los 5 s
     │
     ├─ al salir el hijo:
+    │     · exit 78 (credencial)   → NO reintenta: hace falta intervención
+    │     · exit 79 (dependencias) → instala lo que falte y relanza SIN
+    │       backoff y sin gastar intento de arranque (tope
+    │       SUPERVISOR_DEPS_INSTALL_ATTEMPTS = 3; agotado → exit 70)
     │     · si estaba sano   → CAÍDA EN CALIENTE → backoff y reinicio SIEMPRE
     │     · si no llegó a servir → FALLO DE ARRANQUE → backoff; al superar
     │       MAX_RESTARTS (10) → CIRCUITO ABIERTO → exit(70) y hay que
     │       arrancar a mano
+    │     · MIENTRAS el hijo esté vivo NUNCA se le mata ni se le relanza:
+    │       la ventana de instalación corre antes del spawn
     │
     └─ escribe el PID del hijo en SUPERVISOR_PID_FILE (.zlapy.pid)
 ```
@@ -1419,13 +1457,15 @@ base: vigila el proceso hijo (`node server.js`).
 | --- | --- |
 | **Backoff exponencial** | `min(BASE * 2^n, MAX)` = 1 s → 30 s (`SUPERVISOR_BACKOFF_MS` / `SUPERVISOR_BACKOFF_MAX_MS`). |
 | **Ciclo abierto** | Solo protege del **fallo de arranque**. La caída en caliente reinicia siempre: "el servicio no se queda apagado". |
+| **Reinstalación de dependencias** | Exit 79 del hijo → `ensure-deps()` y relanzamiento inmediato sin penalización (máx. `SUPERVISOR_DEPS_INSTALL_ATTEMPTS`, 3). |
 | **Alerta de crash-loop** | A partir de `SUPERVISOR_HOT_CRASH_THRESHOLD` (5) caídas en caliente seguidas se avisa por log (y cada 10 después). |
 | **Ventana estable** | Tras `SUPERVISOR_STABLE_MS` (60 s, nunca menos que `gracia + fallos × intervalo`) sano, se olvida la racha de fallos. |
-| **Gracia de arranque** | `SUPERVISOR_STARTUP_MS` (30 s) sin exigir respuesta; se acorta cuando llega el banner (el servidor ya escuchó). |
+| **Gracia de arranque** | `SUPERVISOR_STARTUP_MS` (30 s) sin exigir respuesta; se acorta cuando llega el `ready` o el banner (el servidor ya escuchó). |
 | **Health check** | `SUPERVISOR_HEALTH_PATH` (`/healthz`), `SUPERVISOR_HEALTH_MS` (15 s), `SUPERVISOR_HEALTH_TIMEOUT_MS` (5 s), `SUPERVISOR_FAILURES_BEFORE_KILL` (3). |
-| **Puerto** | Se empieza con `SUPERVISOR_HEALTH_PORT` o `PORT`; se sustituye por el puerto real del banner. |
+| **Latido IPC** | `SUPERVISOR_HB_MS` (10 s) y `SUPERVISOR_HB_STALE_MS` (45 s). Solo aplica si llegó algún latido: un arranque lento nunca lo dispara. |
+| **Puerto** | Se empieza con `SUPERVISOR_HEALTH_PORT` o `PORT`; se sustituye por el puerto real del mensaje `ready` o del banner. |
 | **PID file** | `SUPERVISOR_PID_FILE`, por defecto `.zlapy.pid` en la raíz. Se escribe al arrancar y se vacía al salir. Se crea con permisos **0600** (un 0644 deja que cualquier usuario local lea el PID del servidor). |
-| **Señales** | `SIGINT`/`SIGTERM` → propaga al hijo, cancela el reinicio pendiente, `exit(0)` a los 5 s. |
+| **Señales** | `SIGINT`/`SIGTERM`/`SIGHUP` → avisa al hijo (`{t:'stop'}`) y le propaga la señal; cancela el reinicio pendiente; `exit(0)` a los 5 s. |
 | **Timer de reinicio** | **Sin `unref()` a propósito**: es lo único que mantiene vivo al supervisor entre la caída del hijo y el siguiente arranque. |
 | **Sondeo** | Nunca se solapan dos sondeos (`pendingProbe`). |
 
@@ -1446,21 +1486,33 @@ base: vigila el proceso hijo (`node server.js`).
 7. clearTimeout(hardExit) · process.exit(0)
 ```
 
-`uncaughtException` hace el checkpoint y cierra las bases antes de
-`exit(1)`; `unhandledRejection` **solo se registra** (una promesa
-rechazada no debe tumbar el servidor).
+Los errores globales **no** están en `servers.js`: los maneja
+`src/process-guards.js`. `uncaughtException` y `unhandledRejection` se
+registran SIEMPRE con la pila completa en consola y en
+`data/log/errors.log` (acotado a 2 MB conservando el final). Los errores
+**no fatales** no tumban el servidor: se sigue sirviendo (el watchdog del
+supervisor vigila que no sea un zombi). Los **fatales** (SQLITE corrupta,
+`ENOSPC`, `EACCES`…) ejecutan el hook que inyecta `servers.js` —el
+checkpoint WAL y el cierre de las bases de más arriba— y salen con
+`exit(1)` para que el supervisor levante un proceso limpio.
 
 ### 9.3 Scripts de `ops/`
 
+Organizados por dominios, igual que `src/`. Rutas relativas a `ops/`:
+
 | Script | Qué hace | Notas |
 | --- | --- | --- |
-| `supervisor.js` | Vigila y relanza el servidor (ver §9.1). | `npm start`. |
-| `backup.js` | Copia las dos bases con la **API de backup de SQLite** (`db.backup()`, segura con el servidor corriendo y WAL activo) y el `.env` como `credencial.env`: sin la credencial, el respaldo es inservible. | `npm run backup [dir]`. El destino se crea con 0700 y los ficheros con 0600. |
-| `owner-credentials.js` | CLI de la credencial del propietario (`npm run owner`): `init` (base nueva), `credential` (cambia la credencial y re-cifra TODO), `rotate` (sal nueva), `check` (auditoría de solo lectura), `show`, `unlock-check`, `export-kit` (kit de recuperación con credencial + bases) y `reset`. No muestra la contraseña por pantalla. | `npm run owner -- <comando>`. |
-| `reencrypt-master.js` | Motor de re-cifrado del dominio de la llave maestra: verifica TODOS los sobres dependientes con la llave vigente, re-cifra `user_auth_keys`, `groups.keys_cipher`, `meta` (VAPID), los campos sueltos por columna (`FIELD_TABLES`) y `blobs.data` en transacciones con reversión compensada. **Aborta si hay un servidor vivo de esa instalación** (seguiría escribiendo con la llave vieja). No toca el `.env`: lo escribe el CLI, al final. `auditMasterKey()` hace la auditoría de solo lectura. | Lo invoca `npm run owner -- credential/rotate`. |
-| `repair-unreadable-auth-keys.js` | Repara las `auth_key` ilegibles con la llave actual (giro de llave con el servidor en marcha): respaldo, borra la fila y limpia el perfil cifrado con ella. | `npm run repair [-- --apply]`. Sin `--apply` simula. |
-| `env-writer.js` | Escritura atómica de secretos (temporal 0600 + fsync + rename), `setEnvValue` y lectura directa del `.env`. | Compartido por el generador y el motor de re-cifrado. |
-| `tunnel.js` | Levanta `cloudflared` con la configuración `zty.yml` y el token de `CLOUDFLARE_TUNNEL_TOKEN`. | `npm run tunnel`. El token **no viaja en `argv`** (se entrega por `--token-file` en un fichero 0600 dentro de un directorio 0700, o por `TUNNEL_TOKEN` en el entorno si el binario es antiguo), y la salida del proceso se **redacta** para que no pueda aparecer en los logs. |
+| `install/ensure-deps.js` | Preflight de dependencias: verifica las librerías de `package.json`, Node `>=22` y el binario nativo de `better-sqlite3`; instala **solo lo que falte**. Camino feliz en milisegundos (comprobación por ficheros); si algo falta, carga real en proceso hijo para enumerar lo roto. | `npm run deps`; lo ejecuta `npm start` antes del supervisor. |
+| `install/check-native.js` / `install/build-sqlite.js` | Comprueba / compila el binario nativo de `better-sqlite3` (el caso sin prebuilds, p. ej. Termux). | `postinstall` / `npm run rebuild:sqlite`. |
+| `runtime/supervisor.js` | Vigila y relanza el servidor (ver §9.1). | `npm start`. |
+| `backup/backup.js` | Copia las dos bases con la **API de backup de SQLite** (`db.backup()`, segura con el servidor corriendo y WAL activo) y el `.env` como `credencial.env`: sin la credencial, el respaldo es inservible. | `npm run backup [dir]`. El destino se crea con 0700 y los ficheros con 0600. |
+| `auth/owner-credentials.js` | CLI de la credencial del propietario (`npm run owner`): `init` (base nueva), `credential` (cambia la credencial y re-cifra TODO), `rotate` (sal nueva), `check` (auditoría de solo lectura), `show`, `unlock-check`, `export-kit` (kit de recuperación con credencial + bases) y `reset`. No muestra la contraseña por pantalla. | `npm run owner -- <comando>`. |
+| `crypto/reencrypt-master.js` | Motor de re-cifrado del dominio de la llave maestra: verifica TODOS los sobres dependientes con la llave vigente, re-cifra `user_auth_keys`, `groups.keys_cipher`, `meta` (VAPID), los campos sueltos por columna (`FIELD_TABLES`) y `blobs.data` en transacciones con reversión compensada. **Aborta si hay un servidor vivo de esa instalación** (seguiría escribiendo con la llave vieja). No toca el `.env`: lo escribe el CLI, al final. `auditMasterKey()` hace la auditoría de solo lectura. | Lo invoca `npm run owner -- credential/rotate`. |
+| `crypto/repair-unreadable-auth-keys.js` / `crypto/repair-double-encrypted.js` | Reparan las `auth_key` ilegibles con la llave actual y los perfiles que quedaron cifrados dos veces. | `npm run repair` / `npm run repair:double-encrypted [-- --apply]`. |
+| `config/env-writer.js` | Escritura atómica de secretos (temporal 0600 + fsync + rename), `setEnvValue` y lectura directa del `.env`. | Compartido por el generador y el motor de re-cifrado. |
+| `net/tunnel.js` | Levanta `cloudflared` con la configuración `zty.yml` y el token de `CLOUDFLARE_TUNNEL_TOKEN`. | `npm run tunnel`. El token **no viaja en `argv`** (se entrega por `--token-file` en un fichero 0600 dentro de un directorio 0700, o por `TUNNEL_TOKEN` en el entorno si el binario es antiguo), y la salida del proceso se **redacta** para que no pueda aparecer en los logs. |
+| `db/db-viewer.js` + `db/db-viewer/` y `db/sqliteview.js` + `db/sqliteview/` | Visores HTTP **de solo lectura** de la base (grafo 2D/3D y tablas). Se sirven en `127.0.0.1:3001` y `:3002`. | `npm run dbview` / `npm run sqliteview`. Ver §2.4 de `docs/API.md`. |
+| `data/generate-emoji-data.js` / `data/generate-animated-bbot-pack.js` | Generadores de datos del cliente: índices JSON de emojis y el paquete animado bbot (procedural, con semilla por expresión). | `npm run generate:emojis`; el segundo lo invoca el servidor si falta el paquete. |
 
 ### 9.4 Copias de seguridad y llave maestra
 
@@ -1492,4 +1544,4 @@ historias y adjuntos cifrados con la llave anterior").
 | Cifrado | `src/crypto/master-key.js`, `src/crypto/message-crypto.js`, `src/crypto/mtproto.js`, `src/crypto/user-auth-keys.js`, `src/crypto/peer-index.js`, `src/crypto/setup.js` |
 | Base de datos | `src/db/schema.js`, `src/db/statements.js`, `src/db/transactions.js`, `docs/ESQUEMA-BD.md` |
 | Utilidades | `src/shared/*.js` |
-| Operación | `ops/*.js` |
+| Operación | `ops/**/*.js` |
