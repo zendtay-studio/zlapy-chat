@@ -16,6 +16,7 @@ const { db } = require('../db/database.js');
 const { Stmt } = require('../db/statements.js');
 const { readGroup, writeGroupMeta } = require('../groups/store.js');
 const { broadcastUsers } = require('../realtime/notify.js');
+const { parseJsonSafe } = require('../users/helpers.js');
 const { blockedSet, callFiles, groupPubCache, notesMap, profiles, stories, usernameIndex, users } = require('../state.js');
 const { saveUserToDb } = require('../users/store.js');
 
@@ -76,7 +77,9 @@ function propagateUsernameChange(previous, next) {
         const dueño = users.get(row.owner);
         if (!dueño) continue;
         try {
-            const registro = decryptForUser(dueño.id, row.data);
+            /* decryptForUser devuelve TEXTO (el JSON del registro), no un
+               objeto: hay que parsearlo antes de mirar `peer`. */
+            const registro = parseJsonSafe(decryptForUser(dueño.id, row.data) || '');
             if (registro && registro.peer === previous) {
                 registro.peer = next;
                 Stmt.updateCallData.run(encryptForUser(dueño.id, JSON.stringify(registro)), row.id, dueño.id);
