@@ -1,4 +1,4 @@
-/* Esquema 2D de la base de datos de Zlapy (v3).
+/* Esquema 2D de la base de datos de Zlapy (v12).
  *
  * Los datos estructurales (tablas, columnas, chips, índices y relaciones)
  * están transcritos de src/db/schema.js (única fuente de verdad) y verificados
@@ -8,11 +8,13 @@
  * base nueva: todo está a 0 salvo `meta` (3 filas). Como referencia
  * histórica, durante la auditoría del 23 oct 2026 la misma base llegó a tener
  * 17 cuentas, 306 sesiones, 430 mensajes, 9 grupos y 41 blobs.
- * Tras la ronda de remediación (SECOA) el ESQUEMA SIGUE SIENDO v3: los
- * arreglos fueron de aplicación (límites, permisos, políticas de grupo,
- * anti-replay del canal), ninguno añadió tablas, columnas ni índices. Las
- * notas de algunas tablas mencionan topes que aplica el código en tiempo de
- * ejecución para que no se confundan con el DDL.
+ * Desde entonces el esquema avanzó a v12 con migraciones idempotentes y sin
+ * pérdida de datos: v9 suelta la tabla `sessions` (los tokens pasaron a JWT
+ * sin almacén); v10 crea `user_rid` (rid + marcas de revocación) y retira
+ * `users.auth_version`; v11 añade `calls.peer_hash` (índice a ciegas del par)
+ * y suelta `idx_calls_peer`; v12 reconstruye `calls` con PK `(owner, id)`.
+ * Las notas de algunas tablas mencionan topes que aplica el código en tiempo
+ * de ejecución para que no se confundan con el DDL.
  * Las relaciones no declaradas como FK (chat codificado, nombres, hashes) se
  * dibujan aparte y se pueden ocultar con el interruptor "lógicas".
  */
@@ -168,11 +170,21 @@ const TABLES = [
             c('password_hash', 'TEXT', 'n', 'scrypt'),
             c('password_salt', 'TEXT', 'n'),
             c('add_policy', 'TEXT', 'n', "DEFAULT 'request' · CHECK all|request|nobody"),
-            c('auth_version', 'INTEGER', 'n', 'DEFAULT 1 · rotarla revoca los tokens (JWT) de la cuenta'),
             c('created_at', 'INTEGER', 'n', 'DEFAULT 0 · epoch ms'),
             c('last_seen', 'INTEGER')
         ],
         refs: [],
+        idx: []
+    },
+    {
+        name: 'user_rid', db: 'zlapy', group: 'identidad', rows: 0, col: 1,
+        cols: [
+            c('user_id', 'TEXT', 'pf'),
+            c('rid', 'TEXT', 'n', 'rota en logout / contraseña / cambio de cuenta'),
+            c('password_changed_at', 'INTEGER', 'n', 'DEFAULT 0 · barrera de revocación'),
+            c('logged_out_at', 'INTEGER', 'n', 'DEFAULT 0 · barrera de revocación')
+        ],
+        refs: [r(['user_id'], 'users', ['id'])],
         idx: []
     },
     {
@@ -436,14 +448,15 @@ const TABLES = [
     {
         name: 'calls', db: 'zlapy', group: 'mensajeria', rows: 0, col: 3,
         cols: [
-            c('id', 'TEXT', 'p'),
-            c('owner', 'TEXT', 'nf'),
-            c('peer', 'TEXT', 'nombre, no id: sobrevive al borrado'),
+            c('id', 'TEXT', 'p', 'compartido por los dos extremos'),
+            c('owner', 'TEXT', 'npf', 'PK compuesta con id'),
+            c('peer', 'TEXT', 'cifrado · se reescribe al renombrar'),
+            c('peer_hash', 'TEXT', 'HMAC del nombre: índice a ciegas'),
             c('ts', 'INTEGER', 'n'),
-            c('data', 'TEXT')
+            c('data', 'TEXT', 'cifrado con la clave del dueño')
         ],
         refs: [r(['owner'], 'users', ['id'])],
-        idx: ['idx_calls_owner_ts', 'idx_calls_peer']
+        idx: ['idx_calls_owner_ts', 'idx_calls_peer_hash']
     },
     {
         name: 'push_subs', db: 'zlapy', group: 'mensajeria', rows: 0, col: 3,
@@ -501,7 +514,7 @@ const LOGICAL = [
     { from: 'blob_access_members', fromCol: 'hash', to: 'blobs', toCol: 'hash', label: 'contenido del adjunto' },
     { from: 'messages', fromCol: 'hash', to: 'blobs', toCol: 'hash', label: 'adjunto' },
     { from: 'stories', fromCol: 'hash', to: 'blobs', toCol: 'hash', label: 'adjunto' },
-    { from: 'calls', fromCol: 'peer', to: 'users', toCol: 'username', label: 'por nombre' },
+    { from: 'calls', fromCol: 'peer', to: 'users', toCol: 'username', label: 'por nombre (cifrado + peer_hash)' },
     { from: 'user_muted_peers', fromCol: 'peer_name', to: 'users', toCol: 'username', label: 'por nombre' },
     { from: 'group_join_requests', fromCol: 'username', to: 'users', toCol: 'username', label: 'desnormalizado' },
     { from: 'user_chat_prefs', fromCol: 'peer_key', to: 'users', toCol: 'id', label: "'dm:<usuario>'" }
@@ -512,7 +525,7 @@ const LOGICAL = [
 const COLUMNS = [
     ['user_profiles', 'user_chat_settings', 'user_privacy', 'user_privacy_users',
         'user_notes', 'user_stickers', 'user_muted_peers', 'user_chat_prefs'],
-    ['users', 'sessions', 'user_auth_keys', 'user_keys', 'summaries',
+    ['users', 'user_rid', 'user_auth_keys', 'user_keys', 'summaries',
         'contacts', 'contact_requests', 'blocked'],
     ['groups', 'group_members', 'group_join_requests', 'group_summaries', 'user_group_seen'],
     ['messages', 'message_deletions', 'chat_deletions', 'blob_access', 'blob_access_members', 'stories', 'calls', 'push_subs'],

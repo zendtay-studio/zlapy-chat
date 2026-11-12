@@ -1,9 +1,9 @@
-# Esquema de la base de datos de Zlapy (versión 3)
+# Esquema de la base de datos de Zlapy (versión 12)
 
 Esta es la referencia completa del almacenamiento de Zlapy. La base es
 SQLite (`data/zlapy.db`) y el esquema vive en **`src/db/schema.js`**,
 que es la única fuente de verdad: el servidor lo aplica al arrancar
-(`migrateIfNeeded`) y los tests (`test/database-schema.test.js`) lo verifican.
+(`ensureSchema` → `applySchema`) y los tests (`test/schema.test.js`) lo verifican.
 
 > **Antes (v1):** la tabla `users` tenía solo `id`, `username` y `data`, un
 > JSON gigante con la contraseña, las claves, el perfil, la privacidad, los
@@ -41,6 +41,7 @@ que es la única fuente de verdad: el servidor lo aplica al arrancar
 │ user_chat_settings           │   │    │ group_join_requests       │
 │ user_muted_peers ──► users   │   │    │ group_summaries           │
 │ user_notes                   │   │    │ user_group_seen ──► users │
+│ user_rid (revocación)        │   │    └───────────────────────────┘
 │ user_stickers                │   │    └───────────────────────────┘
 │ contacts (2 sentidos)        │   │    ┌───────────────────────────┐
 │ contact_requests             │   └────│ (todas: gid/user_id FK)   │
@@ -86,13 +87,15 @@ La tabla principal. Todo lo demás cuelga de aquí.
 | `password_hash` | TEXT | NOT NULL | Derivación de la contraseña (scrypt-like con sal). |
 | `password_salt` | TEXT | NOT NULL | Sal aleatoria por cuenta (16 bytes en hex). |
 | `add_policy` | TEXT | CHECK `all`/`request`/`nobody`, default `request` | Quién puede agregar como contacto. |
-| `auth_version` | INTEGER | NOT NULL default 1 | Versión de autenticación. Rotarla (logout, cambio de contraseña, cambio de cuenta) invalida de golpe TODOS los tokens de sesión (JWT) emitidos para la cuenta. |
 | `created_at` | INTEGER | NOT NULL, default 0 | Alta de la cuenta. |
 | `last_seen` | INTEGER | NULL | Última desconexión. `NULL` = en línea. |
 
+La revocación de sesiones **no vive aquí**: la llevaba `users.auth_version`
+(retirada en la v10) y ahora la decide `user_rid` (ver §3.13).
+
 **Cascada:** borrar una fila de `users` arrastra (en este orden lógico):
 `user_profiles`, `user_keys`, `user_privacy` (+ sus listas), `user_chat_settings`,
-`user_muted_peers`, `user_notes`, `user_stickers`, `user_group_seen`,
+`user_muted_peers`, `user_notes`, `user_stickers`, `user_group_seen`, `user_rid`,
 `contacts` (ambos sentidos), `contact_requests`, `blocked`, `summaries`,
 `messages` (como autor y como destinatario), `stories`, `calls`,
 `push_subs`, `group_members`, `group_summaries`, `group_join_requests`,
@@ -242,22 +245,39 @@ preconfigurados del cliente terminan escribiendo aquí.
 | `gid` | TEXT | FK → `groups.id` CASCADE, PK compuesta | Qué grupo. |
 | `ts` | INTEGER | NOT NULL | Último mensaje visto (para el contador de no leídos). |
 
-### 3.13 Sesiones — no hay tabla (v9)
+### 3.13 `user_rid` — rid de revocación, y sesiones sin tabla (v10)
 
 Las sesiones son **stateless**: el servidor genera el token (JWT HS256,
 secreto derivado por HKDF-SHA256 de la llave maestra, dominio
-`zlapy/session-token/v1`) y lo guarda **solo en la cookie HttpOnly del
-navegador**. No hay filas que guardar, purgar ni migrar: el payload lleva la
-cuenta (`sub`), la versión de autenticación vigente (`ver`) y la caducidad
-(`exp`), y cada petición verifica firma, caducidad y que `ver` siga siendo la
-de `users.auth_version`. Un token manipulado, caducado o emitido antes de una
-rotación se rechaza con `401` aunque la firma "parezca" buena.
+`zlapy/session-token/v1`), lo firma y lo guarda **solo en la cookie HttpOnly
+del navegador**. No hay filas que guardar, purgar ni migrar.
 
-La revocación es **por cuenta**: rotar `users.auth_version` (logout, cambio
-de contraseña, cambio de cuenta) invalida de golpe todos los tokens de esa
-cuenta, también los de otros dispositivos. Las cookies por cuenta
-(`chatlocal_account_<id>`) permiten tener varias cuentas abiertas en el mismo
-navegador; cada una lleva su propio token.
+Para poder revocar sin almacén, cada cuenta tiene su rid en `user_rid`:
+
+| Columna | Tipo | Restricciones | Significado |
+| --- | --- | --- | --- |
+| `user_id` | TEXT | PK, FK → `users.id` CASCADE | Cuenta dueña. |
+| `rid` | TEXT | NOT NULL | Identificador de sesión de la cuenta. Rota en registro, logout, cambio de contraseña y cambio de cuenta. |
+| `password_changed_at` | INTEGER | NOT NULL default 0 | Última vez que cambió la contraseña (segunda barrera de revocación). |
+| `logged_out_at` | INTEGER | NOT NULL default 0 | Último logout (segunda barrera de revocación). |
+
+El JWT lleva `{ sub, iss: 'zlapy-session', nbf, jti, checksum, exp }` y
+**no se guarda ningún token**: cada petición recalcula la firma y compara el
+`checksum` del token — SHA-256 canónico de `id | username | password_hash |
+rid` de la cuenta— con el estado vigente (`src/auth/rid.js`). La comparación
+usa `timingSafeEqual`. Todo token emitido antes de una rotación queda
+descuadrado, de golpe y para todos los dispositivos.
+
+La **segunda barrera** mira el tiempo: un token con `iat` anterior a
+`password_changed_at` o a `logged_out_at` (comparando a granularidad de
+segundo) se rechaza aunque el checksum no se haya recalado. Es la red para
+bases migradas, donde el rid nuevo llega sin marcas fiables.
+
+Las cookies por cuenta (`chatlocal_account_<id>`) permiten tener varias
+cuentas abiertas en el mismo navegador; cada una lleva su propio token
+(`jti` aleatorio: sin él, dos tokens emitidos en el mismo segundo serían
+idénticos). La caducidad (`exp`, 30 días) es una red de seguridad, no el
+mecanismo de revocación.
 
 ### 3.14 `contacts`, `contact_requests` y `blocked`
 
@@ -335,11 +355,26 @@ Las historias viven 24 h (el servidor las ignora y las borra después).
 
 | Columna | Tipo | Restricciones | Significado |
 | --- | --- | --- | --- |
-| `id` | TEXT | PK | UUID de la llamada. |
-| `owner` | TEXT | FK → `users.id` CASCADE | A quién pertenece esta entrada del historial. |
-| `peer` | TEXT | NULL | Nombre de usuario del otro extremo, a propósito: sobrevive a cambios de nombre. |
+| `id` | TEXT | NOT NULL, PK compuesta | UUID de la llamada. **Compartido por los dos extremos**: llamador y receptor tienen cada uno su fila. |
+| `owner` | TEXT | NOT NULL, FK → `users.id` CASCADE, PK compuesta | A quién pertenece esta entrada del historial. |
+| `peer` | TEXT | NULL | Nombre del otro extremo, **cifrado en reposo**. Se reescribe al renombrar la cuenta (columna y blob `data`). |
+| `peer_hash` | TEXT | NULL | HMAC del nombre normalizado (**índice a ciegas**, `src/crypto/peer-index.js`). Columna de búsqueda: localizar renombrados y purgar es O(log n) sin descifrar. |
 | `ts` | INTEGER | NOT NULL | Cuándo. |
-| `data` | TEXT | NULL | JSON con la duración y el resultado. |
+| `data` | TEXT | NULL | JSON cifrado con la duración y el resultado. |
+
+Dos arreglos que explican la forma actual:
+
+* **v11 (índice a ciegas).** El nombre del par iba cifrado y las búsquedas por
+  nombre (renombre, purga al borrar cuenta) recorrían y descifraban **todo**
+  el historial: O(N) de toda la instalación. `peer_hash` (HMAC-SHA256 con
+  subclave HKDF de la llave maestra) permite localizar por nombre sin
+  revelarlo. El índice antiguo (`idx_calls_peer`) indexaba el texto cifrado:
+  no servía para nada y se suelta.
+* **v12 (PK `(owner, id)`).** La PK era el `id` global y los dos extremos
+  comparten callId: el `INSERT OR REPLACE` del receptor machacaba la fila del
+  llamador y, tras un reinicio, solo el historial de quien recibió la llamada
+  volvía a cargar. Con la PK compuesta, cada cuenta conserva su registro
+  (`dir: 'out'` / `dir: 'in'`).
 
 ### 3.20 `push_subs` — notificaciones push
 
@@ -451,7 +486,9 @@ una sola transacción (todo o nada).
 4. **Historias.** Se recogen sus hashes; la cascada borra la historia y su
    `blob_access`.
 5. **Llamadas.** Se borra el historial donde era el otro extremo
-   (`calls.peer = <usuario>`), además de las suyas por cascada.
+   (`calls.peer_hash = <hash del nombre>`, O(log n)); el propio cae por
+   cascada. Las filas cuyo nombre ya no se puede descifrar (sin hash) se
+   purgen con la comparación lenta de siempre, para no dejar nada.
 6. **La cuenta.** `DELETE FROM users WHERE id = ?`: aquí caen
    **todas** las cascadas del punto 3.1.
 7. El servidor poda los blobs huérfanos, limpia la RAM (usuarios, perfiles,
@@ -466,38 +503,42 @@ cuenta se quita de la lista de cuentas conectadas).
 
 ---
 
-## 5. El esquema al arrancar (sin migraciones)
+## 5. El esquema al arrancar (v12, con migraciones idempotentes)
 
-Al arrancar, el servidor ejecuta `ensureSchema(db)`: aplica el esquema v3
-completo con `CREATE TABLE / CREATE INDEX IF NOT EXISTS` (idempotente: si la
-base ya está al día no toca nada) y escribe `meta.schema_version = 3`.
+Al arrancar, el servidor ejecuta `ensureSchema(db)` → `applySchema(db)`:
+aplica el esquema vigente con `CREATE TABLE / CREATE INDEX IF NOT EXISTS`
+(idempotente) y **migra lo que falte** de instalaciones anteriores, siempre
+con pasadas idempotentes que no tocan lo que ya está al día:
 
-**No hay migraciones.** Una base en un formato anterior (por ejemplo, la v1
-antigua con todo el usuario dentro de un JSON `data`) **no es compatible** con
-este servidor: no se convierte ni se adapta. Para usarla hay dos caminos:
+| De | Qué hace |
+| --- | --- |
+| v9 | Suelta la tabla `sessions` (los tokens pasaron a JWT stateless). |
+| v10 | Crea `user_rid` y retira `users.auth_version` (la revocación pasa al rid + checksum). |
+| v11 | Añade `calls.peer_hash` + su índice, y suelta `idx_calls_peer` (indexaba texto cifrado). |
+| v12 | Reconstruye `calls` con PK `(owner, id)` (SQLite no altera una PK in situ). |
 
-1. Restaurarla desde un respaldo guardado en `backups/` (ver «Copias de
-   seguridad» en el README).
-2. Empezar de cero: mueve la base actual a otra carpeta y deja que el servidor
-   cree un esquema v3 limpio.
+Dos rellenos necesitan la **llave maestra** (derivar el rid y hashear los
+nombres) y por eso NO van en `applySchema` —corre al abrir la base, antes de
+que la llave exista— sino al arrancar el servidor, ya con ella en RAM
+(`backfillUserRids`, `backfillCallPeerHashes` en `server.js`). Las filas
+ilegibles quedan marcadas y las cubren los caminos lentos de siempre.
 
-El cifrado en reposo se aplica de forma **compatible con lo que ya había**:
-`decryptAtRest` devuelve el valor tal cual si no empieza por `PCE1:`, así que
-un texto antiguo en claro se sigue leyendo y se vuelve a cifrar en el siguiente
-guardado (no hace falta migrar la base).
+El número de versión vive en `meta.schema_version` (`SCHEMA_VERSION` en
+`src/db/schema.js`).
 
-**El servidor no migra al arrancar.** Lee los dos formatos de mensaje (el
-heredado `PCE2` y el nuevo `PCE3`) y escribe siempre el nuevo, así que el
-histórico se va re-cifrando solo a medida que se reescribe. Para convertirlo
-todo de golpe existe `ops/migrate-to-mtproto.js` (manual, con respaldo
-previo, idempotente y **eliminable**: el servidor no lo importa).
+**El servidor no migra el CIFRADO al arrancar.** Lee los dos formatos de
+mensaje (el heredado `PCE2` y el nuevo `PCE3`) y escribe siempre el nuevo,
+así que el histórico se va re-cifrando solo a medida que se reescribe. Para
+convertirlo todo de golpe existe `ops/migrate-to-mtproto.js` (manual, con
+respaldo previo, idempotente y **eliminable**: el servidor no lo importa).
 
 El esquema incluye índices para las columnas hijas de las claves ajenas
 (`idx_messages_to`, `idx_summaries_peer`, `idx_ba_chat_a`, `idx_ba_chat_b`,
 `idx_upu_target`, `idx_ump_peer`, `idx_groups_owner`, `idx_gs_gid`,
-`idx_ugs_gid`, `idx_calls_peer`) para que las cascadas de borrado no hagan
-full-scan, y retira los redundantes (`idx_summaries_owner`, `idx_gs_owner`,
-`idx_creq_from`, `idx_messages_hash`).
+`idx_ugs_gid`, `idx_calls_owner_ts`, `idx_calls_peer_hash`) para que las
+cascadas de borrado no hagan full-scan, y retira los redundantes
+(`idx_summaries_owner`, `idx_gs_owner`, `idx_creq_from`,
+`idx_messages_hash`, `idx_calls_peer`).
 
 ---
 
@@ -515,7 +556,12 @@ SELECT key, value FROM meta;
 SELECT id, username, add_policy, datetime(created_at/1000, 'unixepoch') AS alta, last_seen
 FROM users ORDER BY username;
 
--- Todo lo que cuelga de una cuenta
+-- Revocación y llamadas
+SELECT u.username, r.rid, r.password_changed_at, r.logged_out_at
+FROM user_rid r JOIN users u ON u.id = r.user_id ORDER BY u.username;
+
+SELECT c.id, u.username AS dueño, c.peer_hash IS NOT NULL AS con_hash
+FROM calls c JOIN users u ON u.id = c.owner ORDER BY c.ts DESC LIMIT 20;
 SELECT 'perfil'      AS parte, COUNT(*) FROM user_profiles      WHERE user_id = :id
 UNION ALL SELECT 'privacidad',   COUNT(*) FROM user_privacy      WHERE user_id = :id
 UNION ALL SELECT 'colores',      COUNT(*) FROM user_chat_settings WHERE user_id = :id
@@ -557,6 +603,10 @@ db.prepare('SELECT username FROM users WHERE username = ?').all('ano');
 7. Datos sensibles (mensajes, historias, adjuntos, claves) nunca se escriben
    en claro: pasan por AES-256-GCM con la llave maestra (derivada de la
    credencial del propietario: `DB_USER` + `DB_PASSWORD` del `.env`).
+8. Toda cuenta tiene exactamente una fila en `user_rid`; sin rid, ningún
+   token de la cuenta valida (sesión cerrada de forma segura).
+9. De cada llamada hay como máximo una fila por `(owner, id)`: los dos
+   extremos conviven y ninguno pisa al otro.
 
 ---
 
@@ -564,7 +614,9 @@ db.prepare('SELECT username FROM users WHERE username = ?').all('ano');
 
 | Archivo | Papel |
 | --- | --- |
-| `src/db/schema.js` | Esquema v3 y rutinas de borrado en cascada. |
+| `src/db/schema.js` | Esquema v12, migraciones idempotentes (v9→v12) y rutinas de borrado en cascada. |
+| `src/auth/rid.js` | Rid de cuenta, checksum canónico del token y generación del rid aleatorio. |
+| `src/crypto/peer-index.js` | Índice a ciegas de nombres de par (HMAC) para `calls.peer_hash`. |
 | `test/schema.test.js` | Tests de esquema, cascadas y restricciones. |
 | `src/crypto/message-crypto.js` | Cifrado en reposo (`encryptAtRest` / `decryptAtRest`) y firmas Ed25519. |
 | `src/crypto/mtproto.js` | Cifrado en la nube (MTProto 2.0): `auth_key`, `msg_key`, `aes_key`/`aes_iv`, cabecera interna, relleno y ventana anti-repetición. |

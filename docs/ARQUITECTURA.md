@@ -88,7 +88,7 @@ colgado (`npm start` → `node ops/supervisor.js`).
         │                        ▼                                    │
         │        ┌──────────────────────────────┐                     │
         │        │  ESTADO EN RAM (src/state.js) │                    │
-        │        │  users · groups · sessions ·  │                    │
+        │        │  users · groups · historias · │                    │
         │        │  stories · notes · calls ·    │                    │
         │        │  pushSubs · chatPageCache     │                    │
         │        └──────────────┬───────────────┘                     │
@@ -425,7 +425,7 @@ Definidas en `src/http/responses.js:17-39` y aplicadas a **toda** respuesta:
 | `src/crypto/` | Llave maestra, cifrado en reposo (AES-256-GCM), cifrado por usuario (MTProto 2.0), firmas Ed25519. | `master-key.js`, `message-crypto.js`, `mtproto.js`, `user-auth-keys.js`, `setup.js` |
 | `src/http/` | Router, respuestas con cabeceras, limitadores de frecuencia, arranque y cierre de servidores. | `router.js`, `servers.js`, `responses.js`, `helpers.js`, `rate-limit.js` |
 | `src/realtime/` | Framing RFC 6455, servidor WebSocket, envío de eventos a clientes. | `frames.js`, `websocket.js`, `notify.js` |
-| `src/auth/` | Sesiones, cookies, hashing de contraseñas y rutas de autenticación. | `sessions.js`, `routes.js` |
+| `src/auth/` | Sesiones, cookies, hashing de contraseñas y rutas de autenticación. | `sessions.js`, `rid.js`, `routes.js` |
 | `src/users/` | Cuentas en RAM, hidratación/persistencia, privacidad por función, helpers de lookup. | `store.js`, `privacy.js`, `helpers.js` |
 | `src/profile/` | Perfil, ajustes de cuenta, notas, apariencia, borrado de cuenta. | `routes.js` |
 | `src/contacts/` | Contactos, solicitudes, bloqueos. | `routes.js` |
@@ -476,7 +476,7 @@ Definidas en `src/http/responses.js:17-39` y aplicadas a **toda** respuesta:
 | `groupCache` | gid → grupo normalizado | `groups` + `group_members` + `group_join_requests` |
 | `groupPubCache` | `gid\0viewer` → vista pública del grupo | derivado de `groupCache` |
 | `blockedSet` | username → `Set<username>` | `blocked` |
-| `sessionCache` | hash(token) → `{ userId, expiresAt }` | `sessions` |
+| (sin `sessionCache`) | — | desde v10 las sesiones son JWT sin almacén: no hay tabla ni caché que consultar; la validez se recalcula en cada petición (`src/auth/rid.js`) |
 | `pushSubs` | userId → array de suscripciones | `push_subs` |
 | `notesMap` | username → nota (texto, fondo, ts) | `user_notes` |
 | `callFiles` | username → array de llamadas | `calls` |
@@ -493,10 +493,10 @@ código en varios puntos:
   RAM: el comentario es explícito —"la lista no debe depender solo de la
   RAM (la privacidad por defecto 'solo contactos' denegaría los DMs en
   silencio si la lista llegara vacía)" (`src/users/store.js:52-56`).
-- `sessionUser()` busca en `sessionCache`; si no está, consulta
-  `sessions` y, si la cuenta no está en RAM, la **carga de la base**
-  (`loadUserFromRow`) o descarta la sesión huérfana
-  (`src/auth/sessions.js:63-78`).
+- `sessionFromToken()` no guarda nada: verifica firma y caducidad del JWT y
+  recalcula el `checksum` del estado vigente de la cuenta (rid incluido); si
+  descuadra, la sesión se descarta sin tocar la base
+  (`src/auth/sessions.js`, `src/auth/rid.js`).
 - `accountByName()` usa la base como autoridad y **repara** el índice de
   RAM si estaba sucio (permite borrar una cuenta y volver a registrar el
   mismo nombre sin reiniciar) (`src/users/store.js:333-349`).
@@ -508,7 +508,7 @@ código en varios puntos:
 
 | Momento | Qué se escribe | Cómo |
 | --- | --- | --- |
-| Registro / login | `users`, `user_profiles`, `sessions` | `saveUserToDb` → `tx.saveUser` |
+| Registro / login | `users`, `user_profiles`, `user_rid` | `saveUserToDb` → `tx.saveUser` (el token no se escribe: se firma al vuelo) |
 | Envío de mensaje | `messages`, `blob_access` | `tx.sendMessage` (`src/db/transactions.js:47`) |
 | Envío en grupo | `messages`, `blob_access`, `group_summaries` (1 upsert por miembro) | `tx.sendMessage` + `Stmt.bumpGroupSummary` |
 | Acuse / visto | `messages` (re-cifrado), `summaries` | `updateStoredMessage` + `writeSummaryEntry` |
@@ -1253,7 +1253,7 @@ se destruye la conexión (`src/realtime/notify.js:31-37`, `40-50`).
 1. La ruta debe ser /ws                              → si no, 404
 2. originAllowed(req)                                → si no, 403  (misma política CSRF)
 3. Upgrade: websocket / versión 13 / Sec-WebSocket-Key → si no, 400
-4. Cookie chatlocal_session → hash SHA-256 → sessionCache o tabla sessions
+4. Cookie chatlocal_session → JWT verificado al vuelo (firma + checksum del estado de la cuenta) → 401 si no vale
 5. Sin sesión viva                                   → 401
 6. Se calcula Sec-WebSocket-Accept = base64(SHA1(key + GUID))
 7. Se responde 101 Switching Protocols
@@ -1480,7 +1480,7 @@ historias y adjuntos cifrados con la llave anterior").
 | Arranque | `server.js`, `src/db/database.js`, `src/db/schema.js`, `src/users/store.js`, `src/http/servers.js` |
 | Configuración | `src/config.js`, `.env.example` |
 | HTTP | `src/http/router.js`, `src/http/servers.js`, `src/http/responses.js`, `src/http/helpers.js`, `src/http/rate-limit.js` |
-| Sesiones | `src/auth/sessions.js`, `src/auth/routes.js` |
+| Sesiones | `src/auth/sessions.js`, `src/auth/rid.js`, `src/auth/routes.js` |
 | Cuentas | `src/users/store.js`, `src/users/helpers.js`, `src/users/privacy.js` |
 | Chat | `src/chat/routes.js`, `src/chat/messages.js`, `src/chat/summaries.js`, `src/chat/media.js`, `src/chat/mentions.js` |
 | Grupos | `src/groups/store.js`, `src/groups/routes.js` |
@@ -1490,7 +1490,7 @@ historias y adjuntos cifrados con la llave anterior").
 | Llamadas | `src/calls/store.js`, `src/calls/routes.js` |
 | Push | `src/push/vapid.js`, `src/push/routes.js`, `public/sw.js` |
 | Tiempo real | `src/realtime/frames.js`, `src/realtime/websocket.js`, `src/realtime/notify.js` |
-| Cifrado | `src/crypto/master-key.js`, `src/crypto/message-crypto.js`, `src/crypto/mtproto.js`, `src/crypto/user-auth-keys.js`, `src/crypto/setup.js` |
+| Cifrado | `src/crypto/master-key.js`, `src/crypto/message-crypto.js`, `src/crypto/mtproto.js`, `src/crypto/user-auth-keys.js`, `src/crypto/peer-index.js`, `src/crypto/setup.js` |
 | Base de datos | `src/db/schema.js`, `src/db/statements.js`, `src/db/transactions.js`, `docs/ESQUEMA-BD.md` |
 | Utilidades | `src/shared/*.js` |
 | Operación | `ops/*.js` |

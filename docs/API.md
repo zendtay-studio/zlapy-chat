@@ -33,14 +33,19 @@ Atributos de la cookie (`src/auth/sessions.js:79-90`): `HttpOnly; SameSite=Lax; 
 y `Secure` solo si la conexión va cifrada (`socket.encrypted` o `X-Forwarded-Proto: https`).
 El TTL por defecto son 30 días (`AUTH_SESSION_TTL_MS`, `src/config.js:28`).
 
-**El servidor no guarda el token** (v9, `src/auth/sessions.js`): no hay tabla `sessions`
-ni caché en RAM. El payload del JWT lleva la cuenta (`sub`), la versión de
-autenticación vigente (`ver`) y la caducidad (`exp`); la firma es HMAC-SHA256 con un
+**El servidor no guarda el token** (v10, `src/auth/sessions.js`): no hay tabla `sessions`
+ni caché en RAM. El payload del JWT lleva la cuenta (`sub`), un `checksum` del estado
+vigente de la cuenta, un `jti` aleatorio (dos tokens emitidos en el mismo segundo serían
+idénticos sin él) y la caducidad (`exp`); la firma es HMAC-SHA256 con un
 secreto derivado por HKDF-SHA256 de la llave maestra (`zlapy/session-token/v1`), así que
 sobrevive a los reinicios sin estar escrito en ninguna parte. Cada petición verifica
-firma, caducidad y que `ver` siga siendo la de `users.auth_version`. La revocación es por
-cuenta: rotar `auth_version` (logout, cambio de contraseña, cambio de cuenta) invalida de
-golpe todos los tokens de la cuenta, también los de otros dispositivos.
+firma, caducidad y que el `checksum` —SHA-256 canónico de `id | username | password_hash |
+rid` (`src/auth/rid.js`)— siga describiendo la cuenta. La revocación es por
+cuenta: **rotar el rid** (`user_rid.rid`: logout, cambio de contraseña, cambio de cuenta)
+descuadra el checksum e invalida de golpe todos los tokens de la cuenta, también los de
+otros dispositivos. Además, un token con `iat` anterior a `user_rid.password_changed_at`
+o `logged_out_at` se rechaza aunque el checksum cuadre (segunda barrera). Renombrar la
+cuenta también descuadra el checksum: quien renombra recibe cookie nueva en la respuesta.
 
 **Cualquier ruta no pública exige sesión.** El corte se hace en `src/http/router.js:100-101`:
 
@@ -271,7 +276,7 @@ puede suplantar a otro usuario.
 | `/auth/register` | Pública | Crea una cuenta | `{ username, password, name? }` — usuario `[a-z0-9_.-]{3,24}`, contraseña 8-128, nombre visible opcional (≤64 caracteres) | `201 { ok: true, user: { id, username } }` + cookie de sesión. `400` si los datos no valen, `409 { error: "Username is already taken." }` si el nombre está ocupado, `429` si se superan los registros por IP. El avatar **no** se acepta aquí (el cuerpo está limitado a 8 KiB): se guarda después con `POST /profile` |
 | `/auth/login` | Pública | Inicia sesión | `{ username, password }` | `200 { ok: true, user: { id, username } }` + cookie. `401 { error: "Invalid username or password." }`, `429 { error: "Too many login attempts." }` |
 | `/auth/add-account` | Sesión | Vincula otra cuenta en este navegador | `{ username, password }` (+ `expectedAccountId` opcional: UUID de la cuenta que se espera) | `200 { ok: true, user: { id, username } }` + cookie `chatlocal_account_<uuid>`. `401` si la contraseña no es, `409 { error: "Esas credenciales no son de la cuenta seleccionada." }` si se pasó `expectedAccountId` y las credenciales son de otra cuenta, `429` por intentos |
-| `/auth/switch` | Cookie de cuenta | Cambia a una cuenta vinculada (rota el token de sesión) | `{ accountId }` (UUID) | `200 { ok: true, user: { id, username } }`. `400 { error: "Cuenta inválida." }`, `401 { error: "Sesión no disponible.", relogin: true }` (la cookie de la cuenta caducó o se perdió, pero la cuenta **sigue existiendo**: hay que volver a iniciar sesión) o `401 { error: "Cuenta no disponible.", gone: true }` (la cuenta ya no está en la base: se quita de la lista de cuentas conectadas). **Sin sesión vigente** la respuesta es `401 { error: "Sesión no disponible." }` sin marcas: la ruta es pública y distinguirlas la convertiría en un oráculo de existencia de cuentas |
+| `/auth/switch` | Cookie de cuenta | Cambia a una cuenta vinculada (rota el rid de la abandonada y re-emite su cookie) | `{ accountId }` (UUID) | `200 { ok: true, user: { id, username } }`. `400 { error: "Cuenta inválida." }`, `401 { error: "Sesión no disponible.", relogin: true }` (la cookie de la cuenta caducó o se perdió, pero la cuenta **sigue existiendo**: hay que volver a iniciar sesión) o `401 { error: "Cuenta no disponible.", gone: true }` (la cuenta ya no está en la base: se quita de la lista de cuentas conectadas). **Sin sesión vigente** la respuesta es `401 { error: "Sesión no disponible." }` sin marcas: la ruta es pública y distinguirlas la convertiría en un oráculo de existencia de cuentas |
 | `/auth/account/remove` | Sesión | Elimina una cuenta vinculada de este navegador | `{ accountId }` (UUID) | `200 { ok: true }`. `400` si es la cuenta en uso |
 | `/auth/logout` | Pública | Cierra la sesión y revoca **todas** las cuentas abiertas en el navegador | — (sin cuerpo) | `200 { ok: true }` + cookies de sesión borradas |
 | `/key` | Sesión | Guarda la clave pública de cifrado de la cuenta | `{ pubKey }` (objeto) | `200 { ok: true }`. `400 { error: "clave inválida" }` |
@@ -283,7 +288,7 @@ puede suplantar a otro usuario.
 | `/contacts/remove` | Sesión | Elimina un contacto | `{ username }` | `200 { ok: true }`. `404 { error: "No disponible." }` |
 | `/contacts/cancel` | Sesión | Retira una solicitud enviada | `{ username }` | `200 { ok: true }`. `404 { error: "No disponible." }` |
 | `/contacts/respond` | Sesión | Acepta o rechaza una solicitud recibida | `{ username, accept }` (`accept` booleano) | `200 { ok: true, accepted, username }`. `400 { error: "Indica aceptar." }`, `403 { error: "Bloqueo activo." }`, `404` |
-| `/account/profile` | Sesión | Cambia el nombre de usuario y/o la contraseña | `{ currentPassword, username?, password? }` | `200 { ok: true, user: { id, username } }`. `400 { error: "Contraseña actual requerida." }`, `403 { error: "Contraseña incorrecta." }`, `409 { error: "Usuario ocupado." }`. Si cambia la contraseña, **revoca todas las sesiones** y abre una nueva |
+| `/account/profile` | Sesión | Cambia el nombre de usuario y/o la contraseña | `{ currentPassword, username?, password? }` | `200 { ok: true, user: { id, username } }`. `400 { error: "Contraseña actual requerida." }`, `403 { error: "Contraseña incorrecta." }`, `409 { error: "Usuario ocupado." }`. Si cambia la contraseña, **rota el rid** (revoca todas las sesiones, también de otros dispositivos) y abre una nueva; si renombra, re-emite la cookie (el checksum lleva el nombre) |
 | `/account/chat-settings` | Sesión | Guarda la apariencia del chat | `{ settings: { wall, opacity, blur, sender, receiver, senderText?, receiverText?, image?, fontSize, autoText? } }` | `200 { ok: true }`. `400 { error: "Ajustes inválidos o foto de fondo no válida." }`, `409 { error: "No se pudieron guardar los ajustes." }` |
 | `/account/regenerate-key` | Sesión | Regenera la clave de cifrado de la cuenta (equivalente a `auth.resetAuthorizations`) y re-cifra el historial | — | `200 { ok: true, keyId, reencrypted }` |
 | `/account/delete` | Sesión | Borra la cuenta (irreversible) | `{ password }` | `200 { ok: true, deleted: "<username>" }`. `400 { error: "Indica tu contraseña para confirmar." }`, `401 { error: "Contraseña incorrecta." }` |
@@ -746,16 +751,18 @@ límite de mensajes, también el campo `retryAfter` en el cuerpo.
 - **`POST /auth/switch` es "pública" en el enrutador** (`publicAuthPost`, `src/http/router.js:120`)
   pero en la práctica necesita la cookie `chatlocal_account_<uuid>` de la cuenta a la que se
   quiere cambiar. Esa cookie lleva una sesión **propia**, distinta de la principal
-  (`src/auth/sessions.js`): al cambiar de cuenta se **rota la versión de autenticación** de la
-  cuenta abandonada (todos sus tokens dejan de valer, también en otros dispositivos) y acto
-  seguido se le emite una sesión vinculada nueva con la versión ya rotada, de modo que se
-  puede volver a ella sin volver a iniciar sesión. Si la cookie caducó o el navegador la perdió, la respuesta
+  (`src/auth/sessions.js`): al cambiar de cuenta se **rota el rid** de la
+  cuenta abandonada (su checksum descuadra: todos sus tokens dejan de valer,
+  también en otros dispositivos) y acto seguido se le emite una sesión vinculada
+  nueva con el rid ya rotado, de modo que se puede volver a ella sin volver a
+  iniciar sesión. Si la cookie caducó o el navegador la perdió, la respuesta
   es `401 { error: "Sesión no disponible.", relogin: true }`: la cuenta **sigue existiendo**, así que
   el cliente la conserva en la lista y explica que hay que volver a agregarla con «Agregar
   cuenta» (no pide la contraseña). Solo cuando la cuenta ya no está en la base responde
   `401 { error: "Cuenta no disponible.", gone: true }` y el cliente la quita de la lista.
-- **`POST /auth/logout` revoca todas las cuentas del navegador**, no solo la actual
-  (`src/auth/routes.js:309-331`).
+- **`POST /auth/logout` rota el rid de cada cuenta de este navegador** cuyos tokens
+  sigan siendo válidos (y corta sus sockets), no solo la actual
+  (`src/auth/routes.js`).
 - **Los identificadores de remitente los impone el servidor.** En `/send`, `/receipt`,
   `/chat/delete`, `/block` y `/messages` se fuerza `data.from = actor`; en `/profile`, `/notes`,
   `/push/*`, `/call/log`, `/account/delete` y `/stickers` se fuerza `data.username = actor`; en

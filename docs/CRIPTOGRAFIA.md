@@ -172,12 +172,27 @@ es lo único que hay que guardar**.
 | `group_join_requests.username` | nombres de las solicitudes de entrada |
 | `groups.name/description/content_policy/invite_code` | datos del grupo |
 | `calls.peer` | nombre del par en el historial de llamadas |
+| `calls.peer_hash` | HMAC-SHA256 del nombre normalizado (subclave HKDF de la llave maestra, dominio `zlapy/calls-peer-index/v1`): sirve para LOCALIZAR por nombre sin descifrar |
 | `push_subs.endpoint` | URL del push (lleva un token dentro) |
 | `blob.db → blobs.data` | contenido de los adjuntos |
 
 Los campos sueltos van cifrados con **AAD propio de la columna**
 (`field:<tabla>.<columna>`, [`src/crypto/field-crypto.js`](../src/crypto/field-crypto.js)):
 un texto cifrado de `groups.name` no descifra como `groups.description`.
+
+### Subclaves derivadas de la llave maestra (HKDF-SHA256)
+
+Además de envolver campos, la llave maestra deriva **subclaves con dominio**
+para usos que no son "cifrar para alguien". Cada dominio es independiente:
+cambiar uno no afecta a los demás, y de la llave maestra no se puede leer
+ninguno de ellos (unidireccional).
+
+| Dominio | Para qué | Dónde |
+| --- | --- | --- |
+| `zlapy/session-token/v1` | secreto HMAC-SHA256 de la firma de los JWT de sesión (v10) | `src/auth/sessions.js` |
+| `zlapy/rid/v1` | HMAC del rid aleatorio de cada cuenta (v10) | `src/auth/rid.js` |
+| `zlapy/calls-peer-index/v1` | HMAC del índice a ciegas de nombres de par en llamadas (v11) | `src/crypto/peer-index.js` |
+| `zlapy/message-context/v3` | separación del contexto en los sobres PCE3 | `src/crypto/message-crypto.js` |
 
 La foto de perfil, el fondo del chat y el avatar de grupo **no están aquí**:
 viven en el almacén de blobs (cifrados en reposo) y las filas guardan solo su
@@ -245,7 +260,8 @@ para con un mensaje que dice qué hacer.
 | identificadores y claves ajenas | hacen falta para el grafo social y las consultas |
 | `messages.chat`, `kind`, `ts`, `flags` | estructura, no contenido |
 | `hash`, `signature`, `signing_public_key` | el hash es el SHA-256 del adjunto; la firma es pública |
-| `users.auth_version` | contador de revocación de tokens (v9): no hay tabla `sessions` |
+| `users.username`, `user_rid.rid` y sus marcas | identificar la cuenta y comparar el `checksum` del token (v10): revocan sesiones sin almacén |
+| `calls.peer_hash` | HMAC del nombre del par (índice a ciegas, v11): igualdad sin descifrar; no revela el nombre |
 
 Todo lo demás (nombres visibles, biografías, notas, mensajes, fotos, fondos,
 nombres de grupos, códigos de invitación, listas de privacidad, silenciados,
@@ -1183,6 +1199,29 @@ La `auth_key` está cifrada en reposo: un atacante con el fichero de la base
 inversa, quien tenga la llave maestra **y** la base sí (es el escenario del
 servidor).
 
+### 6.5 Revocación de sesiones: el `rid` (v10)
+
+El token de sesión es un JWT que el servidor **no guarda**; revocarlo exige
+poder invalidarlo *al vuelo*. El mecanismo es el `rid` de cada cuenta
+(`user_rid`, `src/auth/rid.js`):
+
+```
+  checksum_del_token = SHA-256( canónico{ id, username, password_hash, rid } )
+                        └── canónico: fechas a ISO, null → 'null' ──┘
+  petición:  firma OK  ∧  checksum(recalculado del estado vigente) == checksum_del_token  ∧  iat ≥ password_changed_at ∧ ≥ logged_out_at
+```
+
+| Evento | Qué rota | Consecuencia |
+| --- | --- | --- |
+| Registro de cuenta | se crea el rid | el primer token ya nace atado a él |
+| Cambio de contraseña | `rid` + `password_changed_at = now` | **todos** los tokens de la cuenta caducan (otros dispositivos incluidos); se emite cookie nueva a quien cambió |
+| Logout | `rid` + `logged_out_at` de cada cuenta del navegador | idem |
+| Cambio de cuenta (`/auth/switch`) | `rid` de la abandonada | el token saliente revocado; su cookie de cuenta se re-emite con el rid nuevo para poder volver sin contraseña |
+| Renombrar la cuenta | el `username` entra en el checksum | el token descuadra: se re-emite la cookie de sesión en la respuesta (quien renombra no sale disparado) |
+
+La comparación del checksum es en tiempo constante (`timingSafeEqual`) y la
+caducidad (`exp`, 30 días) es red de seguridad, no el mecanismo.
+
 ---
 
 ## 7. Qué NO es
@@ -1819,6 +1858,9 @@ Otras notas:
 | `src/crypto/user-auth-keys.js:70` | `encryptForUser()` | Cifra con la `auth_key` del usuario |
 | `src/crypto/user-auth-keys.js:81` | `decryptForUser()` | Descifra `PCE3:` o cae a `PCE1:` |
 | `src/crypto/user-auth-keys.js:95` | `messageContextBytes()` | AAD de contexto de `PCE3` |
+| `src/auth/rid.js` | `generateRid()` | Rid aleatorio de cuenta (16 B + HMAC del dominio `zlapy/rid/v1`) |
+| `src/auth/rid.js` | `computeChecksum()` | SHA-256 canónico del estado de la cuenta: ata el token a ella |
+| `src/crypto/peer-index.js` | `peerHash()` | HMAC del nombre normalizado (dominio `zlapy/calls-peer-index/v1`): índice a ciegas |
 | `src/crypto/setup.js:17-40` | (instancia) | Crea la llave y comparte los helpers |
 | `src/chat/messages.js:32` | `prepareStoredMessage()` | Firma + cifra un mensaje nuevo (PCE3) |
 | `src/chat/messages.js:73` | `rowToMessage()` | Lee un mensaje: PCE3 / PCE2 / PCE1 + verifica la firma |
