@@ -21849,6 +21849,87 @@
                 }
             }
             const b64ToU8 = s => { const cleaned = String(s).replace(/-/g, '+').replace(/_/g, '/'); const padded = cleaned + '='.repeat((4 - cleaned.length % 4) % 4); const b = atob(padded); const a = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) a[i] = b.charCodeAt(i); return a; };
+            /* ---- Diagnóstico del servicio de push del navegador ----
+               "Registration failed - push service error" es un texto de
+               Chromium: «no he podido obtener token de mi servicio de
+               push» (FCM). En Android TODO fallo (red, Google Play
+               services ausentes, navegador con push desactivado)
+               colapsa en ese mismo mensaje, así que se sondea la red
+               para quedarse con la causa más probable en vez de listarlas
+               todas. Con fetch no-cors solo se puede afirmar «llegué al
+               host» (respuesta opaca) o «no llegué»: no se puede mirar
+               dentro del navegador. */
+            function pushEnvInfo() {
+                const ua = navigator.userAgent || '';
+                const firefox = /Firefox|FxiOS/.test(ua);
+                return {
+                    ua,
+                    android: /Android/i.test(ua),
+                    ios: /iP(hone|ad|od)/.test(ua) || (navigator.platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1),
+                    firefox,
+                    chromium: !firefox && /Chrome|Chromium|CriOS|Edg|Samsung/.test(ua),
+                    brave: !!(navigator.brave && typeof navigator.brave.isBrave === 'function'),
+                    secure: !!window.isSecureContext
+                };
+            }
+            function probeReachable(url, ms) {
+                try {
+                    const ctl = new AbortController();
+                    const to = setTimeout(() => { try { ctl.abort(); } catch { } }, ms || 4500);
+                    return fetch(url, { mode: 'no-cors', signal: ctl.signal })
+                        .then(() => { clearTimeout(to); return true; })
+                        .catch(() => { clearTimeout(to); return false; });
+                } catch { return Promise.resolve(false); }
+            }
+            async function pushServiceHint() {
+                const env = pushEnvInfo();
+                let google = false, mozilla = false;
+                try {
+                    const sondas = await Promise.all([
+                        probeReachable('https://android.clients.google.com/checkin'),
+                        probeReachable('https://push.services.mozilla.com/')
+                    ]);
+                    google = sondas[0]; mozilla = sondas[1];
+                } catch { }
+                const causas = [];
+                if (!google && !mozilla)
+                    causas.push('tu red no llega a los servicios de push del navegador (no responden los hosts de registro de Google ni de Mozilla): apaga la VPN, el proxy o el DNS filtrado (Pi-hole, NextDNS, AdGuard) para este sitio y reintenta');
+                else if (env.chromium && !google)
+                    causas.push('tu red no llega al servicio de registro de Google (android.clients.google.com no responde): desactiva el filtro DNS o la VPN y reintenta');
+                else if (env.brave)
+                    causas.push('Brave bloquea la mensajería push de Google por defecto: actívalo en brave://settings/privacy («Usar los servicios de Google para la mensajería push») y reintenta');
+                else if (env.android && env.chromium)
+                    causas.push('Chrome en Android no consiguió token de FCM: suele faltar el servicio de push propio del sistema (Google Play services ausentes, o microG sin registrar) o el navegador tiene push desactivado; prueba también con Firefox');
+                else
+                    causas.push('el navegador no pudo obtener token de su servicio de push: prueba el botón «Probar aviso», vacía los datos del sitio (candado junto a la dirección › datos del sitio) o usa Firefox');
+                if (env.ios) causas.push('Safari en iOS solo entrega push con la app instalada en la pantalla de inicio');
+                if (!env.secure) causas.push('la página no es un contexto seguro: sin push los avisos siguen saliendo con la app abierta');
+                causas.push('con la app abierta los avisos siguen entrando por la conexión en tiempo real');
+                return 'el servicio de push del navegador rechazó la suscripción: ' + causas.join('; ') + '.';
+            }
+            /* Reintento diferido: reintentar a los pocos segundos no arregla
+               un rechazo del servicio de push (Chromium ya reintenta 5 veces
+               por su cuenta y solo consigue más errores). Como mucho 3
+               intentos por sesión, en silencio, y solo si el permiso de
+               avisos sigue concedido. */
+            function schedulePushRetry() {
+                try {
+                    const hechos = Number(sessionStorage.getItem('zlapy_push_reintentos') || '0');
+                    if (hechos >= 3) return;
+                    const esperas = [90000, 180000, 360000];
+                    sessionStorage.setItem('zlapy_push_reintentos', String(hechos + 1));
+                    setTimeout(async () => {
+                        try {
+                            if (!('PushManager' in window) || Notification.permission !== 'granted') return;
+                            const reg = await navigator.serviceWorker.getRegistration();
+                            if (!reg || !reg.active) return;
+                            if (await reg.pushManager.getSubscription()) return;
+                            console.info('[push] reintento automático de suscripción');
+                            await setupPush(false);
+                        } catch { }
+                    }, esperas[hechos] || 360000);
+                } catch { }
+            }
             async function pushEnabled() {
                 try {
                     if (!('serviceWorker' in navigator) || !('PushManager' in window)) return false;
@@ -21881,7 +21962,7 @@
                         try {
                             /* Misma URL con la que se registra al arrancar
                                (línea ~22.5xx): si cambia la versión, cambia aquí. */
-                            await navigator.serviceWorker.register('/sw.js?v=42', { scope: '/' });
+                            await navigator.serviceWorker.register('/sw.js?v=43', { scope: '/' });
                             reg = await Promise.race([navigator.serviceWorker.ready, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000))]);
                         } catch (e) {
                             const msg = String((e && e.message) || e);
@@ -21927,8 +22008,11 @@
                     if (!sub) {
                         /* Los reintentos con espera solo los paga el interruptor
                            (force): al arrancar se comprueba una sola vez y en
-                           silencio, sin modal ni mensajes que asusten. */
-                        const esperas = force ? [0, 2500, 6000] : [0];
+                           silencio, sin modal ni mensajes que asusten. El reintento
+                           largo y espaciado va aparte (schedulePushRetry): a los
+                           pocos segundos el servicio que rechaza no cambia de
+                           opinión y solo se consigue más errores. */
+                        const esperas = force ? [0, 2000] : [0];
                         for (let i = 0; i < esperas.length && !sub; i++) {
                             try {
                                 if (esperas[i]) { window.lastPushError = 'esperando ' + Math.round(esperas[i] / 1000) + 's antes de reintentar…'; await new Promise(r => setTimeout(r, esperas[i])); }
@@ -21948,9 +22032,16 @@
                            el motivo que se guarda abajo, en vez de saltar a
                            cada arranque de la app o al tocar el interruptor. */
                         const real = window.lastPushError || '';
-                        if (/push service/i.test(real))
-                            window.lastPushError = real + ' ⇒ el servicio de push del navegador rechazó la suscripción: falta el servicio de push propio (Chrome sin Google Play services), la red o el DNS bloquean fcm.googleapis.com / mtalk.google.com, la optimización de batería de Chrome está activa, o hubo demasiados intentos seguidos; prueba con otro navegador y reintenta pasados unos minutos.';
-                        else
+                        if (/push service|SERVICE_ERROR|not available/i.test(real)) {
+                            /* Chromium: «solo sé que mi servicio de push no me
+                               dio token». Se sondea la red para decir la causa
+                               más probable en lugar de listar todas las
+                               posibles. */
+                            window.lastPushError = real + ' ⇒ ' + await pushServiceHint();
+                            /* Y un reintento espaciado: nuevos intentos a los
+                               2,5 s solo empeoran el rechazo. */
+                            schedulePushRetry();
+                        } else
                             window.lastPushError = 'no se pudo suscribir: ' + real;
                         if (force) debugToast('No se pudo activar el push del navegador');
                         return false;
@@ -22954,7 +23045,7 @@
                     console.error('[auth] Could not restore session:', error);
                     location.replace('/login.html');
                 });
-                if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js?v=42', { scope: '/', updateViaCache: 'none' }).catch(error => console.error('[service worker] No se pudo actualizar:', error));
+                if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js?v=43', { scope: '/', updateViaCache: 'none' }).catch(error => console.error('[service worker] No se pudo actualizar:', error));
                 console.info(`[build] zlapy v${APP_BUILD_VERSION} · refresco de metadatos y layout móvil`);
                 window.addEventListener('pageshow', e => {
                     if (!e.persisted || !me) return;

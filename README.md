@@ -854,6 +854,7 @@ confianza local; conviene revisar las reglas de la cuenta de Cloudflare
 | El móvil no abre la cámara | Contexto no seguro | Usa la dirección `https://` y acepta el certificado |
 | «Marca de tiempo fuera de rango» al enviar | El reloj del dispositivo se desvía más de 60 s | Activa la hora automática en el dispositivo y recarga |
 | Las notificaciones push no llegan | El navegador exige HTTPS o permiso | Sirve por `https://`, concede el permiso y prueba con el botón de Ajustes |
+| El interruptor de push no se activa y el diagnóstico dice «rechazó el servicio de push» | Chromium no consigue token de FCM: sin Google Play services (o microG sin registrar), red/VPN/DNS que bloquea los hosts de registro de Google, o push desactivado en el navegador (Brave) | La línea de diagnóstico ahora dice cuál es. Con la app abierta los avisos entran igual por la conexión en tiempo real; para push con la app cerrada prueba Firefox o quita el filtro de red |
 | El supervisor se reinicia en bucle | Fallo de arranque (p. ej. puerto ocupado) | Arranca `node server.js` a mano para ver el error real |
 | El cliente no carga | Ficheros estáticos bloqueados por un proxy | Comprueba que el proxy sirve `/` y `/sw.js` |
 
