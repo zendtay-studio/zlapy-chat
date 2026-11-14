@@ -56,6 +56,13 @@ const mutedChatPeers = username => {
     return Array.isArray(muted) ? muted : [];
 };
 const isChatMuted = (username, peer) => mutedChatPeers(username).includes(peer);
+/* ¿Hay que enviar push a esta cuenta ahora mismo? Por defecto solo a las
+   cuentas SIN conexión activa: quien está conectado ya recibe el aviso en
+   vivo por WebSocket y el push solo lo duplicaría. El ajuste manual de la
+   cuenta (Ajustes > Notificaciones › «Push con la app conectada») fuerza el
+   push también conectado: con la app abierta en OTRO dispositivo el
+   WebSocket no llega ahí y sin este ajuste el push se saltaba entero. */
+const wantsAlwaysPush = username => !!(profiles[username] && profiles[username].alwaysPush === true);
 
 
 module.exports = {
@@ -69,4 +76,5 @@ module.exports = {
     freshNote,
     mutedChatPeers,
     isChatMuted,
+    wantsAlwaysPush,
 };

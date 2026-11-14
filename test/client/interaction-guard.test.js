@@ -23,12 +23,12 @@ const pages = [
 test('all app pages load the shared native-selection guard', () => {
     for (const page of pages) {
         const html = fs.readFileSync(path.join(publicDir, page), 'utf8');
-        assert.match(html, /\/js\/interaction-guard\.js\?v=1/,
+        assert.match(html, /\/js\/interaction-guard.js/,
             `${page} includes the shared interaction guard`);
     }
 
     const shell = fs.readFileSync(path.join(publicDir, 'js/sw.js'), 'utf8');
-    assert.match(shell, /\/js\/interaction-guard\.js\?v=1/);
+    assert.match(shell, /\/js\/interaction-guard.js/);
 });
 
 test('the guard suppresses native menus except in editable fields', () => {

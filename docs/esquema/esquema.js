@@ -180,7 +180,7 @@ const TABLES = [
         name: 'user_rid', db: 'zlapy', group: 'identidad', rows: 0, col: 1,
         cols: [
             c('user_id', 'TEXT', 'pf'),
-            c('rid', 'TEXT', 'n', 'rota en logout / contraseña / cambio de cuenta'),
+            c('rid', 'TEXT', 'n', 'rota en contraseña / cambio de cuenta (el logout es local)'),
             c('password_changed_at', 'INTEGER', 'n', 'DEFAULT 0 · barrera de revocación'),
             c('logged_out_at', 'INTEGER', 'n', 'DEFAULT 0 · barrera de revocación')
         ],

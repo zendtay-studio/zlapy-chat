@@ -271,7 +271,7 @@ Para poder revocar sin almacén, cada cuenta tiene su rid en `user_rid`:
 | Columna | Tipo | Restricciones | Significado |
 | --- | --- | --- | --- |
 | `user_id` | TEXT | PK, FK → `users.id` CASCADE | Cuenta dueña. |
-| `rid` | TEXT | NOT NULL | Identificador de sesión de la cuenta. Rota en registro, logout, cambio de contraseña y cambio de cuenta. |
+| `rid` | TEXT | NOT NULL | Identificador de sesión de la cuenta. Rota en registro, cambio de contraseña y cambio de cuenta (el logout es local al navegador y ya no rota). |
 | `password_changed_at` | INTEGER | NOT NULL default 0 | Última vez que cambió la contraseña (segunda barrera de revocación). |
 | `logged_out_at` | INTEGER | NOT NULL default 0 | Último logout (segunda barrera de revocación). |
 

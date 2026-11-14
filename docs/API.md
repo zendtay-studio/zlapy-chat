@@ -41,9 +41,10 @@ secreto derivado por HKDF-SHA256 de la llave maestra (`zlapy/session-token/v1`),
 sobrevive a los reinicios sin estar escrito en ninguna parte. Cada petición verifica
 firma, caducidad y que el `checksum` —SHA-256 canónico de `id | username | password_hash |
 rid` (`src/auth/rid.js`)— siga describiendo la cuenta. La revocación es por
-cuenta: **rotar el rid** (`user_rid.rid`: logout, cambio de contraseña, cambio de cuenta)
+cuenta: **rotar el rid** (`user_rid.rid`: cambio de contraseña, cambio de cuenta)
 descuadra el checksum e invalida de golpe todos los tokens de la cuenta, también los de
-otros dispositivos. Además, un token con `iat` anterior a `user_rid.password_changed_at`
+otros dispositivos. El logout NO rota el rid: es local al navegador (limpia sus cookies
+y sus sockets). Además, un token con `iat` anterior a `user_rid.password_changed_at`
 o `logged_out_at` se rechaza aunque el checksum cuadre (segunda barrera). Renombrar la
 cuenta también descuadra el checksum: quien renombra recibe cookie nueva en la respuesta.
 
@@ -281,7 +282,7 @@ puede suplantar a otro usuario.
 | `/auth/add-account` | Sesión | Vincula otra cuenta en este navegador | `{ username, password }` (+ `expectedAccountId` opcional: UUID de la cuenta que se espera) | `200 { ok: true, user: { id, username } }` + cookie `chatlocal_account_<uuid>`. `401` si la contraseña no es, `409 { error: "Esas credenciales no son de la cuenta seleccionada." }` si se pasó `expectedAccountId` y las credenciales son de otra cuenta, `429` por intentos |
 | `/auth/switch` | Cookie de cuenta | Cambia a una cuenta vinculada (rota el rid de la abandonada y re-emite su cookie) | `{ accountId }` (UUID) | `200 { ok: true, user: { id, username } }`. `400 { error: "Cuenta inválida." }`, `401 { error: "Sesión no disponible.", relogin: true }` (la cookie de la cuenta caducó o se perdió, pero la cuenta **sigue existiendo**: hay que volver a iniciar sesión) o `401 { error: "Cuenta no disponible.", gone: true }` (la cuenta ya no está en la base: se quita de la lista de cuentas conectadas). **Sin sesión vigente** la respuesta es `401 { error: "Sesión no disponible." }` sin marcas: la ruta es pública y distinguirlas la convertiría en un oráculo de existencia de cuentas |
 | `/auth/account/remove` | Sesión | Elimina una cuenta vinculada de este navegador | `{ accountId }` (UUID) | `200 { ok: true }`. `400` si es la cuenta en uso |
-| `/auth/logout` | Pública | Cierra la sesión y revoca **todas** las cuentas abiertas en el navegador | — (sin cuerpo) | `200 { ok: true }` + cookies de sesión borradas |
+| `/auth/logout` | Pública | Cierra la sesión de **este navegador**: borra las cookies de las cuentas abiertas aquí y corta sus sockets. NO rota el rid: las sesiones de otros dispositivos siguen vivas (la revocación global es el cambio de contraseña) | — (sin cuerpo) | `200 { ok: true }` + cookies de sesión borradas |
 | `/key` | Sesión | Guarda la clave pública de cifrado de la cuenta | `{ pubKey }` (objeto) | `200 { ok: true }`. `400 { error: "clave inválida" }` |
 | `/groups/:id/groupkey` | Sesión | Publica los *keyboxes* cifrados del grupo para los destinatarios indicados | `{ recipients: [ { recipient, iv, ct } ] }` | `200 { ok: true }`. `400 { error: "id inválido" }`, `404 { error: "no existe" }`, `403 { error: "no eres miembro" }` |
 | `/stickers` | Sesión | Guarda los stickers favoritos (máx. 30) | `{ stickers: [ "<url https de giphy>" ] }` | `200 { ok: true, stickers: [ … ] }`. `400 { error: "stickers must be an array" }` |

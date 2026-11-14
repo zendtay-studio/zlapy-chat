@@ -30,7 +30,8 @@ const { accountByName, purgeUserFromMemory, regenerateAuthKey, saveChatSettings,
 function getAccountChatSettings(req, res, url, data, actor) {
     return json(res, 200, {
         settings: profiles[req.authUser.username]?.chatAppearance || null,
-        keepArchived: profiles[req.authUser.username]?.keepArchived === true
+        keepArchived: profiles[req.authUser.username]?.keepArchived === true,
+        alwaysPush: profiles[req.authUser.username]?.alwaysPush === true
     });
 }
 
@@ -204,8 +205,11 @@ function postAccountChatSettings(req, res, url, data, actor) {
     const profile = profiles[actor] || (profiles[actor] = { username: actor });
     const hasAppearance = Object.prototype.hasOwnProperty.call(data, 'settings');
     const hasKeepArchived = Object.prototype.hasOwnProperty.call(data, 'keepArchived');
-    if (!hasAppearance && !hasKeepArchived) return json(res, 400, { error: 'Ajustes inválidos.' });
+    const hasAlwaysPush = Object.prototype.hasOwnProperty.call(data, 'alwaysPush');
+    if (!hasAppearance && !hasKeepArchived && !hasAlwaysPush) return json(res, 400, { error: 'Ajustes inválidos.' });
     if (hasKeepArchived && typeof data.keepArchived !== 'boolean')
+        return json(res, 400, { error: 'Ajuste inválido.' });
+    if (hasAlwaysPush && typeof data.alwaysPush !== 'boolean')
         return json(res, 400, { error: 'Ajuste inválido.' });
     if (hasAppearance) {
         const appearance = normalizeChatAppearanceSettings(data.settings, profile.chatAppearance || {});
@@ -213,6 +217,7 @@ function postAccountChatSettings(req, res, url, data, actor) {
         profile.chatAppearance = appearance;
     }
     if (hasKeepArchived) profile.keepArchived = data.keepArchived;
+    if (hasAlwaysPush) profile.alwaysPush = data.alwaysPush;
     try {
         saveChatSettings(req.authUser);
     } catch (error) {

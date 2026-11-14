@@ -9,8 +9,8 @@
   <link rel="icon" type="image/webp" href="/image/isotype-308.webp">
   <link rel="stylesheet" href="/css/fonts.css">
   <link rel="stylesheet" href="/css/theme.css">
-  <script src="/js/interaction-guard.js?v=1" defer></script>
-  <link rel="stylesheet" href="/css/popmenu.css?v=4">
+  <script src="/js/interaction-guard.js" defer></script>
+  <link rel="stylesheet" href="/css/popmenu.css">
   <script src="/js/transport-crypto.js"></script>
   <script src="/js/transport.js"></script>
   <script src="/js/appearance.js"></script>
@@ -2377,7 +2377,7 @@
     async function editTextStory(ts) { try { const { stories = [] } = await requestJson('/stories', { cache: 'no-store' }), story = stories.find(item => item.from === me.username && item.ts === ts); if (!story) throw new Error('La historia ya no está disponible.'); const text = prompt('Editar el texto de la historia:', story.text || ''); if (text === null) return; if (Array.from(text).length > storyTextMaxCharacters) throw new Error(`Las historias admiten hasta ${storyTextMaxCharacters} caracteres.`); const bg = story.bg || randomBackgroundColor(); await requestJson('/story/edit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ts, text, bg }) }); await loadStories(); } catch (error) { console.error('[stories] No se pudo editar la historia:', error); notify(error.message); } }
     initialize();
   </script>
-  <script src="/js/popmenu.js?v=5"></script>
+  <script src="/js/popmenu.js"></script>
 </body>
 
 </html>

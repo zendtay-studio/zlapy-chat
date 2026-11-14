@@ -41,7 +41,7 @@ const { MESSAGE_LIMITS, characterCount } = require('../shared/limits.js');
 const { normalizeContactData, normalizePollData, togglePollVote } = require('../shared/types.js');
 const { clampStr, localStickerHash, validMessageId, validMime, validStickerData } = require('../shared/validation.js');
 const { profiles, users } = require('../state.js');
-const { byName, isChatMuted, mutedChatPeers, pairKeyFromIds } = require('../users/helpers.js');
+const { byName, isChatMuted, mutedChatPeers, pairKeyFromIds, wantsAlwaysPush } = require('../users/helpers.js');
 const { accountsBlocked, isBlockedBy, permite } = require('../users/privacy.js');
 
 const REACTION_EMOJI_RE = /[\p{Extended_Pictographic}\p{Regional_Indicator}\u20e3]/u;
@@ -447,7 +447,10 @@ function postSend(req, res, url, data, actor) {
     const decorated = decorateForClient(msg);
     push(sender, { type: 'message', message: decorated });
     if (recipient.id !== sender.id) push(recipient, { type: 'message', message: decorated });
-    if (sender.id !== recipient.id && !recipient.online && !isChatMuted(recipient.username, sender.username))
+    // Push solo a quien no está conectado… salvo que la cuenta haya activado
+    // «Push con la app conectada» (app abierta en otro dispositivo, navegador
+    // que murió sin cerrar el socket, etc.).
+    if (sender.id !== recipient.id && (!recipient.online || wantsAlwaysPush(recipient.username)) && !isChatMuted(recipient.username, sender.username))
         void notifyUser(recipient.username, { title: 'Nuevo mensaje de ' + pushNameOf(sender.username), body: 'Tienes un mensaje', tag: 'msg-' + msg.id, renotify: true, url: '/?open=' + encodeURIComponent(sender.username) });
     return json(res, 200, { ok: true, message: decorated });
 }

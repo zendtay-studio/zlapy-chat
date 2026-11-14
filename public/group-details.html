@@ -9,9 +9,10 @@
     <link rel="icon" type="image/webp" href="/image/isotype-308.webp">
     <link rel="stylesheet" href="/css/fonts.css">
     <link rel="stylesheet" href="/css/theme.css">
-    <script src="/js/interaction-guard.js?v=1" defer></script>
-    <link rel="stylesheet" href="/css/group-details.css?v=23">
+    <script src="/js/interaction-guard.js" defer></script>
+    <link rel="stylesheet" href="/css/group-details.css">
     <script src="/js/appearance.js"></script>
+<script src="/js/markdown-chat.js"></script>
     <script>
         if (new URLSearchParams(location.search).get('surface') === '1')
             document.documentElement.classList.add('surface-mode');
@@ -182,7 +183,7 @@
                     <div class="section-head">
                         <h2 id="aboutTitle">Acerca de</h2>
                     </div>
-                    <p class="about-text clamped" id="aboutText"></p>
+                    <div class="about-text clamped" id="aboutText"></div>
                     <button class="link-more" id="aboutToggle" type="button" aria-controls="aboutText" aria-expanded="false" hidden>Leer más</button>
                 </section>
 
@@ -308,7 +309,7 @@
 
     <script src="/js/transport-crypto.js"></script>
     <script src="/js/transport.js"></script>
-    <script src="/js/group-details.js?v=20"></script>
+    <script src="/js/group-details.js"></script>
 </body>
 
 </html>

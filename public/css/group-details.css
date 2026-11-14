@@ -620,7 +620,9 @@ html.surface-mode body {
     font-size: 14px;
     line-height: 1.6;
     overflow-wrap: anywhere;
-    white-space: pre-line
+    /* El formateador de markdown ya convierte los saltos de línea en <br>,
+       así que aquí no hace falta pre-line (duplicaría los saltos). */
+    white-space: normal
 }
 
 .about-text.clamped {

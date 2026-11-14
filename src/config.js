@@ -26,6 +26,10 @@ const DEFAULTS = Object.freeze({
     SQLITE_BUSY_TIMEOUT_MS: 5_000,
     STORY_TTL_MS: 24 * 60 * 60 * 1000,
     AUTH_SESSION_TTL_MS: 30 * 24 * 60 * 60 * 1000,
+    /* Vida de la sesión emitida por HTTP en claro desde otra máquina:
+       en ese canal un tercero puede copiar la cookie, así que el token
+       caduca antes (por defecto 8 h) para que el robo valga poco. */
+    AUTH_PLAIN_SESSION_TTL_MS: 8 * 60 * 60 * 1000,
     /* Cota del adjunto que viaja en línea (sin hash) en un mensaje de medios:
        el envío normal de medios va por blob+hash; el modo en línea es la vía
        de interop y, sin cota, payloads de 24 MB la convertían en generador de
@@ -77,6 +81,7 @@ function loadConfig(env = process.env) {
         sqliteBusyTimeoutMs: integerSetting(env, 'SQLITE_BUSY_TIMEOUT_MS', 0, 60_000),
         storyTtlMs: integerSetting(env, 'STORY_TTL_MS', 60_000, 30 * 24 * 60 * 60 * 1000),
         authSessionTtlMs: integerSetting(env, 'AUTH_SESSION_TTL_MS', 60_000, 365 * 24 * 60 * 60 * 1000),
+        authPlainSessionTtlMs: integerSetting(env, 'AUTH_PLAIN_SESSION_TTL_MS', 60_000, 365 * 24 * 60 * 60 * 1000),
         maxInlineMediaChars: integerSetting(env, 'MAX_INLINE_MEDIA_CHARS', 1, 1024 * 1024 * 1024),
         storyInlineCharLimit: integerSetting(env, 'STORY_INLINE_CHAR_LIMIT', 1, 1024 * 1024 * 1024),
         maxGroupMembers: integerSetting(env, 'MAX_GROUP_MEMBERS', 1, 10_000),
@@ -104,6 +109,10 @@ function loadConfig(env = process.env) {
         throw new Error('MAX_MESSAGE_DATA_CHARS cannot exceed MAX_HTTP_BODY_BYTES.');
     if (settings.maxGalleryEncodedChars > settings.maxHttpBodyBytes)
         throw new Error('MAX_GALLERY_ENCODED_CHARS cannot exceed MAX_HTTP_BODY_BYTES.');
+    /* La vida corta solo tiene sentido como TOPE del caso abierto: mayor
+       que la sesión normal sería un límite que no limita nada. */
+    if (settings.authPlainSessionTtlMs > settings.authSessionTtlMs)
+        throw new Error('AUTH_PLAIN_SESSION_TTL_MS cannot exceed AUTH_SESSION_TTL_MS.');
     return Object.freeze(settings);
 }
 

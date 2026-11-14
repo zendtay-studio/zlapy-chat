@@ -801,3 +801,172 @@ textarea {
     background-image: none
   }
 }
+
+        /* ---- Markdown en las burbujas (formato estilo chat) ---- */
+        .mdTitulo {
+            margin: 8px 0 2px;
+            font-weight: 700;
+            line-height: 1.3
+        }
+
+        .mdTitulo.mdT1 {
+            font-size: 1.32em
+        }
+
+        .mdTitulo.mdT2 {
+            font-size: 1.22em
+        }
+
+        .mdTitulo.mdT3 {
+            font-size: 1.12em
+        }
+
+        .mdTitulo.mdT4,
+        .mdTitulo.mdT5,
+        .mdTitulo.mdT6 {
+            font-size: 1.02em
+        }
+
+        .mdLista {
+            margin: 2px 0;
+            padding-left: 22px
+        }
+
+        .mdLista .mdLista {
+            margin: 0
+        }
+
+        .mdLista li {
+            margin: 1px 0
+        }
+
+        .mdLista li::marker {
+            color: var(--muted)
+        }
+
+        .mdCheck {
+            font-family: ui-monospace, Menlo, Consolas, monospace;
+            margin-right: 2px
+        }
+
+        .mdCita {
+            margin: 4px 0;
+            padding: 2px 0 2px 10px;
+            /* Barra con currentColor (el color del texto de la burbuja): con
+               var(--accent) se perdía en las cuentas de acento pálido, donde
+               el 50% de mezcla se volvía casi invisible contra el fondo. */
+            border-left: 3px solid color-mix(in srgb, currentColor 65%, transparent)
+        }
+
+        .mdCodigo {
+            max-width: 100%;
+            margin: 4px 0;
+            /* Ancla del botón de copiar (arriba a la derecha, DENTRO del
+               bloque). El scroll horizontal vive en el pre de adentro, no
+               aquí: si el bloque entero scrolleara, el botón se iría con
+               el contenido. */
+            position: relative
+        }
+
+        .mdCodigo pre {
+            padding: 8px 10px;
+            border-radius: 8px;
+            background: color-mix(in srgb, currentColor 10%, transparent);
+            font-family: ui-monospace, 'Cascadia Mono', 'Roboto Mono', Menlo, Consolas, monospace;
+            font-size: .86em;
+            white-space: pre;
+            overflow-x: auto
+        }
+
+        /* Copiar el bloque de código: SÓLO EL ICONO, sin fondo de chip —
+           va en la esquina superior derecha DENTRO del bloque, siempre
+           visible (no hay hover en móvil) y con visto al copiar. */
+        .mdCopiar {
+            position: absolute;
+            top: 5px;
+            right: 5px;
+            width: 26px;
+            height: 26px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+            border: 0;
+            border-radius: 6px;
+            background: none;
+            color: inherit;
+            cursor: pointer;
+            opacity: .85
+        }
+
+        .mdCopiar:hover,
+        .mdCopiar:active {
+            opacity: 1
+        }
+
+        .mdCopiar svg {
+            width: 16px;
+            height: 16px;
+            fill: none;
+            stroke: currentColor;
+            stroke-width: 1.8;
+            stroke-linecap: round;
+            stroke-linejoin: round
+        }
+
+        .mdCopiar .mdCopiarOk {
+            display: none
+        }
+
+        .mdCopiar.mdCopiarListo .mdCopiarIcono {
+            display: none
+        }
+
+        .mdCopiar.mdCopiarListo .mdCopiarOk {
+            display: block
+        }
+
+        .mdCodigo pre code {
+            padding: 0;
+            background: none
+        }
+
+        .mdLinea {
+            margin: 8px 0;
+            border-top: 1px solid var(--line)
+        }
+
+        .mdTablaEnv {
+            max-width: 100%;
+            margin: 4px 0;
+            border-radius: 8px;
+            overflow-x: auto
+        }
+
+        .mdTabla {
+            border-collapse: collapse;
+            font-size: .92em
+        }
+
+        .mdTabla th,
+        .mdTabla td {
+            padding: 4px 8px;
+            border: 1px solid var(--line)
+        }
+
+        .mdTabla th {
+            background: color-mix(in srgb, currentColor 8%, transparent)
+        }
+
+        .mdNotaPie {
+            font-size: .72em;
+            color: var(--muted);
+            vertical-align: super
+        }
+
+        .mdNotaPieDef {
+            margin-top: 2px;
+            font-size: .8em;
+            color: var(--muted)
+        }
+

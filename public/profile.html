@@ -177,8 +177,8 @@
     }
   </style>
   <link rel="stylesheet" href="/css/theme.css">
-  <script src="/js/interaction-guard.js?v=1" defer></script>
-  <link rel="stylesheet" href="/css/avatar-editor.css?v=1">
+  <script src="/js/interaction-guard.js" defer></script>
+  <link rel="stylesheet" href="/css/avatar-editor.css">
   <script src="/js/transport-crypto.js"></script>
   <script src="/js/transport.js"></script>
   <script src="/js/appearance.js"></script>
@@ -276,13 +276,13 @@
       const av = document.getElementById('profAvatar');
       // neutraliza comillas/ángulos de avatares heredados de antes de
       // la validación del servidor: solo pasa tal cual si es un valor sano.
-      const avSrc = String(p.avatar || '/avatar/' + encodeURIComponent(p.id || me.id) + '.svg?v=3').replace(/"/g, '%22').replace(/</g, '%3C');
+      const avSrc = String(p.avatar || '/avatar/' + encodeURIComponent(p.id || me.id) + '.svg').replace(/"/g, '%22').replace(/</g, '%3C');
       av.innerHTML = `<img src="${avSrc}" alt="">`;
       myId = p.id || me.id || me.username;
       document.getElementById('avatarRemoveBtn').hidden = !p.avatar || String(p.avatar).startsWith('/avatar/');
     }
     function defaultAvatarSrc() {
-      return '/avatar/' + encodeURIComponent(myId || (me && me.username) || '') + '.svg?v=3';
+      return '/avatar/' + encodeURIComponent(myId || (me && me.username) || '') + '.svg';
     }
     function removeAvatar() {
       pendingAvatar = '';
@@ -394,8 +394,8 @@
     window.addEventListener('pageshow', e => { if (e.persisted) init(); });
     init();
   </script>
-  <script src="/js/autogrow.js?v=1"></script>
-  <script src="/js/avatar-editor.js?v=1"></script>
+  <script src="/js/autogrow.js"></script>
+  <script src="/js/avatar-editor.js"></script>
 </body>
 
 </html>

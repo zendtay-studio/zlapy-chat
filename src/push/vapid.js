@@ -49,6 +49,21 @@ function vapidAuth(endpoint) {
     const sig = crypto.sign('sha256', Buffer.from(head + '.' + body), { key, dsaEncoding: 'ieee-p1363' });
     return `vapid t=${head}.${body}.${b64u(sig)}, k=${VAPID.publicKey}`;
 }
+/* Registro de los últimos envíos push (éxitos incluidos): sin él, un
+   «aceptado por el servicio (201)» y un «ni se intentó» eran
+   indistinguibles desde Ajustes. Consultable desde /push/test (campo
+   recent). */
+const pushLog = [];
+const PUSH_LOG_MAX = 200;
+function logPushSend(username, sub, result, ms) {
+    let host = '';
+    try { host = new URL(sub.endpoint).host; } catch { host = '(endpoint inválido)'; }
+    pushLog.push({ ts: Date.now(), user: username, host, status: result.status, error: result.error || '', ms });
+    console.info('[push] %s → %s %s%s (%d ms)', username, host, result.status, result.error ? ' · ' + String(result.error).slice(0, 120) : '', ms);
+    if (pushLog.length > PUSH_LOG_MAX) pushLog.shift();
+}
+const recentPushLog = () => pushLog.slice(-20).reverse();
+
 async function pushTo(sub, payloadObj) {
     try {
         if (!sub || !sub.endpoint || !sub.keys || !sub.keys.p256dh || !sub.keys.auth) throw new Error('incompleta');
@@ -78,7 +93,12 @@ async function pushTo(sub, payloadObj) {
         const body = Buffer.concat([header, senderPublicKey, encrypted]);
         const r = await fetch(sub.endpoint, {
             method: 'POST',
-            headers: { 'TTL': '300', 'Content-Encoding': 'aes128gcm', 'Urgency': 'high', 'Authorization': vapidAuth(sub.endpoint), 'Content-Type': 'application/octet-stream' },
+            /* TTL 3600: si el dispositivo duerme o queda offline, el push
+               service guarda el mensaje en cola SOLO hasta que expira el TTL
+               y después lo descarta sin avisar a nadie. Con 300 (5 min) un
+               móvil dormido más de eso perdía el aviso aunque el envío
+               hubiera salido aceptado con 201. */
+            headers: { 'TTL': '3600', 'Content-Encoding': 'aes128gcm', 'Urgency': 'high', 'Authorization': vapidAuth(sub.endpoint), 'Content-Type': 'application/octet-stream' },
             body
         });
         const responseBody = r.ok ? '' : (await r.text()).slice(0, 300);
@@ -110,7 +130,9 @@ async function notifyUser(username, payload) {
     if (!subs.length) return [];
     const results = [];
     for (const sub of [...subs]) {
+        const t0 = Date.now();
         const result = await pushTo(sub, payload);
+        logPushSend(username, sub, result, Date.now() - t0);
         results.push(result);
         /* 404/410: la suscripción ya no existe (des-suscrita o expirada).
            403 «the VAPID credentials … do not correspond»: la suscripción se
@@ -148,6 +170,7 @@ module.exports = {
     vapidAuth,
     pushTo,
     notifyUser,
+    recentPushLog,
     findPushSubRow,
     pushNameOf,
 };

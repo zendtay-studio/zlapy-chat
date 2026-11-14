@@ -232,6 +232,7 @@ cp .env.example .env   # crea tu configuración local
 | `MAX_GALLERY_ITEMS` / `MAX_GALLERY_ENCODED_CHARS` | `20` / `24000000` | Límites de las galerías |
 | `NOTE_TTL_MS` / `STORY_TTL_MS` | `86400000` | Vigencia de la nota y de las historias (24 h) |
 | `AUTH_SESSION_TTL_MS` | `2592000000` | Vigencia de la sesión (30 días) |
+| `AUTH_PLAIN_SESSION_TTL_MS` | `28800000` | Vigencia de la sesión emitida por HTTP en claro desde otra máquina (8 h) |
 | `CHAT_PAGE_CACHE_MAX` / `CHAT_PAGE_CACHE_TTL_MS` | `20` / `10000` | Caché de páginas de chat (0 desactiva) |
 | `SQLITE_CACHE_SIZE_KB` / `SQLITE_BUSY_TIMEOUT_MS` | `64000` / `5000` | Caché y espera de SQLite |
 | `BBOT_STICKER_PACK_DIR` | `src/bbot-stickers` | Carpeta persistente de los WebP animados bbot generados o recuperados al iniciar |

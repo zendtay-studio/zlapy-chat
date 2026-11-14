@@ -45,6 +45,10 @@ if (tlsState.forceTls && !useTls) {
 const bindHost = CONFIG.bindHost === 'loopback' ? '127.0.0.1' : '0.0.0.0';
 /* Tiempo máximo sin enviar nada antes de cortar la conexión. */
 const SOCKET_IDLE_TIMEOUT_MS = 60 * 1000;
+/* Duraciones legibles para los avisos de arranque (28800000 → «8 h»). */
+const duracionCorta = ms => ms >= 3_600_000
+    ? `${+(ms / 3_600_000).toFixed(ms % 3_600_000 ? 1 : 0)} h`
+    : `${Math.max(1, Math.round(ms / 60_000))} min`;
 
 const httpSrv = http.createServer(handler);
 const httpsSrv = useTls ? require('https').createServer({ cert: fs.readFileSync(TLS_CERT_FILE), key: fs.readFileSync(TLS_KEY_FILE) }, handler) : null;
@@ -97,6 +101,10 @@ dispatcher.listen({ port: PORT, host: bindHost, exclusive: false }, () => {
     if (!tlsState.forceTls) {
         console.log(`\n   Esta PC:   http://localhost:${PORT}`);
         ips.forEach(ip => console.log(`   Tu red:    http://${ip}:${PORT}`));
+        /* El HTTP en claro deja leer la cookie en la red (el sobre cifra
+           cuerpos, no cabeceras): la sesión que se emite por ahí caduca
+           corto para que un token capturado valga poco. */
+        console.log(`   ⚠️  Sesiones por HTTP desde otras máquinas: caducan en ${duracionCorta(CONFIG.authPlainSessionTtlMs)} (AUTH_PLAIN_SESSION_TTL_MS).`);
     }
     if (useTls) {
         console.log(`\n   HTTPS:`);

@@ -256,7 +256,7 @@
     }
   </style>
   <link rel="stylesheet" href="/css/theme.css">
-  <script src="/js/interaction-guard.js?v=1" defer></script>
+  <script src="/js/interaction-guard.js" defer></script>
   <script src="/js/transport-crypto.js"></script>
   <script src="/js/transport.js"></script>
   <script>
@@ -341,12 +341,12 @@
       if (p.online === true) presence.style.color = 'var(--accent)';
       const av = document.getElementById('viewAvatar');
       if (p.permisos && p.permisos.verFoto === false) {
-        av.innerHTML = `<img src="/avatar/${encodeURIComponent(p.id || target)}.svg?v=3" alt="">`;
+        av.innerHTML = `<img src="/avatar/${encodeURIComponent(p.id || target)}.svg" alt="">`;
         av.style.opacity = '1';
         document.getElementById('fotoPrivada').style.display = 'block';
       } else {
         // avatar heredado neutralizado si trae comillas/ángulos.
-        const avSrc = String(p.avatar || '/avatar/' + encodeURIComponent(p.id || target) + '.svg?v=3').replace(/"/g, '%22').replace(/</g, '%3C');
+        const avSrc = String(p.avatar || '/avatar/' + encodeURIComponent(p.id || target) + '.svg').replace(/"/g, '%22').replace(/</g, '%3C');
         av.innerHTML = `<img src="${avSrc}" alt="">`;
       }
       av.onclick = () => { const image = av.querySelector('img'); if (!image) return; document.getElementById('photoViewerImage').src = image.currentSrc || image.src; document.getElementById('photoViewer').style.display = 'flex'; };

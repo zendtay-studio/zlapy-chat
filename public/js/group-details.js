@@ -132,7 +132,7 @@
         const profile = profileFor(username);
         if (profile && typeof profile.avatar === 'string' && profile.avatar) return profile.avatar;
         const key = (profile && profile.id) || username;
-        return key ? '/avatar/' + encodeURIComponent(key) + '.svg?v=3' : '';
+        return key ? '/avatar/' + encodeURIComponent(key) + '.svg' : '';
     }
 
     function contactByUsername(username) {
@@ -381,7 +381,10 @@
            añade ruido entre la portada y los integrantes. */
         refs.aboutCard.hidden = !description;
         if (!description) return;
-        refs.aboutText.textContent = description;
+        /* La descripción admite el mismo markdown que las burbujas (se
+           inserta como HTML ya escapado por el formateador). */
+        if (typeof window.decorateMarkdownText === 'function') refs.aboutText.innerHTML = window.decorateMarkdownText(description);
+        else refs.aboutText.textContent = description;
         refs.aboutText.classList.add('clamped');
         refs.aboutText.classList.remove('is-empty');
         const long = refs.aboutText.scrollHeight > refs.aboutText.clientHeight + 2;

@@ -47,7 +47,7 @@ const { clampStr, localStickerHash, validAvatar, validMessageId, validMime, vali
 const { groupCache, profiles, stories, users } = require('../state.js');
 const { getGiphySearch, getLegacyDefaultSticker, getStickerBlob, getStickerDiscover, getStickers, postCreateSticker, postStickers } = require('../stickers/routes.js');
 const { getStories, postStory, postStoryLike } = require('../stories/routes.js');
-const { byName } = require('../users/helpers.js');
+const { byName, wantsAlwaysPush } = require('../users/helpers.js');
 const { isBlockedBy, isContact } = require('../users/privacy.js');
 
 const handleRequest = (req, res) => {
@@ -528,7 +528,7 @@ const handleRequest = (req, res) => {
                             // Mensaje nuevo = el chat vuelve a la lista, salvo
                             // que el miembro conserve archivados sus chats.
                             if (memberAcc) unarchiveForIncoming(m, memberAcc.id, 'group:' + id);
-                            if (memberAcc && !memberAcc.online)
+                            if (memberAcc && (!memberAcc.online || wantsAlwaysPush(m)))
                                 void notifyUser(m, { title: 'Nuevo mensaje · ' + g.name, body: kind === 'text' ? String(msg.data).slice(0, 120) : 'Mensaje nuevo', tag: 'grp-' + id, url: '/' });
                         }
                     }

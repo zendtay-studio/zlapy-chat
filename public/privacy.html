@@ -365,7 +365,7 @@
     }
   </style>
   <link rel="stylesheet" href="/css/theme.css">
-  <script src="/js/interaction-guard.js?v=1" defer></script>
+  <script src="/js/interaction-guard.js" defer></script>
   <script src="/js/transport-crypto.js"></script>
   <script src="/js/transport.js"></script>
   <script src="/js/appearance.js"></script>
@@ -433,7 +433,7 @@
     function resumenAgregarme() {
       return ({ all: 'Todos los usuarios del servidor', request: 'Por solicitud', nobody: 'Nadie' })[(priv.agregarme || {}).mode || 'request'];
     }
-    const avH = c => `<img src="${esc(c.p && c.p.avatar ? c.p.avatar : '/avatar/' + encodeURIComponent((c.p && c.p.id) || c.id || c.username) + '.svg?v=3')}" alt="">`; /* NEW-01: esc() como en index/profile/view */
+    const avH = c => `<img src="${esc(c.p && c.p.avatar ? c.p.avatar : '/avatar/' + encodeURIComponent((c.p && c.p.id) || c.id || c.username) + '.svg')}" alt="">`; /* NEW-01: esc() como en index/profile/view */
     const nmH = c => esc((c.p && c.p.name && !/^PCE[13]:/.test(c.p.name)) ? c.p.name : c.username);
     let pickMode = null, pickSel = [];
     function applyAll(mode) {

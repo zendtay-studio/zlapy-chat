@@ -126,7 +126,7 @@
         if (!profile) return '';
         if (profile.avatar) return profile.avatar;
         const key = profile.id || profile.username;
-        return key ? '/avatar/' + encodeURIComponent(key) + '.svg?v=3' : '';
+        return key ? '/avatar/' + encodeURIComponent(key) + '.svg' : '';
     };
 
     function presenceText(contact) {

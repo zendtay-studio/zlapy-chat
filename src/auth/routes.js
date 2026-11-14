@@ -362,8 +362,9 @@ function postAuthAccountRemove(req, res, url, data, actor) {
         /* Sin almacén no se puede revocar SOLO este token: se limpia la
            cookie del navegador. El token sigue válido hasta caducar si una
            copia lo conserva (mismo riesgo que toda app tolera con cookies
-           duplicadas); la ventana se cierra de golpe con logout o cambio de
-           contraseña, que rotan el rid de la cuenta. */
+           duplicadas); la ventana se cierra de golpe con un cambio de
+           contraseña, que rota el rid de la cuenta (el logout ya no rota:
+           es local a un navegador). */
         const user = users.get(accountIdV);
         if (user) for (const s of [...user.sockets]) if (s.authToken === token) { try { s.destroy(); } catch { } }
     }
@@ -372,23 +373,26 @@ function postAuthAccountRemove(req, res, url, data, actor) {
 }
 
 function postAuthLogout(req, res, url, data, actor) {
-    /* Logout = ROTACIÓN del `rid` de CADA cuenta de este navegador cuyos
-       tokens sigan siendo válidos (solo se rota lo que se puede verificar: un
-       token falsificado no rota la cuenta que nombra). Al no haber almacén,
-       la revocación es por CUENTA: todos los tokens de esas cuentas dejan de
-       validar, también en otros dispositivos; sus sockets se cortan y sus
-       cookies se limpian. */
-    const revocar = [];
-    const principal = sessionFromToken(sessionCookie(req));
-    if (principal) revocar.push(principal);
+    /* Logout = limpiar ESTE navegador. NO rota el rid: rotarlo descuadraría
+       el checksum de TODOS los tokens de cada cuenta —otros dispositivos
+       incluidos— y sesiones ajenas morirían por un cierre de sesión local.
+       Aquí solo mueren las cookies de este navegador y los sockets
+       autenticados con ESTOS tokens (los de otros dispositivos siguen
+       abiertos). La revocación global de una cuenta sigue siendo el cambio
+       de contraseña (rota el rid); para un token robado antes del logout
+       quedan el TTL corto de los canales abiertos
+       (AUTH_PLAIN_SESSION_TTL_MS) y la caducidad normal del token. */
+    const salientes = [];
+    const tokenPrincipal = sessionCookie(req);
+    const principal = sessionFromToken(tokenPrincipal);
+    if (principal) salientes.push({ user: principal, token: tokenPrincipal });
     for (const [name, value] of accountCookies(req)) {
         const linked = sessionFromToken(value);
-        if (linked && !revocar.some(u => u.id === linked.id)) revocar.push(linked);
+        if (linked) salientes.push({ user: linked, token: value });
     }
-    for (const user of revocar) {
-        rotateRid(user);
-        for (const sk of [...(user.sockets || [])]) { try { sk.destroy(); } catch { } }
-    }
+    for (const { user, token } of salientes)
+        for (const sk of [...(user.sockets || [])])
+            if (sk.authToken === token) { try { sk.destroy(); } catch { } }
     clearSessionCookie(res, req);
     for (const [name] of accountCookies(req)) clearCookie(res, req, name);
     return json(res, 200, { ok: true });

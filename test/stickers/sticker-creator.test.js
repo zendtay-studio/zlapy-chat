@@ -94,12 +94,12 @@ test('creates private stickers, publishes tagged stickers voluntarily, and share
         for (const [asset, contentType] of [
             ['/sticker-creator.html', 'text/html'],
             ['/js/appearance.js', 'javascript'],
-            ['/js/animated-webp.js?v=2', 'javascript'],
-            ['/js/sticker-editor.js?v=43', 'javascript'],
+            ['/js/animated-webp.js', 'javascript'],
+            ['/js/sticker-editor.js', 'javascript'],
             ['/js/vendor/bbot-face.js', 'javascript'],
-            ['/js/popmenu.js?v=5', 'javascript'],
-            ['/css/popmenu.css?v=4', 'text/css'],
-            ['/css/sticker-editor.css?v=30', 'text/css']
+            ['/js/popmenu.js', 'javascript'],
+            ['/css/popmenu.css', 'text/css'],
+            ['/css/sticker-editor.css', 'text/css']
         ]) {
             const response = await fetch(srv.base + asset);
             assert.equal(response.status, 200, `${asset} is served`);
@@ -108,7 +108,7 @@ test('creates private stickers, publishes tagged stickers voluntarily, and share
         const indexResponse = await fetch(srv.base + '/index.html');
         assert.equal(indexResponse.status, 200);
         const indexHtml = await indexResponse.text();
-        const stickerCss = await (await fetch(srv.base + '/css/sticker-editor.css?v=30')).text();
+        const stickerCss = await (await fetch(srv.base + '/css/sticker-editor.css')).text();
         const stickerRoutes = fs.readFileSync(path.join(__dirname, '../../src/stickers/routes.js'), 'utf8');
         const stickerStatements = fs.readFileSync(path.join(__dirname, '../../src/db/statements.js'), 'utf8');
         const stickerStore = fs.readFileSync(path.join(__dirname, '../../src/users/store.js'), 'utf8');
@@ -121,7 +121,11 @@ test('creates private stickers, publishes tagged stickers voluntarily, and share
         assert.ok(favoritesButton >= 0 && favoritesButton < zlapyButton && zlapyButton < giphyButton && giphyButton < bbotButton,
             'sticker sources are ordered favorites, Zlapy, Giphy, bbot');
         assert.match(indexHtml, /id="stkTabFavs" class="on"[^>]*aria-selected="true"/);
-        assert.match(indexHtml, /stickerSearchBox'\)\.hidden = isEmoji/);
+        /* La barra de búsqueda se mantiene visible en TODAS las pestañas,
+           emoji incluido (el picker filtra con su propio listener sobre
+           #stickerSearch). */
+        assert.match(indexHtml, /stickerSearchBox'\)\.hidden = false/);
+        assert.match(indexHtml, /placeholder = 'Buscar emojis'/);
         assert.match(indexHtml, /stickerActiveTab === 'favs'\) \{\s*renderStickerFavs\(\)/);
         assert.match(indexHtml, /Buscar en favoritos/);
         assert.doesNotMatch(indexHtml, /id="stickerSourceTabs"|id="stkTabSearch"/);
@@ -170,21 +174,21 @@ test('creates private stickers, publishes tagged stickers voluntarily, and share
         assert.match(indexHtml, /openStickerCreator\(selected\.item\.plain\)/);
         assert.match(indexHtml, /zlapy-sticker-edit-image/);
         const creatorHtml = await (await fetch(srv.base + '/sticker-creator.html')).text();
-        assert.match(creatorHtml, /animated-webp\.js\?v=2/);
-        assert.match(creatorHtml, /popmenu\.js\?v=5/);
-        assert.match(creatorHtml, /popmenu\.css\?v=4/);
-        assert.match(creatorHtml, /sticker-editor\.js\?v=43/);
-        assert.match(creatorHtml, /sticker-editor\.css\?v=30/);
+        assert.match(creatorHtml, /animated-webp.js/);
+        assert.match(creatorHtml, /popmenu.js/);
+        assert.match(creatorHtml, /popmenu.css/);
+        assert.match(creatorHtml, /sticker-editor.js/);
+        assert.match(creatorHtml, /sticker-editor.css/);
         assert.doesNotMatch(creatorHtml, /stickerOutputSettings|data-output-profile|data-output-setting/);
         assert.match(creatorHtml, /id="stickerCreatorBbot"/);
         assert.match(creatorHtml, /id="stickerCreatorFormats"/);
-        const editorResponse = await fetch(srv.base + '/js/sticker-editor.js?v=43');
+        const editorResponse = await fetch(srv.base + '/js/sticker-editor.js');
         const editorScript = await editorResponse.text();
         assert.match(editorScript, /photo: \{ size: 256, quality: 85 \},\s+video: \{ size: 256, quality: 80, maxSeconds: 10, fps: 8 \},\s+face: \{ size: 256, quality: 90, maxSeconds: 7, fps: 14 \}/);
         assert.doesNotMatch(editorScript, /initializeOutputSettings/);
         assert.doesNotMatch(editorScript, /group\('Preajustes'\)/);
         assert.doesNotMatch(editorScript, /chooseBbotChromaKey|removeBbotChromaKey|MediaRecorder/);
-        const encoderScript = await (await fetch(srv.base + '/js/animated-webp.js?v=2')).text();
+        const encoderScript = await (await fetch(srv.base + '/js/animated-webp.js')).text();
         assert.match(encoderScript, /const MAX_FRAMES = 300/);
         assert.match(editorScript, /isVideo \? 'video' : 'photo'/);
         assert.match(editorScript, /outputSettings\.face/);
@@ -255,7 +259,7 @@ test('creates private stickers, publishes tagged stickers voluntarily, and share
         assert.match(stickerCss, /\.bbotColorSwatch\s*\{[^}]*border-radius: 50%/s);
         assert.match(stickerCss, /\.bbotFlowMenuTrigger::after\s*\{[^}]*content: ''/s);
         assert.match(stickerCss, /\.bbotTimelineEvent\s*\{[^}]*grid-template-columns: minmax\(126px, \.8fr\)/s);
-        const popmenuCss = await (await fetch(srv.base + '/css/popmenu.css?v=4')).text();
+        const popmenuCss = await (await fetch(srv.base + '/css/popmenu.css')).text();
         assert.match(popmenuCss, /\.zlapyMenu\.compact \.zlapyMenuItem\s*\{[^}]*min-height: 36px/s);
         assert.match(popmenuCss, /\.zlapyMenu \.zlapyMenuItem\.selected\s*\{/);
         assert.doesNotMatch(editorScript, /faceInstance\._frame/);

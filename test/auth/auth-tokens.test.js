@@ -5,8 +5,9 @@
 // lleva el token y cada petición verifica firma + caducidad + el CHECKSUM
 // del estado vigente de la cuenta (id | usuario | hash de contraseña | rid,
 // src/auth/rid.js). Rotar el rid de `user_rid` (cambio de contraseña,
-// logout, cambio de cuenta) descuadra el checksum y revoca de golpe TODOS
-// los tokens de la cuenta, también los de otros dispositivos.
+// cambio de cuenta) descuadra el checksum y revoca de golpe TODOS los
+// tokens de la cuenta, también los de otros dispositivos. El logout NO
+// rota: es local al navegador (limpia sus cookies y sus sockets).
 'use strict';
 
 const assert = require('node:assert/strict');
@@ -175,7 +176,7 @@ test('cambiar la contraseña rota el rid: TODOS los tokens de la cuenta mueren',
     } finally { await stop(srv); }
 });
 
-test('logout rota el rid: la cuenta queda sin tokens válidos', async () => {
+test('logout NO rota el rid: es local al navegador y no mata otras sesiones', async () => {
     const srv = await startServer();
     try {
         const ana = await register(srv.base, 'ana');
@@ -185,10 +186,14 @@ test('logout rota el rid: la cuenta queda sin tokens válidos', async () => {
         const salida = await api(srv.base, 'POST', '/auth/logout', {}, ana.cookie);
         assert.equal(salida.status, 200);
 
-        assert.equal(await authenticated(srv.base, ana.cookie), false,
-            'el token con el que se cerró sesión muere');
-        assert.equal(await authenticated(srv.base, cookieOtro), false,
-            'los demás tokens de la cuenta también (revocación por cuenta)');
+        /* El logout limpia las cookies de ESTE navegador, pero el token no
+           se revoca en el servidor: otro dispositivo no puede morir por un
+           cierre de sesión ajeno (el rid no rota y el checksum sigue
+           cuadrando). La revocación global es el cambio de contraseña. */
+        assert.equal(await authenticated(srv.base, ana.cookie), true,
+            'el token con el que se cerró sesión sigue validando (solo se borra la cookie)');
+        assert.equal(await authenticated(srv.base, cookieOtro), true,
+            'los demás dispositivos conservan la sesión');
     } finally { await stop(srv); }
 });
 
@@ -229,7 +234,7 @@ test('V-10: cambiar de cuenta revoca los tokens de la cuenta abandonada', async 
     } finally { await stop(srv); }
 });
 
-test('el token sobrevive al reinicio (secreto estable) y la revocación también', async () => {
+test('el token sobrevive al reinicio (secreto estable) y también al logout', async () => {
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zlapy-token-'));
     const dbPath = path.join(dataDir, 'zlapy.db');
     const srv1 = await startServer({ dataDir });
@@ -249,19 +254,18 @@ test('el token sobrevive al reinicio (secreto estable) y la revocación también
             'un token sin rotar sigue válido tras reiniciar');
         assert.equal(ridRow(dbPath, 'ana').rid, ridAntes, 'el rid no cambia solo por reiniciar');
 
-        // Logout: rota el rid y marca las marcas de tiempo.
+        // Logout: NO rota el rid (es local al navegador).
         assert.equal((await api(srv2.base, 'POST', '/auth/logout', {}, ana.cookie)).status, 200);
     } finally { await stop(srv2); }
 
     const despues = ridRow(dbPath, 'ana');
-    assert.notEqual(despues.rid, ridAntes, 'el rid cambia tras el logout');
-    assert.ok(despues.password_changed_at > 0, 'queda la marca del último cambio');
-    assert.ok(despues.logged_out_at > 0, 'queda la marca del logout');
+    assert.equal(despues.rid, ridAntes, 'el rid no cambia al cerrar sesión');
+    assert.equal(despues.logged_out_at, 0, 'no queda marca de logout (el logout no rota)');
 
     const srv3 = await startServer({ dataDir });
     try {
-        assert.equal(await authenticated(srv3.base, ana.cookie), false,
-            'tras reiniciar, el token revocado sigue muerto');
+        assert.equal(await authenticated(srv3.base, ana.cookie), true,
+            'tras reiniciar, el token sigue válido: el logout no lo revocó');
     } finally {
         await stop(srv3);
         fs.rmSync(dataDir, { recursive: true, force: true });

@@ -11,9 +11,12 @@
  * La cookie de cuenta permite tener varias cuentas abiertas en el mismo
  * navegador: cada cookie lleva SU PROPIO token.
  *
- * Revocación: rotar el `rid` (contraseña nueva, logout, cambio de cuenta)
+ * Revocación: rotar el `rid` (contraseña nueva, cambio de cuenta)
  * invalida de golpe TODOS los tokens de esa cuenta. Al no haber almacén no
- * se puede revocar un solo token: la revocación es por cuenta. El checksum
+ * se puede revocar un solo token: la revocación es por cuenta. El logout,
+ * en cambio, es LOCAL: limpia las cookies del navegador y sus sockets sin
+ * tocar el rid, para no matar las sesiones de otros dispositivos. El
+ * checksum
  * firma el estado de la cuenta (id, usuario, hash de contraseña y rid), de
  * modo que un cambio de contraseña descuadra la sesión incluso si la
  * rotación del rid fallase.
@@ -35,7 +38,26 @@ const { computeChecksum, generateRid } = require('./rid.js');
    días. */
 const TOKEN_TTL_MS = CONFIG.authSessionTtlMs;
 const TOKEN_ISSUER = 'zlapy-session';
-const TOKEN_TTL_SECONDS = Math.max(60, Math.floor(TOKEN_TTL_MS / 1000));
+const ttlEnSegundos = ms => Math.max(60, Math.floor(ms / 1000));
+
+/* ¿El canal por el que llega esta petición puede estar siendo escuchado?
+   Dos casos quedan fuera: conexión cifrada (TLS directo o proxy de
+   confianza en loopback que declara HTTPS) y loopback puro (el tráfico no
+   cruza la red). Todo lo demás —HTTP en claro desde otra máquina— es el
+   caso del token copiado del Set-Cookie/Cookie legible en la WiFi. */
+function openChannel(req) {
+    if (requestEncrypted(req)) return false;
+    return !isLoopbackPeer(req);
+}
+
+/* Vida del token que se emite para esta petición: completa en canal
+   protegido y CORTA (AUTH_PLAIN_SESSION_TTL_MS, 8 h por defecto) en el
+   abierto, de modo que el token capturado en la red valga poco aunque la
+   revocación por rid no llegue a tiempo. El sobre cifrado NO salva esto:
+   cifra cuerpos, no cabeceras, y la cookie viaja en la cabecera. */
+function ttlForRequest(req) {
+    return openChannel(req) ? CONFIG.authPlainSessionTtlMs : TOKEN_TTL_MS;
+}
 
 /* Secreto de firma estable: se DERIVA de la llave maestra (HKDF-SHA256 con
    dominio propio), igual que el resto de material criptográfico de la
@@ -52,8 +74,9 @@ const TOKEN_SECRET = (() => {
    HS256 FIJADO en la firma; en la verificación se PINA la lista de
    algoritmos admitidos (solo HS256): sin pinarla, un token manipulado
    podría pedir `alg: none` o confundir claves — la vuln clásica de las
-   librerías JWT mal usadas. */
-function newSession(user) {
+   librerías JWT mal usadas. La vida va por llamada: completa por defecto
+   y corta cuando el canal está abierto (ttlForRequest). */
+function newSession(user, ttlMs = TOKEN_TTL_MS) {
     /* `jti` aleatorio: sin él, dos tokens del mismo usuario firmados dentro
        del mismo segundo serían IDÉNTICOS (el payload es determinista y el
        iat/exp de JWT tienen precisión de segundos). La cookie principal y la
@@ -67,7 +90,7 @@ function newSession(user) {
         nbf: Math.floor(Date.now() / 1000) - 30,
         jti: crypto.randomBytes(8).toString('base64url'),
         checksum: computeChecksum(user)
-    }, TOKEN_SECRET, { algorithm: 'HS256', expiresIn: TOKEN_TTL_SECONDS });
+    }, TOKEN_SECRET, { algorithm: 'HS256', expiresIn: ttlEnSegundos(ttlMs) });
 }
 
 /* Verifica firma y caducidad SIN tocar la base: devuelve el payload
@@ -197,13 +220,13 @@ function isLoopbackPeer(req) {
     if (typeof address !== 'string' || !address) return false;
     return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1' || address.startsWith('::ffff:127.');
 }
-function setSessionCookie(res, req, token) {
+function setSessionCookie(res, req, token, ttlMs = TOKEN_TTL_MS) {
     const secure = cookieSecure(req);
-    appendCookie(res, `chatlocal_session=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(TOKEN_TTL_MS / 1000)}${secure ? '; Secure' : ''}`);
+    appendCookie(res, `chatlocal_session=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${ttlEnSegundos(ttlMs)}${secure ? '; Secure' : ''}`);
 }
-function setAccountSessionCookie(res, req, userId, token) {
+function setAccountSessionCookie(res, req, userId, token, ttlMs = TOKEN_TTL_MS) {
     const secure = cookieSecure(req);
-    appendCookie(res, `${accountCookieName(userId)}=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(TOKEN_TTL_MS / 1000)}${secure ? '; Secure' : ''}`);
+    appendCookie(res, `${accountCookieName(userId)}=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${ttlEnSegundos(ttlMs)}${secure ? '; Secure' : ''}`);
 }
 function clearCookie(res, req, name) {
     const secure = cookieSecure(req);
@@ -213,9 +236,11 @@ const clearSessionCookie = (res, req) => clearCookie(res, req, 'chatlocal_sessio
 
 /* Rota el `rid` de la cuenta: todos los tokens emitidos antes dejan de
    validar (el checksum descuadra), incluidos los de otros dispositivos.
-   Además actualiza las marcas de tiempo que usa la segunda defensa
-   (iat vs. último cambio de contraseña / logout). La RAM queda al día para
-   que el siguiente token emitido lleve el checksum nuevo. Devuelve el rid. */
+   Lo llaman el cambio de contraseña y el cambio de cuenta — NO el logout,
+   que es local a un navegador. Además actualiza las marcas de tiempo que
+   usa la segunda defensa (iat vs. último cambio de contraseña). La RAM
+   queda al día para que el siguiente token emitido lleve el checksum
+   nuevo. Devuelve el rid. */
 function rotateRid(user) {
     const now = Date.now();
     const rid = generateRid(user.id);
@@ -227,16 +252,20 @@ function rotateRid(user) {
 }
 
 function createSession(user, req, res) {
-    setSessionCookie(res, req, newSession(user));
+    /* Un solo TTL para las DOS cookies de esta respuesta: principal y de
+       cuenta vinculada nacen juntas y caducan juntas. */
+    const ttl = ttlForRequest(req);
+    setSessionCookie(res, req, newSession(user, ttl), ttl);
     /* La cuenta queda además "conectada" en este navegador, pero con un
        token PROPIO (no el mismo que la principal): así el cambio de cuenta
        puede re-emitir la cookie de la cuenta vinculada sin matar la
        principal, y se puede volver a ella sin volver a iniciar sesión. */
-    setAccountSessionCookie(res, req, user.id, newSession(user));
+    setAccountSessionCookie(res, req, user.id, newSession(user, ttl), ttl);
     return { id: user.id, username: user.username };
 }
 function createLinkedAccountSession(user, req, res) {
-    setAccountSessionCookie(res, req, user.id, newSession(user));
+    const ttl = ttlForRequest(req);
+    setAccountSessionCookie(res, req, user.id, newSession(user, ttl), ttl);
     return { id: user.id, username: user.username };
 }
 /* Comprobación de origen: el host del header Origin debe coincidir con el
@@ -273,6 +302,8 @@ module.exports = {
     clearSessionCookie,
     createSession,
     createLinkedAccountSession,
+    openChannel,
+    ttlForRequest,
     originAllowed,
     isLoopbackPeer,
     requestEncrypted,

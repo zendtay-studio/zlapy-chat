@@ -66,8 +66,11 @@ body .zlapyReactionBar {
   max-width: calc(100vw - 16px);
   padding: 4px;
   border: 1px solid #ffffff12;
-  border-radius: 999px;
-  background: #39464d;
+  /* Mismo color y material EXACTOS que el pop-menu (regla de arriba) y,
+     como pidió, bordes deliberadamente NO tan circulares: más uniforme,
+     en la misma línea que el menú. */
+  background: #233138;
+  border-radius: 15px;
   box-shadow: 0 8px 26px #0008;
   color: var(--text, #d5dce2);
   font-family: inherit
@@ -81,7 +84,7 @@ body .zlapyReactionBar .zlapyMenuReaction {
   height: 34px;
   padding: 0 4px;
   border: 0;
-  border-radius: 999px;
+  border-radius: 10px;
   background: transparent;
   color: inherit;
   font: inherit;
@@ -98,6 +101,7 @@ body .zlapyReactionBar .zlapyMenuReaction:focus-visible {
 
 body .zlapyReactionBar .zlapyMenuReactionMore {
   flex-basis: 34px;
+  border-radius: 10px;
   background: #46545d;
   color: #b7c4cc;
 }

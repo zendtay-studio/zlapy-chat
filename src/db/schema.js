@@ -105,6 +105,7 @@ CREATE TABLE IF NOT EXISTS user_chat_settings (
     auto_text     INTEGER NOT NULL DEFAULT 1 CHECK (auto_text IN (0,1)),
     wallpaper_ref TEXT NOT NULL DEFAULT '',
     keep_archived INTEGER NOT NULL DEFAULT 0 CHECK (keep_archived IN (0,1)),
+    always_push   INTEGER NOT NULL DEFAULT 0 CHECK (always_push IN (0,1)),
     updated_at    INTEGER NOT NULL DEFAULT 0
 );
 
@@ -545,6 +546,8 @@ function applySchema(db) {
         db.exec('ALTER TABLE user_chat_prefs ADD COLUMN archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0,1))');
     if (!tableColumns(db, 'user_chat_settings').has('keep_archived'))
         db.exec('ALTER TABLE user_chat_settings ADD COLUMN keep_archived INTEGER NOT NULL DEFAULT 0 CHECK (keep_archived IN (0,1))');
+    if (!tableColumns(db, 'user_chat_settings').has('always_push'))
+        db.exec('ALTER TABLE user_chat_settings ADD COLUMN always_push INTEGER NOT NULL DEFAULT 0 CHECK (always_push IN (0,1))');
     if (!tableColumns(db, 'user_chat_settings').has('accent'))
         db.exec('ALTER TABLE user_chat_settings ADD COLUMN accent TEXT');
     // v9: la tabla de sesiones desaparece (tokens JWT stateless). Una base

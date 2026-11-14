@@ -155,6 +155,7 @@ function hydrateUserFromDb(acc) {
     const chat = Stmt.getChatSettings.get(acc.id);
     if (chat) {
         profile.keepArchived = !!chat.keep_archived;
+        profile.alwaysPush = !!chat.always_push;
         const wallpaper = readImage(chat.wallpaper_ref);
         /* Una fila puede existir solo por el ajuste de archivados (sin
            apariencia guardada todavía): en ese caso no se inventa una
@@ -561,7 +562,8 @@ function writeUserRows(user) {
             Number.isFinite(chat.fontSize) ? chat.fontSize : 15,
             chat.autoText === false ? 0 : 1,
             wallpaperRef,
-            profile.keepArchived === true ? 1 : 0, now
+            profile.keepArchived === true ? 1 : 0,
+            profile.alwaysPush === true ? 1 : 0, now
         );
     }
     // Chats silenciados
@@ -631,7 +633,8 @@ function saveChatSettings(user) {
         Number.isFinite(appearance.fontSize) ? appearance.fontSize : 15,
         appearance.autoText === false ? 0 : 1,
         wallpaperRef,
-        profile.keepArchived === true ? 1 : 0, Date.now()
+        profile.keepArchived === true ? 1 : 0,
+        profile.alwaysPush === true ? 1 : 0, Date.now()
     );
     if (prevChat && prevChat.wallpaper_ref && prevChat.wallpaper_ref !== wallpaperRef)
         pruneBlobHashes([prevChat.wallpaper_ref]);

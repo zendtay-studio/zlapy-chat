@@ -11,7 +11,7 @@ const { encField } = require('../crypto/field-crypto.js');
 const { db } = require('../db/database.js');
 const { Stmt } = require('../db/statements.js');
 const { json } = require('../http/responses.js');
-const { findPushSubRow, notifyUser } = require('./vapid.js');
+const { findPushSubRow, notifyUser, recentPushLog } = require('./vapid.js');
 const { push } = require('../realtime/notify.js');
 const { validPushEndpoint } = require('../shared/validation.js');
 const { pushSubs } = require('../state.js');
@@ -72,7 +72,12 @@ function postPushUnsubscribe(req, res, url, data, actor) {
 async function postPushTest(req, res, url, data, actor) {
     const results = await notifyUser(actor, { title: 'Prueba push', body: 'Aviso del servidor', tag: 'test-' + Date.now(), renotify: true, url: '/' });
     const sent = results.filter(r => r.status >= 200 && r.status < 300).length;
-    return json(res, 200, { ok: sent > 0, sent, total: results.length });
+    /* results SIEMPRE en la respuesta: el cliente leía r.results.map() al no
+       llegar nada y el motivo real del rechazo (403/410/429…) nunca se
+       mostraba en Ajustes. recent: historial de los últimos envíos (éxitos
+       incluidos) para poder depurar en campo el «el servicio lo aceptó pero
+       la notificación no llegó». */
+    return json(res, 200, { ok: sent > 0, sent, total: results.length, results, recent: recentPushLog() });
 }
 
 

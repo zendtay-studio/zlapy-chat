@@ -62,8 +62,8 @@ const Stmt = {
     getChatSettings: db.prepare('SELECT * FROM user_chat_settings WHERE user_id = ?'),
     upsertChatSettings: db.prepare(`INSERT OR REPLACE INTO user_chat_settings
         (user_id, wall, opacity, blur, sender, receiver, sender_text, receiver_text, accent,
-         font_size, auto_text, wallpaper_ref, keep_archived, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+         font_size, auto_text, wallpaper_ref, keep_archived, always_push, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
 
     // Chats silenciados
     listMutedPeers: db.prepare('SELECT rowid, peer_id, peer_name FROM user_muted_peers WHERE user_id = ?'),
