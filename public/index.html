@@ -5809,36 +5809,11 @@
             margin-bottom: 12px
         }
 
-        .bubble.selMsg::after {
-            content: '';
-            position: absolute;
-            top: -9px;
-            width: 20px;
-            height: 20px;
-            border-radius: 50%;
-            /* Check BLANCO sobre el acento del tema (los colores
-               predeterminados). Si la cuenta usa un acento pálido
-               (applyWall lo redefine), la mezcla lo oscurece hacia el
-               fondo para que el check blanco contraste siempre. */
-            background: color-mix(in srgb, var(--accent, #00a884) 72%, #0b141a) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 12.5 4.5 4.5L19 7.5'/%3E%3C/svg%3E") center/12px no-repeat;
-            box-shadow: 0 1px 4px #0006
-        }
-
-        .bubble.me.selMsg::after {
-            right: -6px
-        }
-
-        .bubble.them.selMsg::after {
-            left: -6px
-        }
-
         /* Stricker simple (sin cita): lo seleccionado es EL STICKER, no la
            caja de la burbuja (que arrastra la tira de hora debajo). El
            contorno va sobre el img, al ras de sus bordes y cuadrado como
-           él; el check (::after) sigue en la esquina de la burbuja, que
-           coincide con la esquina del sticker. En el stricker CON cita
-           (stickerReplyB) la caja sí es la unidad: ahí se conserva el
-           contorno de burbuja. */
+           él. En el stricker CON cita (stickerReplyB) la caja sí es la
+           unidad: ahí se conserva el contorno de burbuja. */
         .bubble.stickerB.selMsg:not(.stickerReplyB) {
             outline: none
         }
@@ -5846,6 +5821,31 @@
         .bubble.stickerB.selMsg:not(.stickerReplyB) .stickerImg {
             outline: 2px solid currentColor;
             outline-offset: 2px
+        }
+
+        /* Foto sola: misma idea — el contorno abraza la IMAGEN (o la
+           parrilla de la galería), no la caja de la burbuja, que deja
+           aire alrededor. Con texto al lado (imageTextBubble,
+           galleryTextBubble) la unidad sí es la burbuja entera y se
+           conserva el contorno de caja. */
+        .bubble.mediaBubble.selMsg:not(.imageTextBubble):not(.galleryTextBubble) {
+            outline: none
+        }
+
+        .bubble.mediaBubble.selMsg:not(.imageTextBubble):not(.galleryTextBubble) img {
+            outline: 2px solid currentColor;
+            outline-offset: 2px
+        }
+
+        /* Galería: un solo contorno alrededor de la parrilla completa
+           (no uno por foto). */
+        .bubble.mediaBubble.selMsg:not(.imageTextBubble):not(.galleryTextBubble) .galleryGrid {
+            outline: 2px solid currentColor;
+            outline-offset: 2px
+        }
+
+        .bubble.mediaBubble.selMsg .galleryGrid img {
+            outline: none
         }
 
         /* ===== Ajustes → Chats → Reacciones ===== */
@@ -16669,12 +16669,15 @@
                     `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`));
             }
             document.getElementById('msgs').addEventListener('click', event => {
-                /* En modo selección, un toque sobre una burbuja alterna su
-                   selección (los controles interactivos se respetan). */
+                /* En modo selección, un toque sobre una burbuja alterna su selección y
+                   NADA MÁS: fotos, galerías, audios, enlaces y botones
+                   internos ya no disparan su acción propia (el visor de
+                   imágenes, el reproductor, el enlace, votar…). Dentro de
+                   #msgs solo se selecciona; los controles del modo (la X de
+                   la barra) viven fuera de aquí. */
                 if (selModo) {
                     const bubble = event.target.closest && event.target.closest('.bubble');
-                    if (bubble && !bubble.id.startsWith('btmp') &&
-                        !(event.target.closest && event.target.closest('button, a, audio, video, input, textarea, .bar, .onceLock, .galleryTile, .messageReactions, img:not(.stickerImg)'))) {
+                    if (bubble && !bubble.id.startsWith('btmp')) {
                         event.preventDefault();
                         event.stopPropagation();
                         alternarSeleccion(bubble.id.slice(1));
