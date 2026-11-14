@@ -211,6 +211,7 @@ const pub = (g, viewerId = '') => {
     if (cached) return { ...cached }; // Copia: los handlers decoran el objeto sin ensuciar la caché
     const out = {
         id: g.id, name: g.name, description: g.description, members: g.members,
+        membersTotal: g.members.length,
         admins: g.admins, createdAt: g.createdAt, avatar: g.avatar || '',
         visibility: g.visibility, joinPolicy: g.joinPolicy, writePolicy: g.writePolicy,
         addPolicy: g.addPolicy, editPolicy: g.editPolicy, contentPolicy: g.contentPolicy,

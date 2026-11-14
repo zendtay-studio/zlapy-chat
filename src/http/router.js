@@ -37,7 +37,7 @@ const { getConfig, getHealthz } = require('../meta/routes.js');
 const { getAccountChatSettings, getNotes, getProfile, postAccountChatSettings, postAccountDelete, postAccountProfile, postAccountRegenerateKey, postNotes, postProfile } = require('../profile/routes.js');
 const { postPushSubscribe, postPushTest, postPushUnsubscribe } = require('../push/routes.js');
 const { VAPID, notifyUser } = require('../push/vapid.js');
-const { push, pushName, pushRawName, userList } = require('../realtime/notify.js');
+const { push, pushName, pushRawName, userList, userListPage, USER_LIST_PAGE, USER_LIST_PAGE_MAX } = require('../realtime/notify.js');
 const { createDefaultAvatarSvg, createDefaultGroupAvatarSvg } = require('../shared/avatar.js');
 const { storeGallery, validateGallery } = require('../shared/gallery.js');
 const { MESSAGE_LIMITS, characterCount } = require('../shared/limits.js');
@@ -142,8 +142,21 @@ const handleRequest = (req, res) => {
     if (req.method === 'GET' && url.pathname.startsWith('/stickers/bbot-v3/')) return getLegacyDefaultSticker(req, res, url);
     if (req.method === 'GET' && url.pathname === '/stickers/discover') return getStickerDiscover(req, res, url);
     if (req.method === 'GET' && url.pathname.startsWith('/blob/')) return getRoute2197(req, res, url, data, actor);
-    if (req.method === 'GET' && (url.pathname === '/users' || url.pathname === '/contacts'))
-        return json(res, 200, { users: userList(req.authUser.id) });
+    /* Contactos paginados: ?limit=&offset=&q=. Sin parámetros sigue
+       devolviendo todo (compatibilidad); con ellos, una página + more +
+       total para que el cliente cargue más al deslizar. */
+    if (req.method === 'GET' && (url.pathname === '/users' || url.pathname === '/contacts')) {
+        const rawLimit = url.searchParams.get('limit');
+        const rawOffset = url.searchParams.get('offset');
+        const q = (url.searchParams.get('q') || '').slice(0, 64);
+        if (rawLimit === null && rawOffset === null && !q)
+            return json(res, 200, { users: userList(req.authUser.id), more: false, total: userList(req.authUser.id).length });
+        if (rawLimit !== null && !/^\d{1,6}$/.test(rawLimit)) return json(res, 400, { error: 'limit inválido' });
+        if (rawOffset !== null && !/^\d{1,7}$/.test(rawOffset)) return json(res, 400, { error: 'offset inválido' });
+        const limit = Math.min(USER_LIST_PAGE_MAX, Math.max(1, Number(rawLimit || USER_LIST_PAGE)));
+        const offset = Math.max(0, Number(rawOffset || 0));
+        return json(res, 200, userListPage(req.authUser.id, { limit, offset, q }));
+    }
 
     if (req.method === 'GET' && url.pathname === '/contacts/requests') return getContactsRequests(req, res, url, data, actor);
     if (req.method === 'GET' && url.pathname === '/contacts/requests/sent') return getContactsRequestsSent(req, res, url, data, actor);
@@ -162,6 +175,14 @@ const handleRequest = (req, res) => {
         const g = readGroup(gid);
         if (!g || !g.memberIds.includes(req.authUser.id)) return json(res, 404, { error: 'no existe' });
         const full = pub(g, req.authUser.id);
+        /* Recorte opcional de integrantes: quien pide membersLimit sólo
+           recibe esa primera página y pagina el resto con /members. Sin el
+           parámetro sigue yendo la lista completa (compatibilidad). */
+        const rawMembersLimit = url.searchParams.get('membersLimit');
+        if (rawMembersLimit !== null) {
+            if (!/^\d{1,6}$/.test(rawMembersLimit)) return json(res, 400, { error: 'membersLimit inválido' });
+            full.members = full.members.slice(0, Math.min(100, Math.max(1, Number(rawMembersLimit))));
+        }
         if (url.searchParams.get('light') === '1') {
             full.brief = groupBrief(g.id);
             full.seenTs = (req.authUser.groupSeen || {})[g.id] || 0;
@@ -186,6 +207,27 @@ const handleRequest = (req, res) => {
         });
         const visible = filterForViewer(page.messages, req.authUser.id, 'group:' + gid);
         return json(res, 200, { messages: withMessageReactions(visible, req.authUser.id).map(m => withMentions(decorateForClient(m))), more: page.more });
+    }
+    /* Miembros del grupo paginados (mismo criterio que /users): la pantalla
+       de detalles pide la primera página y el resto al deslizar. */
+    let gmMembers = url.pathname.match(/^\/groups\/([^/]+)\/members$/);
+    if (gmMembers && req.method === 'GET') {
+        const gid = safeDecodeSegment(gmMembers[1]);
+        if (gid === null) return json(res, 400, { members: [], more: false, total: 0 });
+        if (!/^[a-zA-Z0-9_-]{1,80}$/.test(gid)) return json(res, 400, { members: [], more: false, total: 0 });
+        const g = readGroup(gid);
+        if (!g || !g.memberIds.includes(req.authUser.id)) return json(res, 404, { members: [], more: false, total: 0 });
+        const rawLimit = url.searchParams.get('limit');
+        const rawOffset = url.searchParams.get('offset');
+        if (rawLimit !== null && !/^\d{1,6}$/.test(rawLimit)) return json(res, 400, { members: [], more: false, total: 0 });
+        if (rawOffset !== null && !/^\d{1,7}$/.test(rawOffset)) return json(res, 400, { members: [], more: false, total: 0 });
+        const limit = Math.min(100, Math.max(1, Number(rawLimit || 20)));
+        const offset = Math.max(0, Number(rawOffset || 0));
+        /* Orden estable (usuario) para que las páginas no se descoloquen al
+           entrar o salir gente. */
+        const sorted = [...g.members].sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
+        const members = sorted.slice(offset, offset + limit);
+        return json(res, 200, { members, total: sorted.length, offset, more: offset + members.length < sorted.length });
     }
     if (req.method === 'GET' && url.pathname === '/calls') return getCalls(req, res, url, data, actor);
     if (req.method === 'GET' && url.pathname === '/stickers')

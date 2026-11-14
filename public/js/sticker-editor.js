@@ -175,10 +175,14 @@
         tagInput.addEventListener('keydown', event => {
             if (event.key !== 'Enter') return;
             event.preventDefault();
-            const tag = tagInput.value.trim().replace(/^#/, '').normalize('NFC').toLowerCase();
+            /* Igual que el backend: plegar acentos y dejar solo texto plano,
+               así el chip muestra lo que realmente se guarda. */
+            const tag = tagInput.value.trim().normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '')
+                .replace(/^#/, '').toLowerCase();
             if (!tag) return;
-            if (!/^[\p{L}\p{N}_-]{1,24}$/u.test(tag)) {
-                tagError.textContent = 'Usa hasta 24 letras o números, sin espacios.';
+            if (!/^[a-z0-9_-]{1,24}$/.test(tag)) {
+                tagError.textContent = 'Usa hasta 24 letras o números, sin acentos ni espacios.';
                 return;
             }
             if (publishTags.includes(tag)) { tagInput.value = ''; return; }
@@ -1522,10 +1526,14 @@
             tagInput.addEventListener('keydown', event => {
                 if (event.key !== 'Enter') return;
                 event.preventDefault();
-                const tag = tagInput.value.trim().replace(/^#/, '').normalize('NFC').toLowerCase();
+                /* Igual que el backend: plegar acentos y dejar solo texto
+                   plano, así el chip muestra lo que realmente se guarda. */
+                const tag = tagInput.value.trim().normalize('NFD')
+                    .replace(/[\u0300-\u036f]/g, '')
+                    .replace(/^#/, '').toLowerCase();
                 if (!tag) return;
-                if (!/^[\p{L}\p{N}_-]{1,24}$/u.test(tag)) {
-                    tagError.textContent = 'Usa hasta 24 letras o números, sin espacios.';
+                if (!/^[a-z0-9_-]{1,24}$/.test(tag)) {
+                    tagError.textContent = 'Usa hasta 24 letras o números, sin acentos ni espacios.';
                     return;
                 }
                 if (publishTags.includes(tag)) { tagInput.value = ''; return; }

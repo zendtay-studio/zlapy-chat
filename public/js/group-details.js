@@ -68,6 +68,10 @@
         group: null,
         profiles: {},
         contacts: [],
+        /* Contactos y miembros llegan PAGINADOS del servidor: aquí se
+           guardan todas las páginas ya cargadas y el estado del cursor. */
+        contactsOffset: 0, contactsMore: false, contactsTotal: 0, contactsCargando: false, contactsQuery: '',
+        membersPages: [], membersOffset: 0, membersMore: false, membersTotal: 0, membersCargando: false,
         picker: null,
         query: '',
         expanded: false,
@@ -214,7 +218,9 @@
     /* ============ carga de datos ============ */
 
     async function fetchGroup() {
-        const response = await fetch('/groups/' + encodeURIComponent(groupId) + '?light=1', { cache: 'no-store' });
+        /* membersLimit=20: del grupo sólo viaja la primera página de
+           integrantes; el resto lo pide /members (paginado). */
+        const response = await fetch('/groups/' + encodeURIComponent(groupId) + '?light=1&membersLimit=20', { cache: 'no-store' });
         const data = await response.json().catch(() => ({}));
         if (!response.ok) {
             const error = new Error(data.error || 'No se pudo cargar el grupo.');
@@ -235,16 +241,87 @@
         }
     }
 
-    async function loadContacts() {
+    /* Contactos paginados: loadContacts(true) empieza de cero (init o
+        búsqueda); sin argumentos pide la siguiente página (scroll). */
+    async function loadContacts(reset = false, query) {
+        if (query !== undefined) state.contactsQuery = query || '';
+        if (reset) { state.contactsOffset = 0; state.contacts = []; }
+        if (state.contactsCargando) return;
+        if (!reset && !state.contactsMore) return;
+        state.contactsCargando = true;
         try {
-            const response = await fetch('/contacts', { cache: 'no-store' });
+            const params = new URLSearchParams({ limit: '40', offset: String(state.contactsOffset) });
+            if (state.contactsQuery) params.set('q', state.contactsQuery);
+            const response = await fetch('/contacts?' + params.toString(), { cache: 'no-store' });
             const data = await response.json().catch(() => ({}));
             if (!response.ok) return;
-            const list = Array.isArray(data.users) ? data.users : [];
-            state.contacts = list.filter(contact => contact && contact.username && !isSelf(contact.username));
+            const page = Array.isArray(data.users) ? data.users : [];
+            const previos = new Set(state.contacts.map(contact => contact.username));
+            state.contacts = state.contacts.concat(page.filter(contact =>
+                contact && contact.username && !isSelf(contact.username) && !previos.has(contact.username)));
+            state.contactsOffset += page.length;
+            state.contactsMore = !!data.more;
+            state.contactsTotal = typeof data.total === 'number' ? data.total : 0;
+            if (state.picker) renderPicker();
         } catch (error) {
             console.error('[detalles] No se pudieron cargar los contactos:', error);
+        } finally {
+            state.contactsCargando = false;
         }
+    }
+
+    /* Miembros del grupo paginados: la pantalla pide la primera página y
+       el resto al deslizar o al tocar «Ver todos». `perfilar=false` pide
+       sólo los usuarios (para el selector de añadir, donde no hacen falta
+       los perfiles de todos). */
+    async function cargarMiembrosPagina(append = false, perfilar = true) {
+        if (state.membersCargando) return;
+        if (append && !state.membersMore) return;
+        if (!append) { state.membersOffset = 0; state.membersPages = []; }
+        state.membersCargando = true;
+        try {
+            const response = await fetch(`/groups/${encodeURIComponent(groupId)}/members?limit=20&offset=${state.membersOffset}`, { cache: 'no-store' });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) return;
+            const page = Array.isArray(data.members) ? data.members : [];
+            const previos = new Set(state.membersPages);
+            state.membersPages = state.membersPages.concat(page.filter(username => !previos.has(username)));
+            state.membersOffset = (typeof data.offset === 'number' ? data.offset : state.membersOffset) + page.length;
+            state.membersMore = !!data.more;
+            state.membersTotal = typeof data.total === 'number' ? data.total : state.membersPages.length;
+            if (perfilar) await ensureProfiles(state.membersPages);
+            renderMembers();
+        } catch (error) {
+            console.error('[detalles] No se pudieron cargar los integrantes:', error);
+        } finally {
+            state.membersCargando = false;
+        }
+    }
+
+    /* Trae TODAS las páginas de integrantes (sin perfilar): la usa el
+       selector de añadir para saber quién ya está dentro. */
+    async function asegurarTodosMiembros() {
+        let vueltas = 0;
+        while (state.membersMore && !state.membersCargando && vueltas++ < 60) {
+            const antes = state.membersOffset;
+            await cargarMiembrosPagina(true, false);
+            if (!state.membersMore || state.membersOffset === antes) break;
+        }
+        return new Set(state.membersPages);
+    }
+
+    /* «Ver todos»: si quedan páginas en el servidor, las trae todas antes
+       de desplegar la lista completa. */
+    async function verTodosMiembros() {
+        if (state.expanded) { state.expanded = false; renderMembers(); return; }
+        let vueltas = 0;
+        while (state.membersMore && !state.membersCargando && vueltas++ < 50) {
+            const antes = state.membersOffset;
+            await cargarMiembrosPagina(true);
+            if (!state.membersMore || state.membersOffset === antes) break;
+        }
+        state.expanded = true;
+        renderMembers();
     }
 
     async function loadPreferences() {
@@ -467,9 +544,11 @@
     }
 
     function renderMembers() {
-        const group = state.group;
-        const members = [...(group.members || [])].sort(memberSort);
-        if (members.length < 8 && state.query) {
+        /* Base: las páginas ya cargadas (el total lo da el servidor, así
+           que el contador no depende de cuánto se haya traído). */
+        const members = [...state.membersPages].sort(memberSort);
+        const total = Math.max(state.membersTotal, members.length);
+        if (total < 8 && state.query) {
             state.query = '';
             refs.memberSearch.value = '';
         }
@@ -483,7 +562,7 @@
         const faces = members.slice(0, 5)
             .map(username => avatarHtml(username, 'strip-avatar', false))
             .join('');
-        const remaining = members.length - Math.min(members.length, 5);
+        const remaining = total - Math.min(members.length, 5);
         const names = members.map(username => displayName(username));
         const summary = !names.length
             ? ''
@@ -496,16 +575,16 @@
                         : `${names.slice(0, 2).join(', ')} y ${names.length - 2} más`;
         refs.memberStrip.innerHTML = `<span class="strip-faces">${faces}${remaining > 0 ? `<span class="strip-more">+${remaining}</span>` : ''}</span><span class="strip-label">${escapeHtml(summary)}</span>`;
         refs.memberStrip.hidden = !members.length || Boolean(query);
-        refs.memberSearchWrap.hidden = members.length < 8;
+        refs.memberSearchWrap.hidden = total < 8;
 
-        refs.memberCount.textContent = String(members.length);
+        refs.memberCount.textContent = String(total);
         refs.memberCount.classList.toggle('is-empty', members.length === 0);
         refs.memberList.innerHTML = visible.map(memberRow).join('');
-        refs.memberEmpty.hidden = filtered.length > 0;
+        refs.memberEmpty.hidden = !(state.membersMore || filtered.length > 0);
         refs.clearSearch.hidden = !state.query;
         if (document.activeElement !== refs.memberSearch) refs.memberSearch.value = state.query;
-        refs.viewAllBtn.hidden = Boolean(query) || filtered.length <= LIST_LIMIT;
-        refs.viewAllBtn.textContent = state.expanded ? 'Ver menos' : `Ver todos (${filtered.length})`;
+        refs.viewAllBtn.hidden = Boolean(query) || total <= LIST_LIMIT;
+        refs.viewAllBtn.textContent = state.expanded ? 'Ver menos' : `Ver todos (${total})`;
     }
 
     function requestRow(request) {
@@ -581,6 +660,14 @@
         const group = await fetchGroup();
         state.group = group;
         await ensureProfiles(groupProfileNames(group));
+        /* La lista de integrantes se recarga desde la primera página: si
+           entró o salió gente, las páginas anteriores pueden haber
+           cambiado. */
+        state.membersOffset = 0;
+        state.membersPages = [];
+        state.membersMore = true;
+        state.membersTotal = 0;
+        void cargarMiembrosPagina(false);
         return group;
     }
 
@@ -715,8 +802,16 @@
     function openPeoplePicker(mode) {
         if (!state.group) return;
         const adding = mode === 'add';
-        const members = new Set(state.group.members || []);
+        /* El conjunto de integrantes sale de las páginas ya cargadas; en
+           modo añadir se completa en segundo plano (sin perfilar) para
+           filtrar bien a quien ya está dentro. */
+        const members = new Set(state.membersPages);
         const available = state.contacts.filter(contact => !adding || !members.has(contact.username));
+        if (adding) {
+            void asegurarTodosMiembros().then(() => {
+                if (state.picker && state.picker.mode === 'add') renderPicker();
+            });
+        }
         state.picker = {
             mode,
             selected: new Set(),
@@ -748,7 +843,7 @@
     function renderPicker() {
         const picker = state.picker;
         if (!picker) return;
-        const members = new Set((state.group && state.group.members) || []);
+        const members = new Set(state.membersPages);
         const query = normalize(picker.query);
         const candidates = state.contacts.filter(contact => {
             if (picker.mode === 'add' && members.has(contact.username)) return false;
@@ -1009,10 +1104,22 @@
             renderMembers();
             refs.memberSearch.focus();
         });
-        refs.viewAllBtn.addEventListener('click', () => {
-            state.expanded = !state.expanded;
-            renderMembers();
-        });
+        refs.viewAllBtn.addEventListener('click', () => { void verTodosMiembros(); });
+        /* Paginación al deslizar: UN listener en captura cubre tanto el
+           scroll de la página (.scroll) como el del selector (overlay),
+           porque ninguna de las dos listas scrollea por su cuenta. */
+        document.addEventListener('scroll', () => {
+            const pickerAbierto = refs.pickerOverlay && !refs.pickerOverlay.hidden;
+            const cerca = el => {
+                const r = el.getBoundingClientRect();
+                return r.height > 0 && r.bottom < window.innerHeight + 300;
+            };
+            if (pickerAbierto()) {
+                if (state.contactsMore && !state.contactsCargando && cerca(refs.peopleList)) void loadContacts();
+            } else if (state.membersMore && !state.membersCargando && cerca(refs.memberList)) {
+                void cargarMiembrosPagina(true);
+            }
+        }, { passive: true, capture: true });
         refs.memberList.addEventListener('click', event => {
             const row = event.target.closest('[data-profile]');
             if (row) openProfile(row.dataset.profile);
@@ -1043,6 +1150,12 @@
             if (!state.picker) return;
             state.picker.query = event.target.value;
             renderPicker();
+            /* La búsqueda la filtra el servidor (usuario o nombre): se
+               reinicia la paginación con el texto escrito. */
+            clearTimeout(state.picker.searchTimer);
+            state.picker.searchTimer = setTimeout(() => {
+                void loadContacts(true, state.picker ? state.picker.query : '');
+            }, 180);
         });
         refs.peopleList.addEventListener('change', event => {
             const input = event.target.closest('input[type="checkbox"]');
@@ -1094,7 +1207,7 @@
             const [me, group] = await Promise.all([fetchMe(), fetchGroup()]);
             if (me) state.me = me;
             state.group = group;
-            await Promise.all([loadContacts(), loadPreferences()]);
+            await Promise.all([loadContacts(), loadPreferences(), cargarMiembrosPagina(false)]);
             await ensureProfiles([...groupProfileNames(group), ...state.contacts.map(contact => contact.username)]);
             revealGroup();
         } catch (error) {

@@ -10563,7 +10563,7 @@
                 <circle cx="10.8" cy="10.8" r="6.8"></circle>
                 <path d="m16 16 5 5"></path>
             </svg>
-            <input id="searchBox" type="text" placeholder="Buscar o iniciar chat" autocomplete="off" oninput="renderContacts()"
+            <input id="searchBox" type="text" placeholder="Buscar o iniciar chat" autocomplete="off" oninput="buscarContactos()"
                 style="flex:1">
         </div>
         <div id="storiesRow"></div>
@@ -11246,6 +11246,11 @@
             // Object.prototype en vez de una lista y el render del cliente
             // reventaría al llamar a .filter/.reduce sobre él.
             let me = null, contacts = [], groups = [], active = null, activeKind = 'dm', activeGroup = null, conv = Object.create(null), profilesCache = Object.create(null), pendingContactCount = 0, pendingContactSentCount = 0, pendingGroupIncomingCount = 0, pendingGroupSentCount = 0;
+            /* Contactos paginados: `contacts` guarda TODAS las páginas ya
+               cargadas; el servidor manda de a CONTACTS_PAGE. contactsPaginaLen
+               es el tamaño de la página 1 (la que llega por WebSocket). */
+            const CONTACTS_PAGE = 40;
+            let contactsOffset = CONTACTS_PAGE, contactsMore = false, contactsTotal = 0, contactsCargando = false, contactsPaginaLen = 0, contactsQuery = '', contactsCargaToken = 0;
             let CHAT_TEXT_LIMITS = { dm: 10000, group: 15000, story: 140, description: 140, preview: 2500 };
             let MAX_GALLERY_UPLOAD_CHARS = 24000000;
             let MAX_GALLERY_ITEMS = 20;
@@ -11979,18 +11984,24 @@
             async function loadZlapyStickers(append = false) {
                 const grid = document.getElementById('stickerGrid');
                 if (!grid) return;
-                const query = document.getElementById('stickerSearch').value.trim().normalize('NFC');
-                const queryTerms = [...new Set(query.toLowerCase().split(/\s+/).filter(Boolean)
+                /* Igual que el backend: plegar acentos y dejar solo texto
+                   plano, para que la búsqueda local coincida con la del
+                   servidor. */
+                const rawQuery = document.getElementById('stickerSearch').value.trim();
+                const query = rawQuery.normalize('NFD')
+                    .replace(/[\u0300-\u036f]/g, '')
+                    .toLowerCase().normalize('NFC');
+                const queryTerms = [...new Set(query.split(/\s+/).filter(Boolean)
                     .map(term => term.replace(/^#/, '')))];
-                if (query.length > 64 || queryTerms.length > 8 ||
-                    queryTerms.some(term => !/^[\p{L}\p{N}_-]{1,24}$/u.test(term))) {
+                if (rawQuery.length > 64 || queryTerms.length > 8 ||
+                    queryTerms.some(term => !/^[a-z0-9_-]{1,24}$/.test(term))) {
                     if (zlapyRequestController) zlapyRequestController.abort();
                     zlapyRequestController = null;
                     zlapyRequestVersion++;
                     zlapyLoading = false;
                     zlapyHasMore = false;
                     zlapyQueryKey = '';
-                    grid.innerHTML = '<div class="sub" style="padding:10px;grid-column:1/-1">Usa hasta 8 etiquetas de 24 letras o números.</div>';
+                    grid.innerHTML = '<div class="sub" style="padding:10px;grid-column:1/-1">Usa hasta 8 etiquetas de 24 letras o números, sin acentos.</div>';
                     return;
                 }
                 const queryKey = query.toLowerCase();
@@ -12872,12 +12883,24 @@
                     return;
                 }
                 if (msg.type === 'users') {
-                    const nextContacts = msg.users.filter(u => u.username !== me.username);
-                    if (hasReceivedContacts && JSON.stringify(contacts) === JSON.stringify(nextContacts)) return;
+                    /* El servidor manda la PRIMERA página (más el total):
+                       se reemplaza la página 1 y se conservan las páginas 2+
+                       ya cargadas — el orden del servidor es estable, así que
+                       no se desalinean. */
+                    const pagina = (msg.users || []).filter(u => u.username !== me.username);
+                    const total = Number(msg.usersTotal) > 0 ? Number(msg.usersTotal) : pagina.length + 1; // +1: uno mismo
+                    const masPaginas = typeof msg.usersMore === 'boolean' ? msg.usersMore : total > pagina.length + 1;
+                    if (hasReceivedContacts && JSON.stringify(contacts.slice(0, contactsPaginaLen)) === JSON.stringify(pagina) &&
+                        contactsMore === masPaginas && contacts.length === pagina.length + (contacts.length - contactsPaginaLen)) return;
                     hasReceivedContacts = true;
-                    contacts = nextContacts;
+                    contacts = pagina.concat(contacts.slice(contactsPaginaLen));
+                    contactsPaginaLen = pagina.length;
+                    contactsOffset = pagina.length;
+                    contactsMore = masPaginas;
+                    contactsTotal = Math.max(0, total - 1); // sin contarse a sí mismo
                     if (active && activeKind === 'dm') updateChatSub(active);
                     refreshProfiles();
+                    renderContacts();
                     return;
                 }
 
@@ -14548,6 +14571,12 @@
             (function bindContactListActions() {
                 const box = document.getElementById('contacts');
                 if (!box) return;
+                /* Paginación: al acercarse al final se pide la siguiente
+                   página de contactos (si el servidor dice que hay más). */
+                box.addEventListener('scroll', () => {
+                    if (!contactsMore || contactsCargando) return;
+                    if (box.scrollTop + box.clientHeight >= box.scrollHeight - 240) void cargarContactosPagina(true);
+                }, { passive: true });
                 box.addEventListener('pointerdown', event => {
                     const row = event.target.closest('[data-chat-peer]');
                     if (!row || event.button !== 0) return;
@@ -14599,6 +14628,10 @@
                 });
             })();
             async function loadChatSummary() {
+                /* Contactos: primera página por HTTP (el WS empuja sólo la
+                   primera página también; esto cubre el arranque aunque el
+                   push tarde o la sesión ya estuviera conectada). */
+                void cargarContactosPagina(false);
                 try {
                     const r = await fetch('/chats/summary', { cache: 'no-store' }).then(r => r.json()).catch(() => null);
                     for (const c of (r && r.chats) || []) {
@@ -15218,6 +15251,48 @@
                     history.replaceState(null, '', '/');
                     toast(error.message);
                 }
+            }
+            /* Carga una página de contactos del servidor. Con append=false se
+               reemplaza lo cargado (arranque o búsqueda nueva); con true se
+               añade la siguiente página (scroll al final de la lista). */
+            async function cargarContactosPagina(append = false, query) {
+                if (query !== undefined) contactsQuery = query || '';
+                if (!append) { contactsOffset = 0; contactsPaginaLen = 0; }
+                if (contactsCargando) return;
+                if (append && !contactsMore) return;
+                const token = ++contactsCargaToken;
+                contactsCargando = true;
+                try {
+                    const params = new URLSearchParams({ limit: String(CONTACTS_PAGE), offset: String(contactsOffset) });
+                    if (contactsQuery) params.set('q', contactsQuery);
+                    const r = await fetch('/users?' + params.toString(), { cache: 'no-store' });
+                    const data = await r.json().catch(() => ({}));
+                    if (!r.ok || token !== contactsCargaToken) return;
+                    const page = (data.users || []).filter(u => u.username !== me.username);
+                    if (append) {
+                        const previos = new Set(contacts.map(c => c.username));
+                        contacts = contacts.concat(page.filter(c => !previos.has(c.username)));
+                    } else {
+                        contacts = page;
+                        contactsPaginaLen = page.length;
+                    }
+                    contactsOffset = (typeof data.offset === 'number' ? data.offset : contactsOffset) + page.length;
+                    contactsMore = !!data.more;
+                    contactsTotal = typeof data.total === 'number' ? data.total : 0;
+                    renderContacts();
+                } catch { }
+                finally { if (token === contactsCargaToken) contactsCargando = false; }
+            }
+            let contactSearchTimer = 0;
+            function buscarContactos() {
+                clearTimeout(contactSearchTimer);
+                const q = document.getElementById('searchBox').value.trim();
+                /* Con texto: cada página viene filtrada del servidor (usuario
+                   o nombre). Sin texto: la lista normal, de a páginas. */
+                contactSearchTimer = setTimeout(() => {
+                    contactsCargando = false;
+                    void cargarContactosPagina(false, q);
+                }, 180);
             }
             async function renderContacts() {
                 const renderVersion = ++contactRenderVersion;
@@ -17784,29 +17859,31 @@
                     debugToast('Los mensajes de una sola vista no se pueden compartir.');
                     return;
                 }
-                const recipients = [
-                    { id: 'dm:' + me.username, name: 'Mensajes Guardados', sub: 'Envíate a ti mismo', avatar: '<svg viewBox="0 0 24 24" width="20" height="20" fill="#e9edef"><path d="M17 3H7a2 2 0 00-2 2v16l5-3 5 3V5a2 2 0 00-2-2z"/></svg>', search: 'mensajes guardados' },
-                    ...contacts.filter(contact => contact.username !== m.peer).map(contact => ({
-                        id: 'dm:' + contact.username, name: displayNameOf(contact.username),
-                        sub: presenceText(contact), avatar: avOrLetter(contact.username),
-                        search: contact.username + ' ' + displayNameOf(contact.username)
-                    })),
-                    ...(m.kind === 'group-invite' ? [] : groups.map(group => ({
-                        id: 'group:' + group.id, name: group.name || 'Grupo',
-                        sub: `${(group.members || []).length} miembros · Grupo`,
-                        avatar: escapeHtml((group.name || 'G').slice(0, 1).toUpperCase()),
-                        search: (group.name || '') + ' grupo'
-                    })))
-                ];
+                /* Sheet paginado: la primera página de contactos arriba y los
+                   grupos debajo; al deslizar se piden más contactos y se
+                   insertan justo encima de los grupos. */
+                const filaShare = r => `<label class="mRow" data-u="${escapeHtml(r.search.toLowerCase())}">
+        <input type="checkbox" value="${escapeHtml(r.id)}">
+        <div class="avatar sm"${r.id === 'dm:' + me.username ? ' style="background:#2a3942"' : ''}>${r.avatar}</div>
+        <div class="meta"><div class="name">${escapeHtml(r.name)}</div><div class="sub">${escapeHtml(r.sub)}</div></div>
+      </label>`;
+                const filasContactos = lista => lista.filter(contact => contact.username !== m.peer).map(contact => ({
+                    id: 'dm:' + contact.username, name: displayNameOf(contact.username),
+                    sub: presenceText(contact), avatar: avOrLetter(contact.username),
+                    search: contact.username + ' ' + displayNameOf(contact.username)
+                })).map(filaShare).join('');
+                const filasGrupos = (m.kind === 'group-invite' ? [] : groups.map(group => ({
+                    id: 'group:' + group.id, name: group.name || 'Grupo',
+                    sub: `${(group.members || []).length} miembros · Grupo`,
+                    avatar: escapeHtml((group.name || 'G').slice(0, 1).toUpperCase()),
+                    search: (group.name || '') + ' grupo'
+                }))).map(filaShare).join('');
+                const guardado = { id: 'dm:' + me.username, name: 'Mensajes Guardados', sub: 'Envíate a ti mismo', avatar: '<svg viewBox="0 0 24 24" width="20" height="20" fill="#e9edef"><path d="M17 3H7a2 2 0 00-2 2v16l5-3 5 3V5a2 2 0 00-2-2z"/></svg>', search: 'mensajes guardados' };
                 let selected = [];
                 Modal.vivo({
                     titulo: 'Compartir con',
                     html: `<input id="shSearch" placeholder="Buscar chat o grupo…">
-      <div class="mList" id="shList">${recipients.length ? recipients.map(recipient => `<label class="mRow" data-u="${escapeHtml(recipient.search.toLowerCase())}">
-        <input type="checkbox" value="${escapeHtml(recipient.id)}">
-        <div class="avatar sm"${recipient.id === 'dm:' + me.username ? ' style="background:#2a3942"' : ''}>${recipient.avatar}</div>
-        <div class="meta"><div class="name">${escapeHtml(recipient.name)}</div><div class="sub">${escapeHtml(recipient.sub)}</div></div>
-      </label>`).join('') : '<div class="sub" style="padding:10px">No hay otros chats</div>'}</div>
+      <div class="mList" id="shList">${filaShare(guardado)}${filasContactos(contacts)}<span id="shGrupos" hidden></span>${filasGrupos}</div>
       <div class="mText" id="shCount" style="font-size:12.5px">Ningún chat seleccionado</div>`,
                     acciones: [{ txt: 'Cancelar', valor: null }, { txt: 'Compartir', valor: '__OK__', tipo: 'ok' }],
                     onMount(sheet) {
@@ -17820,6 +17897,29 @@
                             count.textContent = selected.length
                                 ? `Compartir con ${selected.length} destino${selected.length === 1 ? '' : 's'}`
                                 : 'Ningún chat seleccionado';
+                        });
+                        /* Deslizar hasta el final del sheet: siguiente página
+                           de contactos del servidor, insertada antes de los
+                           grupos (y si la primera página no llena la lista,
+                           se pide otra vez). */
+                        const ancla = sheet.querySelector('#shGrupos');
+                        const dibujados = new Set(contacts.map(c => c.username));
+                        const agregarNuevos = () => {
+                            const nuevos = contacts.filter(c => !dibujados.has(c.username));
+                            if (!nuevos.length) return;
+                            for (const c of nuevos) dibujados.add(c.username);
+                            const html = filasContactos(nuevos);
+                            if (ancla && ancla.parentNode === list) ancla.insertAdjacentHTML('beforebegin', html);
+                            else list.insertAdjacentHTML('beforeend', html);
+                        };
+                        list.addEventListener('scroll', () => {
+                            if (!contactsMore || contactsCargando) return;
+                            if (list.scrollTop + list.clientHeight >= list.scrollHeight - 120)
+                                void cargarContactosPagina(true).then(agregarNuevos);
+                        }, { passive: true });
+                        if (contactsMore) requestAnimationFrame(() => {
+                            if (list.scrollHeight <= list.clientHeight + 40)
+                                void cargarContactosPagina(true).then(agregarNuevos);
                         });
                     }
                 }).then(async result => {

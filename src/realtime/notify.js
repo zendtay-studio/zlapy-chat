@@ -53,6 +53,15 @@ function pushRawName(username, raw) {
 const push = (u, obj) => { if (!u || !u.sockets) return; for (const s of [...u.sockets]) wsSend(s, obj); };
 const pushName = (username, obj) => push(byName(username), obj);
 
+/* Orden estable para la paginación: uno mismo primero y el resto por
+   usuario. Sin esto el orden salía del Set de contactos (inserción) y al
+   añadir o quitar un contacto las páginas se desplazaban. */
+function sortUserList(out) {
+    const [self, ...rest] = out;
+    rest.sort((a, b) => a.username < b.username ? -1 : a.username > b.username ? 1 : 0);
+    return self ? [self, ...rest] : rest;
+}
+
 function userList(viewerId) {
     const viewer = users.get(viewerId);
     if (!viewer) return [];
@@ -72,8 +81,24 @@ function userList(viewerId) {
         if (isBlockedBy(profiles[u.username], viewer.username)) continue;
         out.push({ id: u.id, username: u.username, ...presenceEntry(u) });
     }
-    return out;
+    return sortUserList(out);
 }
+
+/* Tamaño de la página de contactos: coincide con la del cliente para que
+   "página 1" signifique lo mismo en los dos lados, y tope que se acepta
+   en la ruta HTTP. */
+const USER_LIST_PAGE = 40;
+const USER_LIST_PAGE_MAX = 100;
+
+function userListPage(viewerId, { limit = USER_LIST_PAGE, offset = 0, q = '' } = {}) {
+    limit = Math.min(USER_LIST_PAGE_MAX, Math.max(1, limit));
+    let base = userList(viewerId);
+    if (q) base = base.filter(u => u.username.toLowerCase().includes(q.toLowerCase()));
+    const total = base.length;
+    const users = base.slice(offset, offset + limit);
+    return { users, total, more: offset + users.length < total, offset };
+}
+
 function broadcastUsersAround(uuid) {
     const targets = new Set([uuid]);
     const contacts = Stmt.listContacts.all(uuid);
@@ -82,11 +107,21 @@ function broadcastUsersAround(uuid) {
     for (const o of owners) targets.add(o.owner);
     for (const id of targets) {
         const v = users.get(id);
-        if (v && v.online) push(v, { type: 'users', users: userList(id) });
+        /* Solo la PRIMERA página viaja por WS (con el total): el resto lo
+           pide el cliente cuando hace falta. Antes iba la lista entera en
+           cada cambio de presencia. */
+        if (v && v.online) {
+            const page = userListPage(id, { limit: USER_LIST_PAGE });
+            push(v, { type: 'users', users: page.users, usersMore: page.more, usersTotal: page.total });
+        }
     }
 }
 function broadcastUsers() {
-    for (const u of users.values()) if (u.online) push(u, { type: 'users', users: userList(u.id) });
+    for (const u of users.values()) {
+        if (!u.online) continue;
+        const page = userListPage(u.id, { limit: USER_LIST_PAGE });
+        push(u, { type: 'users', users: page.users, usersMore: page.more, usersTotal: page.total });
+    }
 }
 const updateContactRequests = user => {
     const count = Stmt.listContactRequestsTo.all(user.id).length;
@@ -155,6 +190,8 @@ module.exports = {
     push,
     pushName,
     userList,
+    userListPage,
+    USER_LIST_PAGE_MAX,
     broadcastUsersAround,
     broadcastUsers,
     updateContactRequests,

@@ -82,13 +82,25 @@ function parseStickerUpload(dataUrl) {
     return { mime, bytes };
 }
 
+/* Etiquetas en TEXTO PLANO: se pliegan los acentos (NFD elimina el
+   acento combinado, incluida la tilde de la ñ) y luego sólo se admiten
+   letras/números ASCII, guion y guion bajo. Así "cámara" y "camara"
+   son la misma etiqueta y la búsqueda es predecible. */
+function foldTag(value) {
+    return String(value == null ? '' : value).trim().normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/^#/, '')
+        .toLowerCase()
+        .normalize('NFC');
+}
+
 function stickerTags(value) {
     if (!Array.isArray(value) || value.length > 8) return null;
     const tags = [];
     for (const item of value) {
         if (typeof item !== 'string') return null;
-        const tag = item.trim().normalize('NFC').replace(/^#/, '').toLowerCase();
-        if (!/^[\p{L}\p{N}_-]{1,24}$/u.test(tag)) return null;
+        const tag = foldTag(item);
+        if (!/^[a-z0-9_-]{1,24}$/.test(tag)) return null;
         if (!tags.includes(tag)) tags.push(tag);
     }
     return tags;
@@ -121,10 +133,10 @@ function getStickerDiscover(req, res, url) {
         prefix = parsedPrefix[0];
     }
     if (rawQuery !== null) {
-        query = rawQuery.trim().normalize('NFC').toLowerCase();
-        queryTerms = [...new Set(query.split(/\s+/).filter(Boolean).map(term => term.replace(/^#/, '')))];
-        if (query.length > 64 || rawTags !== null || rawPrefix !== null ||
-            queryTerms.length > 8 || queryTerms.some(term => !/^[\p{L}\p{N}_-]{1,24}$/u.test(term)))
+        query = foldTag(rawQuery);
+        queryTerms = [...new Set(query.split(/\s+/).filter(Boolean).map(term => foldTag(term)))];
+        if (rawQuery.length > 64 || rawTags !== null || rawPrefix !== null ||
+            queryTerms.length > 8 || queryTerms.some(term => !/^[a-z0-9_-]{1,24}$/.test(term)))
             return json(res, 400, { error: 'Búsqueda inválida.' });
     }
     const defaultStickers = Stmt.listDefaultStickers.all()
