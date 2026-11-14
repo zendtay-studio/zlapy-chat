@@ -159,6 +159,33 @@ async function notifyUser(username, payload) {
 }
 const pushNameOf = u => (profiles[u] && profiles[u].name) || u;
 
+/* URL del icono (foto de perfil) para las notificaciones. El servicio de
+   push descarga la imagen SIN cookies de sesión, así que no puede usar la
+   ruta normal: esta variante es pública (identicon por usuario, sin
+   presencia ni datos) y el backend la sirve con caché corta. */
+const avatarPushUrl = username => '/avatar/push/' + encodeURIComponent(username) + '.svg';
+
+/* Cuerpo de la notificación: el TEXTO del mensaje (o el tipo de adjunto si
+   no hay texto). Antes los avisos decían «Tienes un mensaje» y había que
+   abrir la app para saber de qué hablaban. */
+const PUSH_PREVIEW_KINDS = {
+    image: 'Foto',
+    video: 'Video',
+    audio: 'Nota de voz',
+    sticker: 'Stricker',
+    contact: 'Contacto',
+    poll: 'Encuesta',
+    file: 'Archivo',
+    'group-invite': 'Invitación a grupo'
+};
+function pushBody(kind, data, caption) {
+    const texto = String(data == null ? '' : data).replace(/\s+/g, ' ').trim();
+    if (texto) return texto.slice(0, 140);
+    const pie = String(caption == null ? '' : caption).replace(/\s+/g, ' ').trim();
+    if (pie) return `${PUSH_PREVIEW_KINDS[kind] || 'Mensaje'}: ${pie.slice(0, 120)}`;
+    return PUSH_PREVIEW_KINDS[kind] || 'Mensaje nuevo';
+}
+
 
 module.exports = {
     b64u,
@@ -172,5 +199,7 @@ module.exports = {
     notifyUser,
     recentPushLog,
     findPushSubRow,
+    avatarPushUrl,
+    pushBody,
     pushNameOf,
 };

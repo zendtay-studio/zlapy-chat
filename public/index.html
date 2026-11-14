@@ -23067,9 +23067,20 @@
                 try {
                     const reg = await navigator.serviceWorker.ready;
                     const p = profilesCache[m.from] || {};
-                    await reg.showNotification('Nuevo mensaje de ' + (p.name || m.from), {
-                        body: 'Tienes un mensaje nuevo',
+                    /* Igual que el push del servidor: nombre, TEXTO del
+                       mensaje (o el tipo de adjunto) y la foto de perfil. */
+                    const TIPOS = { image: 'Foto', video: 'Video', audio: 'Nota de voz', sticker: 'Stricker', contact: 'Contacto', poll: 'Encuesta', file: 'Archivo', 'group-invite': 'Invitación a grupo' };
+                    const texto = String(m.data != null ? m.data : (m.plain != null ? m.plain : '')).replace(/\s+/g, ' ').trim();
+                    const cuerpo = texto
+                        ? texto.slice(0, 140)
+                        : (m.caption ? `${TIPOS[m.kind] || 'Mensaje'}: ${String(m.caption).slice(0, 120)}` : (TIPOS[m.kind] || 'Mensaje nuevo'));
+                    await reg.showNotification(p.name || m.from, {
+                        body: cuerpo,
                         tag: 'msg-' + m.from,
+                        renotify: true,
+                        icon: p.avatar || avatarUrl(m.from, p.id),
+                        badge: '/image/isotype-308.webp',
+                        lang: 'es',
                         data: { url: '/?open=' + encodeURIComponent(m.from) }
                     });
                 } catch (e) {
@@ -24260,7 +24271,8 @@
                                 debugToast('No se pudo abrir esa historia.');
                             }
                         } else if (target) {
-                            await openChat(target);
+                            if (target.startsWith('group:')) await openGroup(target.slice(6));
+                            else await openChat(target);
                             const c = deep.get('call');
                             if (c === 'voice') startCall(false);
                             if (c === 'video') startCall(true);

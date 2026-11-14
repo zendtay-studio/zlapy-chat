@@ -19,7 +19,7 @@ const { Stmt } = require('../db/statements.js');
 const { pruneBlobHashes, removeBlobAccess } = require('../db/transactions.js');
 const { readGroup } = require('../groups/store.js');
 const { callOfferLimiter, loginAttempts, profileLimiter, registerAttempts } = require('../http/rate-limit.js');
-const { notifyUser, pushNameOf } = require('../push/vapid.js');
+const { notifyUser, pushNameOf, avatarPushUrl } = require('../push/vapid.js');
 const { MAX_BUFFER_BYTES, closeFrame, parseFrames } = require('./frames.js');
 const { acceptHandshake, openFrame } = require('./encrypted.js');
 const { WS_FRAME_BURST, WS_FRAME_RATE, WS_MAX_PER_USER, broadcastUsersAround, liveStories, push, pushName, pushStories, storyForViewer, updateContactRequests, userList, wsSend } = require('./notify.js');
@@ -183,7 +183,7 @@ const wsUpgradeInner = (req, socket) => {
                 pushName(m.to, { type: 'call-incoming', from, video: !!m.video, callId: m.callId });
                 push(from, { type: 'call-log', call: rec });
                 if (!target.online)
-                    notifyUser(m.to, { title: (m.video ? 'Videollamada de ' : 'Llamada de ') + pushNameOf(from), body: m.video ? 'Videollamada' : 'Llamada', tag: 'call-' + m.callId, renotify: true, requireInteraction: true, url: '/?open=' + encodeURIComponent(from) });
+                    notifyUser(m.to, { title: (m.video ? 'Videollamada de ' : 'Llamada de ') + pushNameOf(from), body: m.video ? 'Videollamada' : 'Llamada', tag: 'call-' + m.callId, renotify: true, requireInteraction: true, icon: avatarPushUrl(from), url: '/?open=' + encodeURIComponent(from) });
                 setTimeout(() => {
                     pendingOffers.delete(m.to + ':' + m.callId);
                     const list = callFiles.get(from) || [];

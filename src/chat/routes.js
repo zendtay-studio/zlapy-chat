@@ -34,7 +34,7 @@ const { groupLastEntry, groupPolicies, healGroupSummary, readGroup, readGroupSum
 const { rejectRateLimited, rejectRateLimitedMessage } = require('../http/helpers.js');
 const { chatPrefsLimiter, receiptLimiter, reactionLimiter } = require('../http/rate-limit.js');
 const { json, securityHeaders } = require('../http/responses.js');
-const { notifyUser, pushNameOf } = require('../push/vapid.js');
+const { notifyUser, pushNameOf, avatarPushUrl, pushBody } = require('../push/vapid.js');
 const { push, pushName } = require('../realtime/notify.js');
 const { storeGallery, validateGallery } = require('../shared/gallery.js');
 const { MESSAGE_LIMITS, characterCount } = require('../shared/limits.js');
@@ -451,7 +451,16 @@ function postSend(req, res, url, data, actor) {
     // «Push con la app conectada» (app abierta en otro dispositivo, navegador
     // que murió sin cerrar el socket, etc.).
     if (sender.id !== recipient.id && (!recipient.online || wantsAlwaysPush(recipient.username)) && !isChatMuted(recipient.username, sender.username))
-        void notifyUser(recipient.username, { title: 'Nuevo mensaje de ' + pushNameOf(sender.username), body: 'Tienes un mensaje', tag: 'msg-' + msg.id, renotify: true, url: '/?open=' + encodeURIComponent(sender.username) });
+        /* Título = nombre del remitente; cuerpo = el TEXTO del mensaje (o el tipo
+           de adjunto); icono = su foto de perfil; al tocar, abre el chat. */
+        void notifyUser(recipient.username, {
+            title: pushNameOf(sender.username),
+            body: pushBody(msg.kind, msg.data, msg.caption),
+            tag: 'msg-' + msg.id,
+            renotify: true,
+            icon: avatarPushUrl(sender.username),
+            url: '/?open=' + encodeURIComponent(sender.username)
+        });
     return json(res, 200, { ok: true, message: decorated });
 }
 

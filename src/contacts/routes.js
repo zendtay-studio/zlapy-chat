@@ -12,7 +12,7 @@ const { json } = require('../http/responses.js');
 const { contactLimiter } = require('../http/rate-limit.js');
 const { rejectRateLimited } = require('../http/helpers.js');
 const { readGroup, writeGroupMeta } = require('../groups/store.js');
-const { notifyUser } = require('../push/vapid.js');
+const { notifyUser, avatarPushUrl, pushNameOf } = require('../push/vapid.js');
 const { broadcastUsersAround, connectContacts, push, pushName, pushStories, removeContacts, updateContactRequests } = require('../realtime/notify.js');
 const { validAvatar } = require('../shared/validation.js');
 const { blockedSet, pendingOffers, profiles, users } = require('../state.js');
@@ -81,7 +81,7 @@ function postContacts(req, res, url, data, actor) {
     Stmt.insertContactRequest.run(req.authUser.id, target.id, Date.now());
     updateContactRequests(target);
     updateContactRequests(req.authUser);
-    notifyUser(target.username, { title: 'Nueva solicitud', body: 'Alguien quiere agregarte', tag: 'creq-' + req.authUser.id, renotify: true, url: '/' });
+    notifyUser(target.username, { title: 'Nueva solicitud', body: pushNameOf(req.authUser.username) + ' quiere agregarte', tag: 'creq-' + req.authUser.id, renotify: true, icon: avatarPushUrl(req.authUser.username), url: '/' });
     return json(res, 200, { ok: true, status: 'request' });
 }
 

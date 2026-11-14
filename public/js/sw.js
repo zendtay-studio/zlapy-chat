@@ -1,4 +1,4 @@
-const CACHE = 'zlapy-v180';
+const CACHE = 'zlapy-v181';
 const SHELL = ['/', '/index.html', '/login.html', '/profile.html', '/stories.html', '/view.html', '/sticker-creator.html', '/css/fonts.css', '/fonts/outfit/outfit-latin.woff2', '/fonts/outfit/outfit-latin-ext.woff2', '/css/theme.css', '/css/login.css', '/css/popmenu.css', '/css/emoji-picker.css', '/css/avatar-editor.css', '/css/sticker-editor.css', '/files/emoji/index.json', '/files/emoji/smileys-emotion.json', '/files/emoji/animals-nature.json', '/files/emoji/travel-places.json', '/files/emoji/activities.json', '/files/emoji/objects.json', '/files/emoji/symbols.json', '/files/emoji/flags.json', '/js/appearance.js', '/js/markdown-chat.js', '/js/interaction-guard.js', '/js/popmenu.js', '/js/emoji-picker.js', '/js/avatar-editor.js', '/js/animated-webp.js', '/js/local-data.js', '/js/sticker-editor.js', '/js/vendor/bbot-face.js', '/image/isotype-308.webp', '/image/isotype-512-full.webp', '/manifest.webmanifest'];
 // Rutas navegables de la app. Sólo estas navigaciones pueden
 // servirse desde la caché cuando no hay red: para el resto de rutas del
@@ -42,6 +42,11 @@ self.addEventListener('push', e => {
     renotify: !!d.renotify,
     requireInteraction: !!d.requireInteraction,
     vibrate: d.vibrate || [100, 50, 100],
+    /* Icono = foto de perfil del remitente (URL del servidor); badge = el
+       iso de la app en la barra de estado. */
+    icon: d.icon || '/image/isotype-308.webp',
+    badge: '/image/isotype-308.webp',
+    lang: 'es',
     data: { url: d.url || '/' }
   }));
 });

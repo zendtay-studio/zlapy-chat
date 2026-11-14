@@ -36,7 +36,7 @@ const { isEncrypted, openRequest, sealResponse } = require('./transport.js');
 const { getConfig, getHealthz } = require('../meta/routes.js');
 const { getAccountChatSettings, getNotes, getProfile, postAccountChatSettings, postAccountDelete, postAccountProfile, postAccountRegenerateKey, postNotes, postProfile } = require('../profile/routes.js');
 const { postPushSubscribe, postPushTest, postPushUnsubscribe } = require('../push/routes.js');
-const { VAPID, notifyUser } = require('../push/vapid.js');
+const { VAPID, notifyUser, avatarPushUrl, pushBody, pushNameOf } = require('../push/vapid.js');
 const { push, pushName, pushRawName, userList, userListPage, USER_LIST_PAGE, USER_LIST_PAGE_MAX } = require('../realtime/notify.js');
 const { createDefaultAvatarSvg, createDefaultGroupAvatarSvg } = require('../shared/avatar.js');
 const { storeGallery, validateGallery } = require('../shared/gallery.js');
@@ -84,6 +84,25 @@ const handleRequest = (req, res) => {
     // Health check público y sin datos: comprueba que ambas bases respondan.
     if ((req.method === 'GET' || req.method === 'HEAD') && url.pathname === '/healthz') return getHealthz(req, res, url, data, actor);
 
+    /* Avatar para las notificaciones push: el servicio de push descarga la
+       imagen SIN cookies de sesión, así que esta variante es PÚBLICA.
+       Devuelve el identicon por usuario (iniciales + color derivado, igual
+       que /avatar) pero sin presencia ni datos, con caché corta. Quien
+       tenga foto personalizada seguirá viéndola en la app; aquí va el
+       identicon. */
+    const avatarPushMatch = req.method === 'GET' && url.pathname.match(/^\/avatar\/push\/([a-z0-9_.-]{3,36})\.svg$/i);
+    if (avatarPushMatch) {
+        const pushUser = safeDecodeSegment(avatarPushMatch[1]);
+        const cuenta = pushUser ? byName(pushUser.toLowerCase()) : null;
+        if (!cuenta) return json(res, 404, { error: 'avatar not found' });
+        res.writeHead(200, {
+            'Content-Type': 'image/svg+xml; charset=utf-8',
+            'Cache-Control': 'public, max-age=300',
+            'X-Content-Type-Options': 'nosniff',
+            ...securityHeaders
+        });
+        return res.end(createDefaultAvatarSvg(cuenta.id));
+    }
     const avatarMatch = req.method === 'GET' && url.pathname.match(/^\/avatar\/([a-z0-9_.-]{3,36})\.svg$/i);
     if (avatarMatch) {
         const identifier = safeDecodeSegment(avatarMatch[1]);
@@ -430,7 +449,7 @@ const handleRequest = (req, res) => {
                         }
                         for (const admin of g.admins) {
                             pushName(admin, { type: 'group-request', groupId: id });
-                            void notifyUser(admin, { title: 'Solicitud para unirse a ' + g.name, body: 'Alguien quiere unirse', tag: 'greq-' + id, url: '/' });
+                            void notifyUser(admin, { title: 'Solicitud para unirse a ' + g.name, body: 'Alguien quiere unirse', tag: 'greq-' + id, renotify: true, icon: '/avatar/' + encodeURIComponent(g.id) + '.svg', url: '/?open=' + encodeURIComponent('group:' + g.id) });
                         }
                         return json(res, 200, { ok: true, requested: true });
                     }
@@ -571,7 +590,16 @@ const handleRequest = (req, res) => {
                             // que el miembro conserve archivados sus chats.
                             if (memberAcc) unarchiveForIncoming(m, memberAcc.id, 'group:' + id);
                             if (memberAcc && (!memberAcc.online || wantsAlwaysPush(m)))
-                                void notifyUser(m, { title: 'Nuevo mensaje · ' + g.name, body: kind === 'text' ? String(msg.data).slice(0, 120) : 'Mensaje nuevo', tag: 'grp-' + id, url: '/' });
+                                /* Título = nombre del grupo; cuerpo = «Remitente: texto» (o el tipo de
+                               adjunto); icono = el avatar del grupo (su ruta
+                               ya es pública); al tocar, abre el grupo. */
+                                void notifyUser(m, {
+                                    title: g.name,
+                                    body: `${pushNameOf(actor)}: ${pushBody(kind, msg.data, msg.caption)}`,
+                                    tag: 'grp-' + id,
+                                    icon: '/avatar/' + encodeURIComponent(g.id) + '.svg',
+                                    url: '/?open=' + encodeURIComponent('group:' + g.id)
+                                });
                         }
                     }
                     return json(res, 200, { ok: true, message: decorated });
