@@ -984,3 +984,15 @@ textarea {
             color: var(--muted)
         }
 
+        /* Borrador de texto en la lista de chats: la etiqueta va en rojo y
+           el texto del borrador en el color de tinta normal (como
+           WhatsApp), adaptativo con el tema. */
+        .contact .sub .draftTag {
+            color: #ea4335;
+            font-weight: 600
+        }
+
+        .contact .sub .draftText {
+            color: var(--text)
+        }
+

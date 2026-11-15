@@ -10687,7 +10687,7 @@
                 </svg></button>
             <textarea id="msgInput" rows="1" placeholder="Mensaje" autocomplete="off" autocorrect="off"
                 autocapitalize="sentences" spellcheck="false" aria-label="Escribe un mensaje"
-                oninput="sendTyping();updateSendBtn();renderMentionPanel()" onkeyup="renderMentionPanel()"
+                oninput="sendTyping();updateSendBtn();renderMentionPanel();draftChanged()" onkeyup="renderMentionPanel()"
                 onclick="renderMentionPanel()"
                 onkeydown="if(event.key==='Enter'&&!event.shiftKey&&!isMobilePlatform){event.preventDefault();stopTyping();sendText()}"></textarea>
             <div id="mentionPanel" onmousedown="event.preventDefault()"></div>
@@ -14745,10 +14745,17 @@
                 if (pendingDrafts.length) cancelDraft();
                 /* Igual que en openChat: la edición muere al cambiar de chat. */
                 if (editando) clearEdit();
+                /* Guarda el borrador del chat ANTERIOR antes de tocar
+                   `active` (flush del guardado con retardo incluido). */
+                flushDraftSave();
                 const wasOpen = document.body.classList.contains('chat-open');
                 const cachedGroup = groups.find(group => group.id === id) || null;
                 voiceFollow(id);
                 activeKind = 'group'; activeGroup = cachedGroup; active = cachedGroup ? cachedGroup.name : id;
+                /* El campo se limpia YA: mientras carga el grupo (await de
+                   más abajo) no debe sobrevivir el texto del chat anterior
+                   bajo la cabecera nueva, ni colarse en un closeChat de error. */
+                document.getElementById('msgInput').value = '';
                 document.body.classList.add('chat-open');
                 document.getElementById('empty').style.display = 'none';
                 const initialMsgs = document.getElementById('msgs');
@@ -14807,6 +14814,13 @@
                 ca0.className = 'avatar sm groupGrid';
                 ca0.innerHTML = groupAvHTML(g);
                 updateGroupHeader();
+                /* Borrador del grupo: lo escrito antes vuelve al campo (vacío
+                   si no hay; si la cuenta no puede escribir, también vacío). */
+                const groupInput = document.getElementById('msgInput');
+                const groupDraft = !groupInput.disabled && !pendingDrafts.length && !editando ? draftOf('g:' + g.id) : '';
+                groupInput.value = groupDraft || '';
+                if (groupDraft) { try { groupInput.setSelectionRange(groupDraft.length, groupDraft.length); } catch { } }
+                updateSendBtn();
                 ca0.onclick = e => { e.stopPropagation(); chatHeaderClick(); };
                 const profilesPromise = Promise.all(g.members
                     .filter(member => member !== me.username && !profilesCache[member])
@@ -14891,6 +14905,7 @@
                 hideMentionPanel();
                 try { input.focus(); const p = at + username.length + 2; input.setSelectionRange(p, p); } catch { }
                 updateSendBtn();
+                draftChanged(); // el campo cambió sin evento input: guarda el borrador
             }
             document.addEventListener('click', e => {
                 const row = e.target.closest && e.target.closest('#mentionPanel .menRow');
@@ -15383,8 +15398,10 @@
                     const last = lastPreview(c.username);
                     const lastMessage = lastConversationMessage(c.username);
                     /* Vista previa del último mensaje: markdown de línea
-                       (negrita, cursiva, tachado y `código`), nunca bloques. */
-                    const sub = last ? decorateMarkdownInline(last) : escapeHtml(p && p.note ? '"' + p.note + '"' : presenceText(c));
+                       (negrita, cursiva, tachado y `código`), nunca bloques.
+                       Con borrador pendiente gana: «Borrador:» + el texto. */
+                    const draftDm = draftOf(c.username);
+                    const sub = draftDm ? draftPreviewHTML(draftDm) : last ? decorateMarkdownInline(last) : escapeHtml(p && p.note ? '"' + p.note + '"' : presenceText(c));
                     const act = activeKind === 'dm' && active === c.username;
                     const key = dmPrefKey(c.username);
                     const pref = chatPref(key);
@@ -15409,6 +15426,7 @@
                 if (renderVersion !== contactRenderVersion) return;
                 const groupRows = groups.filter(g => !q || g.name.toLowerCase().includes(q)).map(g => {
                     const last = lastPreview(g.id);
+                    const draftG = draftOf('g:' + g.id);
                     const lastMessage = lastConversationMessage(g.id);
                     const act = activeKind === 'group' && activeGroup && activeGroup.id === g.id;
                     const key = groupPrefKey(g.id);
@@ -15425,7 +15443,7 @@
                         pinnedAt,
                         html: `<div class="contact contact-list-row${act ? ' active' : ''}${pinnedAt > 0 ? ' pinned' : ''}${pref.muted ? ' muted' : ''}" data-chat-peer="${escapeHtml(key)}">
       <div class="avatar groupGrid">${groupAvHTML(g)}</div>
-      <div class="meta"><div class="contactMetaTop"><div class="name">${escapeHtml(g.name)}</div></div><div class="sub" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${last ? decorateMarkdownInline(last) : escapeHtml(g.members.length + ' participantes')}</div></div>
+      <div class="meta"><div class="contactMetaTop"><div class="name">${escapeHtml(g.name)}</div></div><div class="sub" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${draftG ? draftPreviewHTML(draftG) : last ? decorateMarkdownInline(last) : escapeHtml(g.members.length + ' participantes')}</div></div>
       <div class="contactAside">${stamp}<div class="contactStateIcons">${stateIcons}${unreadCount ? `<div class="unread">${unreadCount}</div>` : ''}</div></div>
     </div>`
                     };
@@ -15436,13 +15454,14 @@
                 const savedPinnedAt = savedSummary.pinnedAt || savedPref.pinnedAt;
                 const savedLastMessage = lastConversationMessage(me.username);
                 const savedPreview = lastPreview(me.username);
+                const savedDraft = draftOf(me.username);
                 const savedMatches = !q || ('mensajes guardados ' + savedPreview).toLowerCase().includes(q);
                 const savedRows = savedMatches && !savedPref.archived && !savedSummary.archived ? [{
                     ts: tsOf(me.username),
                     pinnedAt: savedPinnedAt,
                     html: `<div class="contact contact-list-row${activeKind === 'dm' && active === me.username ? ' active' : ''}${savedPinnedAt > 0 ? ' pinned' : ''}${savedPref.muted ? ' muted' : ''}" data-chat-peer="saved">
       <div class="avatar" style="background:#2a3942">${savedMessagesIcon()}</div>
-      <div class="meta"><div class="contactMetaTop"><div class="name">Mensajes Guardados</div></div><div class="sub" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${savedPreview ? decorateMarkdownInline(savedPreview) : escapeHtml('Envíate notas y archivos')}</div></div>
+      <div class="meta"><div class="contactMetaTop"><div class="name">Mensajes Guardados</div></div><div class="sub" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${savedDraft ? draftPreviewHTML(savedDraft) : savedPreview ? decorateMarkdownInline(savedPreview) : escapeHtml('Envíate notas y archivos')}</div></div>
       <div class="contactAside">${savedLastMessage ? `<span class="contactStamp">${chatTime(savedLastMessage.status === 'read' && savedLastMessage.readAt ? savedLastMessage.readAt : savedLastMessage.ts)}${savedLastMessage.from === me.username ? TICK({ ...savedLastMessage, mine: true }) : ''}</span>` : '<span class="contactStamp"></span>'}<div class="contactStateIcons">${savedPref.muted ? '<span title="Silenciado" aria-label="Mensajes guardados silenciados"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h12"/><path d="M10 21h4"/><path d="m3 3 18 18"/></svg></span>' : ''}${savedPinnedAt > 0 ? '<span title="Fijado" aria-label="Mensajes guardados fijados"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 9V4l1-1V2H7v1l1 1v5l-2 2v2h5v8l1 2 1-2v-8h5v-2l-2-2Z"/></svg></span>' : ''}${contactUnreadCount(savedKey) ? `<div class="unread">${contactUnreadCount(savedKey)}</div>` : ''}</div></div>
     </div>`
                 }] : [];
@@ -15558,6 +15577,9 @@
                    campo pertenece al mensaje viejo; enviarlo aquí sería
                    editar el mensaje equivocado. */
                 if (editando) clearEdit();
+                /* Guarda el borrador del chat ANTERIOR antes de tocar
+                   `active` (flush del guardado con retardo incluido). */
+                flushDraftSave();
                 let name = u;
                 if (u === '__saved__') name = me.username;
                 const wasOpen = document.body.classList.contains('chat-open');
@@ -15594,6 +15616,14 @@
                 const noCall = u === '__saved__';
                 document.getElementById('chatHeader').querySelectorAll('.callBtn').forEach(b => b.style.display = noCall ? 'none' : 'flex');
                 document.getElementById('btnChatMenu').style.display = 'flex';
+                /* Borrador de texto: lo escrito antes en ESTA charla vuelve
+                   al campo (y el campo nunca hereda texto del chat anterior:
+                   se asigna siempre). Los borradores de adjunto ganan: su
+                   flujo ya tomó el campo. */
+                const restoredDraft = !pendingDrafts.length && !editando ? draftOf(name) : '';
+                const openInput = document.getElementById('msgInput');
+                openInput.value = restoredDraft || '';
+                if (restoredDraft) { try { openInput.setSelectionRange(restoredDraft.length, restoredDraft.length); } catch { } }
                 updateSendBtn();
                 const cachedMessages = conversationFor(name).messages;
                 if (u === '__saved__') {
@@ -15966,6 +15996,9 @@
                 salirSeleccion();
                 if (cpTarget !== null) dismissLayer('panel-contact'); // el panel nunca sobrevive al chat
                 if (gpTarget !== null) dismissLayer('panel-group');
+                /* Guarda el borrador del chat que se cierra ANTES de borrar
+                   el estado (flush del guardado con retardo incluido). */
+                flushDraftSave();
                 document.body.classList.remove('chat-open');
                 active = null; activeKind = 'dm'; activeGroup = null;
                 const empty = document.getElementById('empty');
@@ -16639,8 +16672,12 @@
             function messageTextHTML(value, message) {
                 const text = String(value);
                 /* Mensaje editado con texto anterior guardado: se pinta el
-                   resalte palabra por palabra (viñetas de cambio). */
-                if (message && message.editPrevio) {
+                   resalte palabra por palabra (viñetas de cambio). Es un
+                   ajuste (Ajustes → Chats → «Resaltar ediciones», activado
+                   por defecto): apagado, se muestra el texto final sin
+                   resaltar — NUNCA afecta a las listas/viñetas escritas por
+                   el usuario, que son markdown normal (renderMessageText). */
+                if (message && message.editPrevio && editHighlightOn()) {
                     const diff = editDiffHTML(message.editPrevio, text);
                     if (diff) return diff; // el «(editado)» lo añade quien llama
                 }
@@ -17035,6 +17072,91 @@
             }
             const PLAY_SVG = '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>';
             const PAUSE_SVG = '<svg viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
+            /* ===== Borradores de texto por chat — SOLO local, por cuenta =====
+               Mientras escribes y sales, la lista muestra «Borrador:» en
+               rojo seguido del texto sin terminar (en tinta normal); al
+               volver al chat el texto reaparece en el campo. Sin ida y
+               vuelta con el servidor. La carga es perezosa: `me` aún no
+               existe cuando evalúa el script, igual que las notas de voz
+               escuchadas. */
+            const TEXT_DRAFT_TOPE = 200;      // FIFO de chats con borrador
+            const TEXT_DRAFT_LIMITE = 4000;   // el propio texto se recorta
+            let textDrafts = null;
+            let draftSaveTimer = 0;
+            function textDraftsMap() {
+                if (!accountStorageKey('text_drafts')) return null;
+                if (!textDrafts) {
+                    try { textDrafts = new Map(JSON.parse(readAccountStorage('text_drafts', '') || '[]')); }
+                    catch { textDrafts = new Map(); }
+                    if (!(textDrafts instanceof Map)) textDrafts = new Map();
+                }
+                return textDrafts;
+            }
+            function persistTextDrafts(map) {
+                if (!accountStorageKey('text_drafts')) return;
+                writeAccountStorage('text_drafts', JSON.stringify([...map]));
+            }
+            /* Clave del chat abierto: el username en DMs (incluye «Guardados»,
+               que convive con la propia conversación me.username) y `g:`+id
+               en grupos — así un grupo nunca choca con un usuario. */
+            function textDraftKey() {
+                if (!me) return null;
+                if (activeKind === 'group') return activeGroup ? 'g:' + activeGroup.id : null;
+                return active || null;
+            }
+            function saveDraft(text) {
+                const key = textDraftKey();
+                const map = textDraftsMap();
+                if (!key || !map) return;
+                const v = String(text == null ? '' : text).trim();
+                if (!v) {
+                    if (map.has(key)) { map.delete(key); persistTextDrafts(map); }
+                    return;
+                }
+                const corto = v.length > TEXT_DRAFT_LIMITE ? v.slice(0, TEXT_DRAFT_LIMITE) : v;
+                if (map.get(key) === corto) return;
+                map.delete(key);            // reinsertar al final = más reciente
+                map.set(key, corto);
+                while (map.size > TEXT_DRAFT_TOPE) map.delete(map.keys().next().value);
+                persistTextDrafts(map);
+            }
+            function draftOf(key) {
+                const map = textDraftsMap();
+                return key && map ? (map.get(key) || '') : '';
+            }
+            /* «Borrador:» en rojo + texto plano en tinta normal (el CSS lo
+               pinta); es un texto sin terminar: sin markdown. */
+            function draftPreviewHTML(text) {
+                const recorte = text.length > 300 ? text.slice(0, 300).trimEnd() + '…' : text;
+                return '<span class="draftTag">Borrador:</span> <span class="draftText">' + escapeHtml(recorte) + '</span>';
+            }
+            function saveDraftCurrentInput() {
+                const input = document.getElementById('msgInput');
+                if (!input) return;
+                /* La edición comparte el campo: su texto NO es borrador (el
+                   borrador de composición quedó guardado antes de editar). */
+                if (editando || pendingDrafts.length) return;
+                saveDraft(input.value);
+            }
+            function flushDraftSave() {
+                if (draftSaveTimer) { clearTimeout(draftSaveTimer); draftSaveTimer = 0; }
+                saveDraftCurrentInput();
+            }
+            /* Escritura en el campo: guarda con retardo (600 ms) y refresca
+               la lista para que el preview muestre el borrador al día. */
+            function draftChanged() {
+                if (editando || pendingDrafts.length) {
+                    if (draftSaveTimer) { clearTimeout(draftSaveTimer); draftSaveTimer = 0; }
+                    return;
+                }
+                if (draftSaveTimer) clearTimeout(draftSaveTimer);
+                draftSaveTimer = setTimeout(() => {
+                    draftSaveTimer = 0;
+                    const antes = draftOf(textDraftKey());
+                    saveDraftCurrentInput();
+                    if (draftOf(textDraftKey()) !== antes) renderContacts();
+                }, 600);
+            }
             const voice = { el: null, id: null, msgId: null, url: '' };
             /* Notas de voz escuchadas — SOLO local, por cuenta (como las
                preferencias): el circulito de las notas recibidas se ve
@@ -18299,6 +18421,10 @@
                 /* La edición excluye la respuesta (y viceversa): comparten
                    el campo de texto y la barra sobre el input. */
                 if (replyTo) clearReply();
+                /* El texto que se estaba escribiendo queda como borrador del
+                   chat (el campo pasa ahora al texto del mensaje a editar;
+                   al terminar la edición reaparece su borrador). */
+                flushDraftSave();
                 editando = m;
                 document.getElementById('editBar').style.display = 'flex';
                 const prevTxt = String(m.plain == null ? '' : m.plain);
@@ -18542,6 +18668,7 @@
                     /* El teclado queda COMO ESTABA (ver campoActivo arriba):
                        ni focus ni blur si no hacen falta. */
                     input.value = '';
+                    saveDraft(''); // enviado: el borrador de esta charla muere
                     hideMentionPanel();
                     updateSendBtn();
                     if (campoActivo) { if (document.activeElement !== input) input.focus(); }
@@ -18557,6 +18684,7 @@
                     renderConversation(key, true);
                     if (mismaCharla && !hasTextOverride) {
                         input.value = v;
+                        saveDraft(v); // el envío falló: el texto vuelve a ser el borrador
                         updateSendBtn();
                         /* Mismo estado de teclado que al enviar. */
                         if (campoActivo) { if (document.activeElement !== input) input.focus(); }
@@ -22160,6 +22288,7 @@
                     if (!sh.classList.contains('on') || settingsSection !== 'chats') return;
                     const appearance = getChatAppearance();
                     const ap = autoPlayNextOn();
+                    const er = editHighlightOn();
                     const rxPrefs = reactionPrefs();
                     const currentTheme = next => CHAT_COLOR_THEMES.findIndex(theme =>
                         ['sender', 'senderText', 'receiver', 'receiverText'].every(key =>
@@ -22210,6 +22339,7 @@
         <button class="mBtn" type="button" id="resetChatFontSize">Restablecer tamaño del texto</button>
       </div>
       <div class="switchRow"><div class="meta"><b>Auto play del siguiente audio</b><span>Al terminar una nota de voz, se reproduce la que sigue (de quien sea)</span></div><button class="tgl${ap ? ' on' : ''}" id="swAutoPlay"></button></div>
+        <div class="switchRow"><div class="meta"><b>Resaltar ediciones</b><span>Al editar un texto, las palabras añadidas llevan un resalte; apagado, se ve solo el texto final</span></div><button class="tgl${er ? ' on' : ''}" id="swEditResalte" type="button" aria-pressed="${er}" aria-label="Resaltar ediciones"></button></div>
         <div class="chatAppearanceSubhead">Reacciones rápidas</div>
         <div class="switchRow"><div class="meta"><b>Barra de reacciones al doble toque</b><span>Muestra tus 6 reacciones sobre el mensaje; apagado, el doble toque aplica una reacción al instante sin ninguna interfaz</span></div><button class="tgl${rxPrefs.dobleTap === 'menu' ? ' on' : ''}" id="swRxDt" type="button" aria-pressed="${rxPrefs.dobleTap === 'menu'}" aria-label="Barra de reacciones al doble toque"></button></div>
         <div class="rxChoiceRow" id="rxInstantRow" role="group" aria-label="Reacción del doble toque instantáneo"${rxPrefs.dobleTap === 'instant' ? '' : ' hidden'}>
@@ -22377,6 +22507,14 @@
                     document.getElementById('swAutoPlay').onclick = e => {
                         setUserSetting('autoplay_audio', e.target.classList.contains('on') ? '0' : '1');
                         paintSettings();
+                    };
+                    /* Resalte de ediciones: se decide AL PINTAR cada burbuja,
+                       así que re-render para que el cambio valga al instante
+                       en la conversación abierta. */
+                    document.getElementById('swEditResalte').onclick = e => {
+                        setUserSetting('resaltar_ediciones', e.target.classList.contains('on') ? '0' : '1');
+                        paintSettings();
+                        renderAll(true);
                     };
                     /* ==== Reacciones rápidas: preferencias ==== */
                     const swRxDt = document.getElementById('swRxDt');
@@ -23270,6 +23408,8 @@
             }
             function soundOn() { return userSetting('sounds', '1', 'zlapy_sounds') !== '0'; }
             function autoPlayNextOn() { return userSetting('autoplay_audio', '1', 'zlapy_autoplay_audio') !== '0'; }
+            /* Resalte de ediciones (viñetas del diff): ON por defecto. */
+            function editHighlightOn() { return userSetting('resaltar_ediciones', '1') !== '0'; }
             function beep() { if (!soundOn()) return; try { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); tone([880], .09, 0, .06); } catch { } }
             function endTone() {
                 try {
