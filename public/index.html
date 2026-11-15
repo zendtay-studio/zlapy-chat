@@ -2768,12 +2768,19 @@
         /* «grabando audio» ya no va en rojo: usa el mismo color que
            «escribiendo…», así los estados activos del chat se leen
            iguales. */
-        #chatSub.rec {
-            color: var(--accent-readable)
+        /* Estados activos del chat (escribiendo / grabando audio): GRIS
+           como el texto de las burbujas — el rojo/acento los hacía
+           gritar contra la cabecera. */
+        #chatSub.rec,
+        #chatSub.typing {
+            color: var(--muted)
         }
 
-        #chatSub.typing {
-            color: var(--accent-readable)
+        /* «enviando foto/audio/archivo…» va en la MISMA línea de
+           presencia, sin animación (solo escribiendo y grabando
+           animan). */
+        #chatSub.estado {
+            color: var(--muted)
         }
 
         /* La presencia ("Últ. vez 12 nov a las 04:01 p.m.") rompía el alto
@@ -13168,6 +13175,7 @@
                     if (active === msg.peer) dismissLayer('chat');
                     renderAll(); renderContacts(); return;
                 }
+                if (msg.type === 'receipt' && msg.status === 'played') { for (const id of msg.ids || []) marcarAudioEscuchadoPorOtro(id); renderAll(); return; }
                 if (msg.type === 'receipt') {
                     for (const id of msg.ids) {
                         const entry = conversationMessageById.get(id);
@@ -15799,7 +15807,7 @@
                 /* "enviando foto/audio/archivo…" — mismo color que escribiendo
                    (los estados activos del chat se leen igual); grabando y
                    escribiendo tienen prioridad sobre él. */
-                if (sendingState['dm:' + u]) { setChatSubText('enviando ' + sendingState['dm:' + u] + '...', 'typing'); return; }
+                if (sendingState['dm:' + u]) { setChatSubText('enviando ' + sendingState['dm:' + u] + '...', 'estado'); return; }
                 setChatSubText(presenceText(c));
             }
 
@@ -17355,6 +17363,29 @@
                color normal. No hay ida y vuelta con el servidor. La carga
                es perezosa: `me` todavía no existe cuando evalúa el script. */
             const AUDIO_HEARD_TOPE = 600;
+            /* Al revés: audios MÍOS que el otro ya escuchó (me lo avisa con
+               un acuse «played»). Es distinto de leído: los checks azules
+               son de lectura, esto es de ESCUCHA. */
+            const AUDIO_PLAYED_TOPE = 600;
+            let audioPlayedByOtro = null;
+            let audioPlayedPorOtro = null;
+            function audioPlayedSet() {
+                if (!accountStorageKey('audio_played')) return new Set();
+                if (!audioPlayedPorOtro) {
+                    try { audioPlayedPorOtro = new Set(JSON.parse(readAccountStorage('audio_played', '') || '[]')); }
+                    catch { audioPlayedPorOtro = new Set(); }
+                }
+                return audioPlayedPorOtro;
+            }
+            function marcarAudioEscuchadoPorOtro(id) {
+                if (!id || !accountStorageKey('audio_played')) return;
+                const set = audioPlayedSet();
+                if (set.has(id)) return;
+                set.add(id);
+                if (set.size > AUDIO_PLAYED_TOPE) { const l = [...set].slice(-AUDIO_PLAYED_TOPE); set.clear(); for (const x of l) set.add(x); }
+                writeAccountStorage('audio_played', JSON.stringify([...set]));
+                for (const el of document.querySelectorAll('.audioMsg[data-mid="' + id + '"] .voicePlay')) el.classList.remove('unheard');
+            }
             let audioHeard = null;
             function audioHeardSet() {
                 if (!accountStorageKey('audio_heard')) return new Set();
@@ -17419,7 +17450,13 @@
                 /* Al empezar a sonar, la nota queda "escuchada" (como en
                    WhatsApp): el circulito de las notas recibidas recupera su
                    color. El set es por cuenta, sobrevive a recargas. */
-                a.addEventListener('play', () => { if (voice.id) marcarAudioOido(voice.id); });
+                a.addEventListener('play', () => {
+                    if (!voice.id) return;
+                    marcarAudioOido(voice.id);
+                    const md = audioMsgById(voice.id);
+                    if (md && !md.mine && md.from && md.status !== 'played')
+                        fetch('/receipt', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: me.username, to: md.from, ids: [voice.id], status: 'played' }) }).catch(() => { });
+                });
                 a.addEventListener('ended', voiceEnded);
                 document.body.appendChild(a);
                 voice.el = a;
@@ -17544,7 +17581,7 @@
                     });
                 }
                 return `<div class="audioMsg" data-mid="${id}">
-    <button class="voicePlay${m.mine || audioHeardSet().has(m.id) ? '' : ' unheard'}" type="button" aria-label="Reproducir nota de voz" title="Reproducir nota de voz" onclick="toggleAudio(this,'${jsArg(id)}')">${PLAY_SVG}</button>
+    <button class="voicePlay${(!m.mine && audioHeardSet().has(m.id)) || (m.mine && audioPlayedSet().has(m.id)) ? '' : ' unheard'}" type="button" aria-label="Reproducir nota de voz" title="Reproducir nota de voz" onclick="toggleAudio(this,'${jsArg(id)}')">${PLAY_SVG}</button>
     <div class="voiceDetails">
       <div class="voiceTitle"><span>Nota de voz</span></div>
       <div class="bar" role="slider" aria-label="Posición de la nota de voz" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" tabindex="0" onpointerdown="seekAudio(this,'${jsArg(id)}',event)" onkeydown="seekAudioKey(this,'${jsArg(id)}',event)"><div class="fill" id="f${id}"></div></div>

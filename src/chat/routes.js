@@ -502,7 +502,10 @@ function postReceipt(req, res, url, data, actor) {
     // toca resúmenes y candados de página: sin cota era el multiplicador de
     // escritura barato por cuenta (SECOA-I-004).
     if (rejectRateLimited(res, receiptLimiter, req.authUser.id, 120, 'acuses por minuto')) return;
-    if (!['delivered', 'read'].includes(data.status) || !Array.isArray(data.ids) || data.ids.length > 500 ||
+    /* 'played' = audio ESCUCHADO: no cambia el estado del mensaje (eso
+       es 'read', los checks azules); solo avisa al emisor para que su
+       burbuja de audio pase de atenuada a normal. */
+    if (!['delivered', 'read', 'played'].includes(data.status) || !Array.isArray(data.ids) || data.ids.length > 500 ||
         data.ids.some(id => typeof id !== 'string' || !id || id.length > 128))
         return json(res, 400, { error: 'Invalid receipt.' });
     const peerIds = new Set();
