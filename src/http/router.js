@@ -34,7 +34,7 @@ const { mimeMap, rejectRateLimitedMessage, safeDecodeSegment } = require('./help
 const { cspFor, json, securityHeaders } = require('./responses.js');
 const { isEncrypted, openRequest, sealResponse } = require('./transport.js');
 const { getConfig, getHealthz } = require('../meta/routes.js');
-const { getAccountChatSettings, getNotes, getProfile, postAccountChatSettings, postAccountDelete, postAccountProfile, postAccountRegenerateKey, postNotes, postProfile } = require('../profile/routes.js');
+const { getAccountChatSettings, getNotes, getProfile, postAccountChatSettings, postAccountDelete, postAccountProfile, postAccountRegenerateKey, postNotes, postProfile, postPushAvatar } = require('../profile/routes.js');
 const { postPushSubscribe, postPushTest, postPushUnsubscribe } = require('../push/routes.js');
 const { VAPID, notifyUser, avatarPushUrl, pushBody, pushNameOf } = require('../push/vapid.js');
 const { push, pushName, pushRawName, userList, userListPage, USER_LIST_PAGE, USER_LIST_PAGE_MAX } = require('../realtime/notify.js');
@@ -102,6 +102,22 @@ const handleRequest = (req, res) => {
             ...securityHeaders
         });
         return res.end(createDefaultAvatarSvg(cuenta.id));
+    }
+    /* Miniatura PÚBLICA de la foto de perfil (icono de las push): la URL
+       lleva un token de 24 bytes no adivinable — sin él no se puede
+       enumerar ni adivinar; con la foto cambiada el token rota y esta
+       copia cacheada muere (caché corta para que el borrado llegue). */
+    const avatarPushThumbMatch = req.method === 'GET' && url.pathname.match(/^\/avatar\/push\/t\/([A-Za-z0-9_-]{20,80})\.jpg$/);
+    if (avatarPushThumbMatch) {
+        const thumb = Stmt.getPushAvatarByToken.get(avatarPushThumbMatch[1]);
+        if (!thumb) return json(res, 404, { error: 'avatar not found' });
+        res.writeHead(200, {
+            'Content-Type': thumb.mime,
+            'Cache-Control': 'public, max-age=600',
+            'X-Content-Type-Options': 'nosniff',
+            ...securityHeaders
+        });
+        return res.end(thumb.data);
     }
     const avatarMatch = req.method === 'GET' && url.pathname.match(/^\/avatar\/([a-z0-9_.-]{3,36})\.svg$/i);
     if (avatarMatch) {
@@ -347,7 +363,7 @@ const handleRequest = (req, res) => {
     if (!req.authUser) return json(res, 401, { error: 'authentication required' });
     if (url.pathname === '/account/profile' && typeof data.username === 'string')
         data.username = data.username.trim().toLowerCase();
-    if (url.pathname === '/profile' || url.pathname === '/notes' || url.pathname.startsWith('/push/') ||
+    if (url.pathname === '/profile' || url.pathname === '/profile/push-avatar' || url.pathname === '/notes' || url.pathname.startsWith('/push/') ||
         url.pathname === '/call/log' || url.pathname === '/account/delete' || url.pathname === '/stickers')
         data.username = actor;
     if (['/send', '/receipt', '/chat/delete', '/block', '/messages'].includes(url.pathname)) data.from = actor;
@@ -383,6 +399,7 @@ const handleRequest = (req, res) => {
 
     // ---- Profile ----
     if (url.pathname === '/profile') return postProfile(req, res, url, data, actor);
+    if (url.pathname === '/profile/push-avatar') return postPushAvatar(req, res, url, data, actor);
 
     // ---- /send (DM) ----
     if (url.pathname === '/send') return postSend(req, res, url, data, actor);

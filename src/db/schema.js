@@ -420,6 +420,20 @@ CREATE TABLE IF NOT EXISTS push_subs (
     PRIMARY KEY (user_id, endpoint)
 );
 
+/* Miniatura EN CLARO de la foto de perfil, para el icono de las push.
+   La foto real viaja cifrada E2E (el servidor no puede generar miniaturas),
+   así que el cliente sube aparte un recorte de 128px y el servidor lo
+   sirve sin sesión en una URL con token NO adivinable (el servicio de
+   push la descarga sin cookies; sin token imposible enumerar). El token
+   rota en cada cambio para invalidar copias cacheadas. */
+CREATE TABLE IF NOT EXISTS push_avatars (
+    user_id    TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    token      TEXT NOT NULL UNIQUE,
+    mime       TEXT NOT NULL,
+    data       BLOB NOT NULL,
+    updated_at INTEGER NOT NULL DEFAULT 0
+);
+
 /* ---------------- 19. Resúmenes de grupo ---------------- */
 CREATE TABLE IF NOT EXISTS group_summaries (
     owner     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

@@ -346,6 +346,29 @@
         img.src = url;
       });
     }
+    /* Miniatura para el icono de las notificaciones push (la foto real
+       viaja cifrada E2E): recorte cuadrado de 128px EN CLARO. Silencioso;
+       dataUrl '' = quitar. */
+    async function syncPushAvatar(dataUrl) {
+      try {
+        let miniatura = '';
+        if (dataUrl) {
+          const img = await new Promise((ok, mal) => { const i = new Image(); i.onload = () => ok(i); i.onerror = mal; i.src = dataUrl; });
+          const L = 128;
+          const c = document.createElement('canvas');
+          c.width = L; c.height = L;
+          const ctx = c.getContext('2d');
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, L, L);
+          const s = Math.max(L / img.naturalWidth, L / img.naturalHeight);
+          const w = img.naturalWidth * s, h = img.naturalHeight * s;
+          ctx.drawImage(img, (L - w) / 2, (L - h) / 2, w, h);
+          miniatura = c.toDataURL('image/jpeg', 0.82);
+          if (miniatura.length > 32000) miniatura = c.toDataURL('image/jpeg', 0.6);
+        }
+        await fetch('/profile/push-avatar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: me.username, data: miniatura }) });
+      } catch (error) { console.error('[push-avatar] No se pudo sincronizar la miniatura:', error); }
+    }
     async function saveProfile() {
       const errorBox = document.getElementById('profileError');
       const button = document.getElementById('saveProfileBtn');
@@ -382,6 +405,10 @@
         const response = await fetch('/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         const result = await response.json();
         if (!response.ok) throw new Error(result.error || 'No se pudo guardar el perfil.');
+        /* La miniatura para las push va detrás, ANTES del redirect (fetch
+           pequeño; si falla, la push muestra el identicon). Solo cuando la
+           foto cambió o se quitó. */
+        await syncPushAvatar(pendingAvatar || (avatarRemoved ? '' : (cur && cur.getAttribute('src') && !cur.getAttribute('src').startsWith('/avatar/')) ? cur.src : ''));
         location.href = '/';
       } catch (error) {
         errorBox.textContent = error.message || 'No se pudo guardar el perfil.';

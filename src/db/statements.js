@@ -393,6 +393,14 @@ const Stmt = {
        por `endpoint` porque el cifrado no es determinista (IV aleatorio). */
     trimPushSubs: db.prepare(`DELETE FROM push_subs WHERE user_id = ? AND rowid NOT IN (
         SELECT rowid FROM push_subs WHERE user_id = ? ORDER BY rowid DESC LIMIT 5)`),
+    /* Miniatura pública de la foto para el icono de las push (push_avatars):
+       el token rota en cada subida, así que la URL antigua muere. */
+    upsertPushAvatar: db.prepare(`INSERT INTO push_avatars (user_id, token, mime, data, updated_at)
+        VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET
+        token = excluded.token, mime = excluded.mime, data = excluded.data, updated_at = excluded.updated_at`),
+    getPushAvatarToken: db.prepare('SELECT token FROM push_avatars WHERE user_id = ?'),
+    getPushAvatarByToken: db.prepare('SELECT mime, data FROM push_avatars WHERE token = ?'),
+    deletePushAvatar: db.prepare('DELETE FROM push_avatars WHERE user_id = ?'),
 
 
     // Meta

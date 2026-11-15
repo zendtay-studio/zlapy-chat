@@ -424,6 +424,36 @@ function postNotes(req, res, url, data, actor) {
     return json(res, 200, { ok: true });
 }
 
+/* ---- Miniatura pública de la foto, para el icono de las push ----
+   La foto real viaja cifrada E2E: el servidor no puede generar miniaturas.
+   El cliente sube aparte un recorte de 128px EN CLARO (datos pequeños, con
+   sesión) y el servidor lo expone sin autenticación en una URL con token
+   no adivinable: el servicio de push la descarga sin cookies y sin token
+   no hay forma de enumerar ni adivinar las fotos. El token ROTA en cada
+   subida (y el borrado quita la fila), así que las copias cacheadas de la
+   foto anterior mueren solas. */
+const PUSH_AVATAR_TOPE = 32_000; // data URL en claro (≈ 24 KB de imagen)
+const PUSH_AVATAR_RE = /^data:image\/(jpeg|jpg|png|webp);base64,([A-Za-z0-9+/=]+)$/;
+
+function postPushAvatar(req, res, url, data, actor) {
+    if (data.username !== actor) return json(res, 403, { error: 'Solo puedes editar tu propio perfil.' });
+    if (rejectRateLimited(res, profileLimiter, req.authUser.id, 10, 'guardados de perfil por minuto')) return;
+    const valor = typeof data.data === 'string' ? data.data : '';
+    if (valor === '') {
+        // Sin foto (o foto retirada): la fila muere y la URL anterior da 404.
+        Stmt.deletePushAvatar.run(req.authUser.id);
+        return json(res, 200, { ok: true });
+    }
+    const match = PUSH_AVATAR_RE.exec(valor);
+    const bytes = match ? Buffer.from(match[2], 'base64') : null;
+    if (!match || !bytes.length || valor.length > PUSH_AVATAR_TOPE || bytes.length > PUSH_AVATAR_TOPE)
+        return json(res, 400, { error: 'Miniatura no válida (se admite un recorte JPEG/PNG/WebP pequeño en claro).' });
+    const mime = match[1] === 'jpg' ? 'image/jpeg' : 'image/' + match[1];
+    const token = crypto.randomBytes(24).toString('base64url');
+    Stmt.upsertPushAvatar.run(req.authUser.id, token, mime, bytes, Date.now());
+    return json(res, 200, { ok: true, url: '/avatar/push/t/' + token + '.jpg' });
+}
+
 
 module.exports = {
     getAccountChatSettings,
@@ -434,5 +464,6 @@ module.exports = {
     postAccountRegenerateKey,
     postAccountDelete,
     postProfile,
+    postPushAvatar,
     postNotes,
 };

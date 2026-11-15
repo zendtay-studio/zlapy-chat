@@ -13,7 +13,7 @@ const { Stmt } = require('../db/statements.js');
 const { push } = require('../realtime/notify.js');
 const { validPushEndpoint } = require('../shared/validation.js');
 const { profiles, pushSubs } = require('../state.js');
-const { accountId, parseJsonSafe } = require('../users/helpers.js');
+const { accountId, byName, parseJsonSafe } = require('../users/helpers.js');
 
 // Push web
 const b64u = buf => Buffer.from(buf).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -160,10 +160,16 @@ async function notifyUser(username, payload) {
 const pushNameOf = u => (profiles[u] && profiles[u].name) || u;
 
 /* URL del icono (foto de perfil) para las notificaciones. El servicio de
-   push descarga la imagen SIN cookies de sesión, así que no puede usar la
-   ruta normal: esta variante es pública (identicon por usuario, sin
-   presencia ni datos) y el backend la sirve con caché corta. */
-const avatarPushUrl = username => '/avatar/push/' + encodeURIComponent(username) + '.svg';
+   push descarga la imagen SIN cookies de sesión y sin poder descifrar el
+   blob E2E, así que: si la cuenta subió una miniatura en claro (recorte de
+   128px con token no adivinable), esa URL; si no, el identicon público de
+   siempre. Ambas variantes las sirve el backend con caché corta. */
+const avatarPushUrl = username => {
+    const cuenta = byName(username);
+    const fila = cuenta ? Stmt.getPushAvatarToken.get(cuenta.id) : null;
+    return fila ? '/avatar/push/t/' + fila.token + '.jpg'
+        : '/avatar/push/' + encodeURIComponent(username) + '.svg';
+};
 
 /* Cuerpo de la notificación: el TEXTO del mensaje (o el tipo de adjunto si
    no hay texto). Antes los avisos decían «Tienes un mensaje» y había que
