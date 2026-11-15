@@ -1,7 +1,8 @@
 // Regresiones de la auditoría de seguridad, parte servidor:
 //   V-08 · regenerar la clave exige contraseña y es transaccional
 //   V-09 · el sobre HTTP no se puede reenviar (anti-replay)
-//   V-10 · al cambiar de cuenta se revoca la sesión saliente
+//   V-10 · al cambiar de cuenta la sesión saliente sobrevive en OTROS
+//          dispositivos (cambiar de cuenta es local de este navegador)
 //   V-11 · el frame WS `privacy` lleva freno
 //   V-13 · ver historias lleva freno
 //   V-16 · vaciar chats es una sola transacción y no deja blobs huérfanos
@@ -60,7 +61,7 @@ test('el sobre HTTP reenviado se rechaza (V-09)', async () => {
     } finally { await stop(srv); }
 });
 
-test('al cambiar de cuenta se revoca la sesión saliente (V-10)', async () => {
+test('al cambiar de cuenta la sesión saliente sobrevive en otros dispositivos (V-10)', async () => {
     const srv = await startServer();
     try {
         const ana = await register(srv.base, 'anaswitch');
@@ -90,10 +91,14 @@ test('al cambiar de cuenta se revoca la sesión saliente (V-10)', async () => {
         });
         assert.equal(cambio.status, 200);
 
-        // El token de la cuenta abandonada queda inutilizado.
+        /* El token de la cuenta abandonada sigue VALIENDO: cambiar de
+           cuenta es algo de ESTE navegador y ya no mata las sesiones de
+           otros dispositivos (la revocación global es el cambio de
+           contraseña, que rota el rid). */
         const sesionAntigua = await api(srv.base, 'GET', '/auth/session', null, tokenAntes);
-        assert.equal(sesionAntigua.json.authenticated, false,
-            'la sesión de la cuenta abandonada debe estar revocada (V-10)');
+        assert.equal(sesionAntigua.json.authenticated, true,
+            'la sesión de la cuenta abandonada sigue viva en otros dispositivos (V-10)');
+        assert.equal(sesionAntigua.json.user.username, 'anaswitch');
 
         // Sin cookie, nadie entra.
         const sinCookie = await api(srv.base, 'GET', '/auth/session');

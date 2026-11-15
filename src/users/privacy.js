@@ -13,11 +13,17 @@ const { byName } = require('./helpers.js');
 
 // Permisos
 /* 'online' cubre la PRESENCIA (en línea / última vez visto) de la cuenta. */
-const PRIV_KEYS = ['foto', 'nota', 'descripcion', 'historias', 'llamadas', 'mensajes', 'compartir', 'online'];
+const PRIV_KEYS = ['foto', 'nota', 'descripcion', 'historias', 'llamadas', 'mensajes', 'compartir', 'online', 'lecturas', 'usuario'];
 /* Valores por defecto: la foto y la descripción son públicas; el resto
    (nota, historias, llamadas, mensajes, compartir y online) es solo para
    contactos — el valor que ya tenía la presencia antes de ser configurable. */
-const PRIV_DEF = { foto: 'server', nota: 'contacts', descripcion: 'server', historias: 'contacts', llamadas: 'contacts', mensajes: 'contacts', compartir: 'contacts', online: 'contacts' };
+/* lecturas = confirmaciones de lectura (los checks azules del OTHER
+   side): 'server' (por defecto) = se envían a todos; 'nobody' = nadie
+   ve cuándo leo sus mensajes (se quedan en gris «entregado»). El
+   entregado (gris) NUNCA se ve afectado.
+   usuario = el @usuario que se muestra en la ficha: 'server' (por
+   defecto) = lo ven todos; 'nobody' = sólo el nombre visible. */
+const PRIV_DEF = { foto: 'server', nota: 'contacts', descripcion: 'server', historias: 'contacts', llamadas: 'contacts', mensajes: 'contacts', compartir: 'contacts', online: 'contacts', lecturas: 'server', usuario: 'server' };
 /* Normaliza las reglas de privacidad: cada función acaba con un modo válido
    y una lista de usuarios, aunque el cliente envíe campos raros o ausentes.
    La lista de excepciones se canoniza AQUÍ (minúsculas, sin espacios): así

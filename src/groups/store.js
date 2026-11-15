@@ -53,6 +53,11 @@ function normalizeGroup(g) {
         if (!policies.includes(g.contentPolicy[kind])) g.contentPolicy[kind] = 'all';
     g.joinRequests = Array.isArray(g.joinRequests) ? g.joinRequests : [];
     g.keyboxes = Array.isArray(g.keyboxes) ? g.keyboxes : [];
+    /* ID personalizada (dirección pública, p. ej. «equipo»): se guarda EN
+       CLARO a propósito —el índice único y la resolución por enlace corto
+       necesitan buscarla tal cual— y solo la válida el backend (3-32
+       [a-z0-9_-], sin el prefijo «g_» reservado a las ids internas). */
+    g.customId = typeof g.customId === 'string' ? g.customId.trim().toLowerCase() : '';
     g.ownerId = typeof g.ownerId === 'string' ? g.ownerId : '';
     g.createdAt = Number.isFinite(g.createdAt) ? g.createdAt : Date.now();
     /* El código de invitación es una credencial: si la fila existente no se
@@ -102,6 +107,7 @@ function readGroup(gid) {
         contentPolicy: parseJsonSafe(decField('groups.content_policy', row.content_policy), {}),
         inviteCode: inviteCode === null ? '' : inviteCode,
         keepInviteCode: inviteCode === null,
+        customId: row.custom_id || '',
         createdAt: row.created_at,
         keyboxes: keys.keyboxes || [],
         members: [], memberIds: [], admins: [], joinRequests: []
@@ -127,6 +133,19 @@ function readGroup(gid) {
     return g;
 }
 
+/* Resuelve un identificador de grupo: la id interna (g_…) o la ID
+   personalizada. Los enlaces cortos usan la personalizada cuando existe;
+   todo lo demás sigue usando la interna. La segunda consulta solo ocurre
+   cuando la id interna no existe (los fallos se cachean igual). */
+function resolveGroup(identifier) {
+    if (typeof identifier !== 'string' || !identifier) return null;
+    const group = readGroup(identifier);
+    if (group) return group;
+    if (identifier.startsWith('g_')) return null;
+    const row = Stmt.getGroupByCustom.get(identifier.toLowerCase());
+    return row ? readGroup(row.id) : null;
+}
+
 /* El material de cifrado extremo a extremo (cryptoId + keyboxes) viaja en una
    sola columna cifrada: no es «el grupo entero», solo las claves. */
 function decryptGroupKeys(cipher) {
@@ -149,6 +168,11 @@ function writeGroupMeta(g) {
     const prevRow = Stmt.getGroup.get(normalized.id);
     const avatarRef = storeImage(typeof normalized.avatar === 'string' ? normalized.avatar : '')
         || (prevRow ? prevRow.avatar_ref : '');
+    /* La ID personalizada se PRESERVA si el payload no la trae (los
+       editores que no la tocan no deben borrarla); `customIdSet` marca
+       que viene de un flujo que SÍ la edita, y entonces manda su valor
+       —incluso vacío, que es la forma de quitarla. */
+    const customId = normalized.customIdSet ? normalized.customId : ((prevRow && prevRow.custom_id) || '');
     const columns = [
         normalized.cryptoId,
         encField('groups.name', normalized.name || normalized.id),
@@ -163,6 +187,7 @@ function writeGroupMeta(g) {
         normalized.mentionAllPolicy === 'all' ? 'all' : 'admins',
         encField('groups.content_policy', JSON.stringify(normalized.contentPolicy || {})),
         encField('groups.invite_code', normalized.inviteCode),
+        customId,
         keysCipher,
         Number.isFinite(normalized.createdAt) ? normalized.createdAt : Date.now()
     ];
@@ -224,6 +249,9 @@ const pub = (g, viewerId = '') => {
            directamente en un grupo privado), así que fuera del grupo no viaja
            nunca: la lista /groups la borra y pub(g) sin visor no lo lleva. */
         inviteCode: viewerId && g.memberIds.includes(viewerId) ? g.inviteCode : undefined,
+        /* La ID personalizada es una dirección pública (como el nombre):
+           viaja siempre para que los enlaces cortos se puedan construir. */
+        customId: g.customId || '',
         keybox: (viewerId && (g.keyboxes || []).find(b => byName(b.recipient)?.id === viewerId)) || null
     };
     groupPubCache.set(key, out);
@@ -338,6 +366,7 @@ module.exports = {
     groupPolicies,
     normalizeGroup,
     readGroup,
+    resolveGroup,
     decryptGroupKeys,
     writeGroupMeta,
     invalidateGroupPubCache,

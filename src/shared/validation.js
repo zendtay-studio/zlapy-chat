@@ -15,6 +15,10 @@ const USERNAME_RE = /^[a-z0-9_.-]{3,24}$/;
 // profiles/notesMap y leer o pisar datos de otras cuentas.
 const RESERVED_USERNAMES = new Set(['__proto__', 'constructor', 'prototype']);
 const validUsername = v => typeof v === 'string' && USERNAME_RE.test(v) && !RESERVED_USERNAMES.has(v);
+/* ID personalizada de grupo (dirección pública de enlaces cortos): 3-32
+   [a-z0-9_-], sin el prefijo «g_» reservado a las ids internas. */
+const GROUP_CUSTOM_ID_RE = /^[a-z0-9_-]{3,32}$/;
+const validGroupCustomId = v => typeof v === 'string' && GROUP_CUSTOM_ID_RE.test(v) && !v.startsWith('g_');
 
 /* ---- Validación de contenido multimedia ----
  * Avatares, historias y stickers terminan interpolados en el HTML del cliente,
@@ -94,6 +98,7 @@ module.exports = {
     USERNAME_RE,
     RESERVED_USERNAMES,
     validUsername,
+    validGroupCustomId,
     DATA_URL_IMAGE_RE,
     DATA_URL_MEDIA_RE,
     validAvatar,

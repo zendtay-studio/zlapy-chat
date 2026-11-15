@@ -144,7 +144,21 @@ function ensureEnvFile(envPath = ENV_PATH, examplePath = ENV_EXAMPLE_PATH) {
     if (!fs.existsSync(examplePath))
         throw new Error(`No existe ${path.basename(envPath)} ni ${path.basename(examplePath)}: ` +
             'no se puede crear la configuración. Copia el .env.example a .env y define DB_USER y DB_PASSWORD.');
-    fs.writeFileSync(envPath, fs.readFileSync(examplePath));
+    /* Instalación nueva: la credencial del propietario (DB_USER +
+       DB_PASSWORD, de la que se deriva la llave maestra) se GENERA
+       aleatoria. Ahí el "usuario" no es un nombre de nadie: es un dato
+       secreto más, así que se rellena con bytes aleatorios en vez de
+       dejar el hueco vacío del ejemplo (una credencial por defecto
+       compartida sería peor que ninguna: cualquier instalación nueva
+       arrancaría con el mismo secreto). El fichero queda a 0600 y NUNCA
+       se muestra por consola. */
+    const crypto = require('crypto');
+    const user = crypto.randomBytes(18).toString('base64url');
+    const pass = crypto.randomBytes(27).toString('base64url');
+    const contenido = fs.readFileSync(examplePath, 'utf8')
+        .replace(/^DB_USER=.*$/m, 'DB_USER=' + user)
+        .replace(/^DB_PASSWORD=.*$/m, 'DB_PASSWORD=' + pass);
+    fs.writeFileSync(envPath, contenido);
     try { fs.chmodSync(envPath, 0o600); } catch (error) { /* best-effort */ }
     return true;
 }
@@ -155,7 +169,7 @@ const envCreated = ensureEnvFile();
 // entorno mandan sobre el fichero.
 require('dotenv').config({ path: ENV_PATH, quiet: true });
 if (envCreated) {
-    console.log(`[config] se creó ${path.relative(ROOT, ENV_PATH)} a partir de .env.example (instalación nueva).`);
+    console.log(`[config] se creó ${path.relative(ROOT, ENV_PATH)} con credencial del propietario generada (instalación nueva; el fichero es secreto y no se muestra).`);
 }
 
 const CONFIG = loadConfig(process.env);

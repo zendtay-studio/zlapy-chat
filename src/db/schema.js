@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS user_keys (
 /* ---------------- 4. Privacidad por función ---------------- */
 CREATE TABLE IF NOT EXISTS user_privacy (
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    feature TEXT NOT NULL CHECK (feature IN ('foto','nota','descripcion','historias','llamadas','mensajes','compartir','online')),
+    feature TEXT NOT NULL CHECK (feature IN ('foto','nota','descripcion','historias','llamadas','mensajes','compartir','online','lecturas','usuario')),
     mode    TEXT NOT NULL CHECK (mode IN ('server','contacts','nobody','except','only')),
     PRIMARY KEY (user_id, feature)
 );
@@ -189,10 +189,15 @@ CREATE TABLE IF NOT EXISTS groups (
     mention_all_policy TEXT NOT NULL DEFAULT 'admins' CHECK (mention_all_policy IN ('all','admins')),
     content_policy     TEXT NOT NULL DEFAULT '{}',
     invite_code        TEXT NOT NULL,
+    custom_id          TEXT NOT NULL DEFAULT '',
     keys_cipher        TEXT,
     created_at         INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_groups_visibility ON groups(visibility);
+/* ID personalizada del grupo: única entre los grupos que la tienen (una
+   cadena vacía no compite). Sirve para enlaces cortos del tipo
+   /?open=group:<custom_id>, además del id interno. */
+CREATE UNIQUE INDEX IF NOT EXISTS idx_groups_custom_id ON groups(custom_id) WHERE custom_id != '';
 CREATE INDEX IF NOT EXISTS idx_groups_owner ON groups(owner_id) WHERE owner_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS group_members (
@@ -483,18 +488,36 @@ function migratePrivacyFeatures(db) {
     const sql = tableSql(db, 'user_privacy');
     if (!sql || /'online'/.test(sql)) return;
     if (!tableSql(db, 'user_privacy_users')) return; // base a medias: el CREATE IF NOT EXISTS la crea completa
+    rebuildPrivacyTables(db, ['foto', 'nota', 'descripcion', 'historias', 'llamadas', 'mensajes', 'compartir', 'online']);
+}
+
+/* Migración v13: la CHECK de `user_privacy.feature` tampoco admite
+   'lecturas' (confirmaciones de lectura) ni 'usuario' (ocultar el
+   @usuario). Misma reconstrucción que v9, con la lista ampliada. */
+function migratePrivacyFeaturesV13(db) {
+    const sql = tableSql(db, 'user_privacy');
+    if (!sql || /'lecturas'/.test(sql)) return;
+    if (!tableSql(db, 'user_privacy_users')) return; // base a medias: el CREATE IF NOT EXISTS la crea completa
+    rebuildPrivacyTables(db, ['foto', 'nota', 'descripcion', 'historias', 'llamadas', 'mensajes', 'compartir', 'online', 'lecturas', 'usuario']);
+}
+
+/* Reconstruye regla + listas de `user_privacy` con la lista de features
+   que se le pasa (SQLite no altera una CHECK in situ). Idempotente por
+   construcción: solo se llama cuando la CHECK vigente no vale. */
+function rebuildPrivacyTables(db, features) {
+    const lista = features.map(f => `'${f}'`).join(',');
     db.pragma('foreign_keys = OFF');
     try {
         db.exec(`
             BEGIN;
-            CREATE TABLE user_privacy_v9 (
+            CREATE TABLE user_privacy_v13 (
                 user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                feature TEXT NOT NULL CHECK (feature IN ('foto','nota','descripcion','historias','llamadas','mensajes','compartir','online')),
+                feature TEXT NOT NULL CHECK (feature IN (${lista})),
                 mode    TEXT NOT NULL CHECK (mode IN ('server','contacts','nobody','except','only')),
                 PRIMARY KEY (user_id, feature)
             );
-            INSERT INTO user_privacy_v9 (user_id, feature, mode) SELECT user_id, feature, mode FROM user_privacy;
-            CREATE TABLE user_privacy_users_v9 (
+            INSERT INTO user_privacy_v13 (user_id, feature, mode) SELECT user_id, feature, mode FROM user_privacy;
+            CREATE TABLE user_privacy_users_v13 (
                 user_id     TEXT NOT NULL,
                 feature     TEXT NOT NULL,
                 position    INTEGER NOT NULL,
@@ -503,12 +526,12 @@ function migratePrivacyFeatures(db) {
                 PRIMARY KEY (user_id, feature, position),
                 FOREIGN KEY (user_id, feature) REFERENCES user_privacy(user_id, feature) ON DELETE CASCADE
             );
-            INSERT INTO user_privacy_users_v9 (user_id, feature, position, target_id, target_name)
+            INSERT INTO user_privacy_users_v13 (user_id, feature, position, target_id, target_name)
                 SELECT user_id, feature, position, target_id, target_name FROM user_privacy_users;
             DROP TABLE user_privacy_users;
             DROP TABLE user_privacy;
-            ALTER TABLE user_privacy_v9 RENAME TO user_privacy;
-            ALTER TABLE user_privacy_users_v9 RENAME TO user_privacy_users;
+            ALTER TABLE user_privacy_v13 RENAME TO user_privacy;
+            ALTER TABLE user_privacy_users_v13 RENAME TO user_privacy_users;
             CREATE INDEX IF NOT EXISTS idx_upu_target ON user_privacy_users(target_id) WHERE target_id IS NOT NULL;
             COMMIT;
         `);
@@ -526,6 +549,9 @@ function applySchema(db) {
     // una instalación v10 aún no la tiene → ALTER primero, índice después.
     if (tableExists(db, 'calls') && !tableColumns(db, 'calls').has('peer_hash'))
         db.exec('ALTER TABLE calls ADD COLUMN peer_hash TEXT');
+    // v14: `groups.custom_id` (ID personalizada para enlaces cortos).
+    if (tableExists(db, 'groups') && !tableColumns(db, 'groups').has('custom_id'))
+        db.exec("ALTER TABLE groups ADD COLUMN custom_id TEXT NOT NULL DEFAULT ''");
     // v12: la PK de `calls` era `id` GLOBAL; los dos extremos de una llamada
     // comparten callId, así que el segundo INSERT OR REPLACE machacaba la
     // fila del primero y al reiniciar solo un historial sobrevivía. La PK
@@ -581,6 +607,7 @@ function applySchema(db) {
     // (antes de que exista). Lo hace backfillUserRids, ya con la llave en
     // RAM, desde el arranque del servidor (ver server.js).
     migratePrivacyFeatures(db);
+    migratePrivacyFeaturesV13(db);
 }
 
 /* Aplica el esquema si falta algo (idempotente) y registra la versión.

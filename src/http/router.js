@@ -29,7 +29,7 @@ const { Stmt } = require('../db/statements.js');
 const { pruneBlobHashes, removeBlobAccess, tx } = require('../db/transactions.js');
 const { getGroups, getGroupsDiscover, getGroupsRequests, postGroups } = require('../groups/routes.js');
 const { AuthKeyUnreadableError } = require('../crypto/user-auth-keys.js');
-const { deleteGroupSummary, groupBrief, groupLastEntry, groupPolicies, groupSummaryFor, initializeGroupSummary, invalidateGroupPubCache, lastGroupMessage, pub, readGroup, updateGroupMessageSummaries, writeGroupMeta, writeGroupSummary } = require('../groups/store.js');
+const { deleteGroupSummary, groupBrief, groupLastEntry, groupPolicies, groupSummaryFor, initializeGroupSummary, invalidateGroupPubCache, lastGroupMessage, pub, readGroup, resolveGroup, updateGroupMessageSummaries, writeGroupMeta, writeGroupSummary } = require('../groups/store.js');
 const { mimeMap, rejectRateLimitedMessage, safeDecodeSegment } = require('./helpers.js');
 const { cspFor, json, securityHeaders } = require('./responses.js');
 const { isEncrypted, openRequest, sealResponse } = require('./transport.js');
@@ -43,7 +43,7 @@ const { storeGallery, validateGallery } = require('../shared/gallery.js');
 const { MESSAGE_LIMITS, characterCount } = require('../shared/limits.js');
 const { resolvePublicFile, PUBLIC_EXTENSIONS } = require('../shared/static-path.js');
 const { normalizeContactData, normalizePollData } = require('../shared/types.js');
-const { clampStr, localStickerHash, validAvatar, validMessageId, validMime, validStickerData } = require('../shared/validation.js');
+const { clampStr, localStickerHash, validAvatar, validGroupCustomId, validMessageId, validMime, validStickerData } = require('../shared/validation.js');
 const { groupCache, profiles, stories, users } = require('../state.js');
 const { getGiphySearch, getLegacyDefaultSticker, getStickerBlob, getStickerDiscover, getStickers, postCreateSticker, postStickers } = require('../stickers/routes.js');
 const { getStories, postStory, postStoryLike } = require('../stories/routes.js');
@@ -211,7 +211,7 @@ const handleRequest = (req, res) => {
         const gid = safeDecodeSegment(gmGet[1]);
         if (gid === null) return json(res, 400, { error: 'id inválido' });
         if (!/^[a-zA-Z0-9_-]{1,80}$/.test(gid)) return json(res, 400, { error: 'id inválido' });
-        const g = readGroup(gid);
+        const g = resolveGroup(gid);
         if (!g || !g.memberIds.includes(req.authUser.id)) return json(res, 404, { error: 'no existe' });
         const full = pub(g, req.authUser.id);
         /* Recorte opcional de integrantes: quien pide membersLimit sólo
@@ -238,13 +238,13 @@ const handleRequest = (req, res) => {
         const gid = safeDecodeSegment(gmMsgs[1]);
         if (gid === null) return json(res, 400, { messages: [], more: false });
         if (!/^[a-zA-Z0-9_-]{1,80}$/.test(gid)) return json(res, 400, { messages: [], more: false });
-        const g = readGroup(gid);
+        const g = resolveGroup(gid);
         if (!g || !g.memberIds.includes(req.authUser.id)) return json(res, 404, { messages: [], more: false });
-        const page = readMessagePage('group:' + gid, {
+        const page = readMessagePage('group:' + g.id, {
             beforeId: url.searchParams.get('beforeId') || undefined,
             limit: Number(url.searchParams.get('limit')) || 30
         });
-        const visible = filterForViewer(page.messages, req.authUser.id, 'group:' + gid);
+        const visible = filterForViewer(page.messages, req.authUser.id, 'group:' + g.id);
         return json(res, 200, { messages: withMessageReactions(visible, req.authUser.id).map(m => withMentions(decorateForClient(m))), more: page.more });
     }
     /* Miembros del grupo paginados (mismo criterio que /users): la pantalla
@@ -254,7 +254,7 @@ const handleRequest = (req, res) => {
         const gid = safeDecodeSegment(gmMembers[1]);
         if (gid === null) return json(res, 400, { members: [], more: false, total: 0 });
         if (!/^[a-zA-Z0-9_-]{1,80}$/.test(gid)) return json(res, 400, { members: [], more: false, total: 0 });
-        const g = readGroup(gid);
+        const g = resolveGroup(gid);
         if (!g || !g.memberIds.includes(req.authUser.id)) return json(res, 404, { members: [], more: false, total: 0 });
         const rawLimit = url.searchParams.get('limit');
         const rawOffset = url.searchParams.get('offset');
@@ -333,7 +333,7 @@ const handleRequest = (req, res) => {
                 const gid = safeDecodeSegment(url.pathname.split('/')[2]);
                 if (gid === null) return json(res, 400, { error: 'id inválido' });
                 if (!/^[a-zA-Z0-9_-]{1,80}$/.test(gid)) return json(res, 400, { error: 'id inválido' });
-                const g = readGroup(gid);
+                const g = resolveGroup(gid);
                 if (!g) return json(res, 404, { error: 'no existe' });
                 if (!g.memberIds.includes(req.authUser.id)) return json(res, 403, { error: 'no eres miembro' });
                 const recipients = Array.isArray(data.recipients) ? data.recipients : [];
@@ -436,7 +436,7 @@ const handleRequest = (req, res) => {
                 const id = safeDecodeSegment(gm[1]);
                 if (id === null) return json(res, 400, { error: 'id inválido' });
                 if (!/^[a-zA-Z0-9_-]{1,80}$/.test(id)) return json(res, 400, { error: 'id inválido' });
-                const g = readGroup(id);
+                const g = resolveGroup(id);
                 if (!g) return json(res, 404, { error: 'no existe' });
                 const isAdmin = g.admins.some(name => byName(name)?.id === req.authUser.id);
                 const isMember = g.memberIds.includes(req.authUser.id);
@@ -803,7 +803,7 @@ const handleRequest = (req, res) => {
                     writeGroupMeta(g); notifyGroup('group');
                     return json(res, 200, pub(g));
                 }
-                const settingsKeys = ['rename', 'description', 'avatar', 'visibility', 'joinPolicy', 'writePolicy', 'addPolicy', 'editPolicy', 'mentionAllPolicy', 'contentPolicy'];
+                const settingsKeys = ['rename', 'description', 'avatar', 'customId', 'visibility', 'joinPolicy', 'writePolicy', 'addPolicy', 'editPolicy', 'mentionAllPolicy', 'contentPolicy'];
                 /* Ajustes que deciden QUIÉN entra, QUIÉN edita, QUIÉN escribe
                    o QUIÉN ve el grupo: reservados a admins aunque editPolicy
                    sea 'all'. Con el guard antiguo, cualquier miembro con
@@ -811,7 +811,7 @@ const handleRequest = (req, res) => {
                    (SECOA-A-002); sin writePolicy/contentPolicy aquí, el mismo
                    miembro podía SILENCIAR a los no-admins (writePolicy='admins')
                    o desactivar los medios sin ser admin (SECOA-N-02). */
-                const adminOnlySettings = ['visibility', 'joinPolicy', 'addPolicy', 'editPolicy', 'mentionAllPolicy', 'writePolicy', 'contentPolicy'];
+                const adminOnlySettings = ['visibility', 'joinPolicy', 'addPolicy', 'customId', 'editPolicy', 'mentionAllPolicy', 'writePolicy', 'contentPolicy'];
                 if (settingsKeys.some(k => Object.prototype.hasOwnProperty.call(data, k))) {
                     if (!isAdmin && g.editPolicy !== 'all') return json(res, 403, { error: 'Solo admins.' });
                     if (!isAdmin && adminOnlySettings.some(k => Object.prototype.hasOwnProperty.call(data, k)))
@@ -820,6 +820,21 @@ const handleRequest = (req, res) => {
                     if (Object.prototype.hasOwnProperty.call(data, 'rename')) {
                         if (typeof data.rename !== 'string' || !data.rename.trim() || data.rename.length > 40) return json(res, 400, { error: 'Nombre inválido.' });
                         g.name = data.rename.trim();
+                    }
+                    /* ID personalizada: la dirección pública de enlaces cortos.
+                       Se valida aquí (y la unicidad la garante el índice) para
+                       devolver un 409 con texto en vez de un fallo opaco. Un
+                       cambio de ID se comunica a los miembros con el grupo ya
+                       actualizado (su lista y sus enlaces la re-leen). */
+                    if (Object.prototype.hasOwnProperty.call(data, 'customId')) {
+                        const nextId = typeof data.customId === 'string' ? data.customId.trim().toLowerCase() : '';
+                        if (nextId && !validGroupCustomId(nextId)) return json(res, 400, { error: 'La ID personalizada admite 3-32 letras minúsculas, números, guiones y guiones bajos (sin empezar por g_).' });
+                        const ocupada = Stmt.getGroupByCustom.get(nextId);
+                        if (ocupada && ocupada.id !== g.id) return json(res, 409, { error: 'Esa ID personalizada ya está en uso.' });
+                        g.customId = nextId;
+                        /* Marca explícita: sin ella, writeGroupMeta no podría
+                           distinguir «no la toco» de «la quito a propósito». */
+                        g.customIdSet = true;
                     }
                     if (Object.prototype.hasOwnProperty.call(data, 'description')) {
                         if (typeof data.description !== 'string' || data.description.length > 500) return json(res, 400, { error: 'Descripción inválida.' });

@@ -68,7 +68,8 @@ function getProfile(req, res, url, data, actor) {
     verHistorias: !!permite(owner, 'historias', meQ),
     llamar: !!permite(owner, 'llamadas', meQ),
     escribir: !!permite(owner, 'mensajes', meQ),
-    compartir: !!permite(owner, 'compartir', meQ)
+    compartir: !!permite(owner, 'compartir', meQ),
+    verUsuario: !!permite(owner, 'usuario', meQ)
     };
     out.permisos = perms;
     /* La presencia («en línea» / última vez visto) respeta SU propia regla

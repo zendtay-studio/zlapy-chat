@@ -514,6 +514,15 @@ function postReceipt(req, res, url, data, actor) {
         if (!row || row.to_id !== req.authUser.id) continue;
         const m = rowToMessage(row);
         if (!m) continue;
+        /* Confirmaciones de lectura (ajuste de privacidad): si la cuenta
+           que lee las tiene desactivadas para el autor de este mensaje,
+           el acuse «read» se descarta —ni se guarda ni se empuja— y sus
+           mensajes se quedan en «entregado» (gris) para el otro. El acuse
+           «delivered» NUNCA se ve afectado: esto solo apaga el azul. */
+        if (data.status === 'read') {
+            const lector = profiles[actor] || req.authUser;
+            if (!permite(lector, 'lecturas', users.get(m.fromId)?.username || '')) continue;
+        }
         processedIds.push(id);
         peerIds.add(m.fromId);
         if ((RANK[data.status] || 0) > (RANK[m.status] || 0)) {

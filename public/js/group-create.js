@@ -61,6 +61,10 @@
         descToggle: $('descToggle'),
         descWrap: $('descWrap'),
         desc: $('groupDesc'),
+        customId: $('groupCustomId'),
+        customIdWrap: $('customIdWrap'),
+        customIdToggle: $('customIdToggle'),
+        customIdCount: $('customIdCount'),
         descCount: $('descCount'),
         avatarBtn: $('avatarBtn'),
         avatarInput: $('avatarInput'),
@@ -305,6 +309,23 @@
         refs.descToggle.innerHTML = `<svg class="icon" aria-hidden="true"><use href="#i-${icon}"></use></svg><span>${label}</span>`;
     }
 
+    function syncCustomIdToggle() {
+        const openCustom = !refs.customIdWrap.hidden;
+        const hasCustom = Boolean(refs.customId.value.trim());
+        refs.customIdToggle.setAttribute('aria-expanded', String(openCustom));
+        refs.customIdToggle.innerHTML = `<svg class="icon" aria-hidden="true"><use href="#i-${openCustom ? 'minus' : hasCustom ? 'pencil' : 'plus'}"></use></svg><span>${openCustom ? 'Ocultar ID personalizada' : hasCustom ? 'Editar ID personalizada' : 'Poner ID personalizada'}</span>`;
+        refs.customIdCount.textContent = `${refs.customId.value.length}/32`;
+    }
+
+    function bindCustomIdToggle() {
+        refs.customIdToggle.addEventListener('click', () => {
+            refs.customIdWrap.hidden = !refs.customIdWrap.hidden;
+            syncCustomIdToggle();
+            if (!refs.customIdWrap.hidden) refs.customId.focus();
+        });
+        refs.customId.addEventListener('input', syncCustomIdToggle);
+    }
+
     function renderPreferences() {
         document.querySelectorAll('.advanced .seg[data-key]').forEach(seg => {
             const key = seg.dataset.key;
@@ -425,7 +446,8 @@
                 if (!state.canEditGroup) throw new Error('No tienes permiso para editar este grupo.');
                 const payload = {
                     rename: name,
-                    description: refs.desc.value.trim()
+                    description: refs.desc.value.trim(),
+                    customId: refs.customId.value.trim()
                 };
                 if (state.avatarChanged) payload.avatar = state.avatar;
                 if (state.isAdmin) {
@@ -460,6 +482,7 @@
                     name,
                     members: [...state.selected],
                     description: refs.desc.value.trim(),
+                    customId: refs.customId.value.trim(),
                     avatar: state.avatar,
                     visibility: state.prefs.visibility,
                     joinPolicy: state.prefs.join,
@@ -558,6 +581,9 @@
             refs.desc.value = group.description || '';
             refs.descCount.textContent = `${refs.desc.value.length}/500`;
             if (refs.desc.value.trim()) refs.descWrap.hidden = false;
+            refs.customId.value = group.customId || '';
+            if (refs.customId.value.trim()) refs.customIdWrap.hidden = false;
+            syncCustomIdToggle();
 
             state.avatar = group.avatar || '';
             if (state.avatar) {
@@ -763,6 +789,8 @@
     document.addEventListener('contextmenu', event => event.preventDefault());
 
     refs.descCount.textContent = '0/500';
+    bindCustomIdToggle();
+    syncCustomIdToggle();
     renderPreferences();
     if (editMode) {
         syncDescriptionToggle();

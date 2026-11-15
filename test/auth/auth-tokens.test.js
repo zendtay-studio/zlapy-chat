@@ -197,7 +197,7 @@ test('logout NO rota el rid: es local al navegador y no mata otras sesiones', as
     } finally { await stop(srv); }
 });
 
-test('V-10: cambiar de cuenta revoca los tokens de la cuenta abandonada', async () => {
+test('V-10: cambiar de cuenta NO revoca los tokens de otros dispositivos', async () => {
     const srv = await startServer();
     try {
         const anaRes = await api(srv.base, 'POST', '/auth/register', { username: 'ana', password: 'pruebachat1' });
@@ -214,14 +214,16 @@ test('V-10: cambiar de cuenta revoca los tokens de la cuenta abandonada', async 
         };
         const tokenAnaOriginal = jar.chatlocal_session;
 
-        // Cambio a beto: rota el rid de ana.
+        // Cambio a beto: NO se toca el rid de ana.
         const ida = await fetchWithCookies(srv.base, '/auth/switch', jar, { accountId: betoId });
         assert.equal(ida.status, 200, 'el cambio funciona');
         assert.equal(ida.json.user.id, betoId);
 
-        // El token principal ORIGINAL de ana ya no vale (V-10).
-        assert.equal(await authenticated(srv.base, tokenAnaOriginal), false,
-            'el token saliente queda revocado');
+        /* El token principal ORIGINAL de ana SIGUE valiendo: cambiar de
+           cuenta es local de este navegador y ya no mata las sesiones de
+           otros dispositivos (revocación global = cambio de contraseña). */
+        assert.equal(await authenticated(srv.base, tokenAnaOriginal), true,
+            'el token saliente sigue vivo en otros dispositivos');
 
         // Ana sigue conectada en este navegador: su cookie de cuenta fue
         // re-emitida con el rid ya rotado, así que se puede VOLVER sin

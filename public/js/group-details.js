@@ -947,7 +947,10 @@
             showToast('No tienes una invitación disponible para compartir.', 'alert');
             return;
         }
-        const link = `${location.origin}/?join=${encodeURIComponent(state.group.id)}&code=${encodeURIComponent(state.group.inviteCode)}`;
+        /* El enlace lleva la ID personalizada cuando el grupo la tiene (más
+           corta y memorable); el servidor resuelve igual por id interna. */
+        const groupRef = state.group.customId || state.group.id;
+        const link = `${location.origin}/?join=${encodeURIComponent(groupRef)}&code=${encodeURIComponent(state.group.inviteCode)}`;
         try {
             if (navigator.clipboard && window.isSecureContext) {
                 await navigator.clipboard.writeText(link);

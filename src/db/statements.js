@@ -296,11 +296,12 @@ const Stmt = {
     getGroup: db.prepare('SELECT * FROM groups WHERE id = ?'),
     insertGroup: db.prepare(`INSERT OR REPLACE INTO groups
         (id, crypto_id, name, description, avatar_ref, owner_id, visibility, join_policy, write_policy,
-         add_policy, edit_policy, mention_all_policy, content_policy, invite_code, keys_cipher, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+         add_policy, edit_policy, mention_all_policy, content_policy, invite_code, custom_id, keys_cipher, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
     updateGroup: db.prepare(`UPDATE groups SET crypto_id = ?, name = ?, description = ?, avatar_ref = ?,
         owner_id = ?, visibility = ?, join_policy = ?, write_policy = ?, add_policy = ?, edit_policy = ?,
-        mention_all_policy = ?, content_policy = ?, invite_code = ?, keys_cipher = ?, created_at = ? WHERE id = ?`),
+        mention_all_policy = ?, content_policy = ?, invite_code = ?, custom_id = ?, keys_cipher = ?, created_at = ? WHERE id = ?`),
+    getGroupByCustom: db.prepare('SELECT * FROM groups WHERE custom_id = ?'),
     listPublicGroups: db.prepare(`SELECT id FROM groups WHERE visibility = 'public'`),
     listPublicGroupsForDiscover: db.prepare(`SELECT id, name, description FROM groups g
         WHERE g.visibility = 'public'

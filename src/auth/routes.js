@@ -9,7 +9,7 @@
 'use strict';
 
 const crypto = require('crypto');
-const { accountCookieName, accountCookies, clearCookie, clearSessionCookie, createLinkedAccountSession, createSession, rotateRid, sessionCookie, sessionFromToken, sessionUser, setAccountSessionCookie } = require('./sessions.js');
+const { accountCookieName, accountCookies, clearCookie, clearSessionCookie, createLinkedAccountSession, createSession, sessionCookie, sessionFromToken, sessionUser, setAccountSessionCookie } = require('./sessions.js');
 const { esHashAntiguo, hashPassword, verifyPassword } = require('./password.js');
 const { Stmt } = require('../db/statements.js');
 const { loginAttempts, registerAttempts } = require('../http/rate-limit.js');
@@ -333,18 +333,24 @@ function postAuthSwitch(req, res, url, data, actor) {
         clearCookie(res, req, accountCookieName(accountIdV));
         return json(res, 401, { error: 'Cuenta no disponible.', gone: true });
     }
-    /* Revocación V-10: al cambiar de cuenta se ROTA el `rid` de la cuenta
-       que se abandona. Todos sus tokens (este navegador y cualquier copia en
-       otro sitio) dejan de validar de golpe: el checksum descuadra. La cuenta
-       abandonada recibe a continuación un token vinculado NUEVO, ya con el
-       rid rotado: sigue en la lista de cuentas conectadas y se puede volver
-       a ella sin contraseña. */
+    /* Al cambiar de cuenta NO se rota el rid de la que se abandona: el
+       cambio es cosa de ESTE navegador y rotarlo mataba de golpe TODOS los
+       tokens de la cuenta —incluidos los de otros dispositivos, donde la
+       persona sigue usando su sesión—. La cuenta abandonada recibe una
+       cookie vinculada NUEVA (sigue en la lista de cuentas conectadas y se
+       puede volver a ella sin contraseña) y sus sockets AQUÍ —los abiertos
+       con el token de esta petición— se cierran; los tokens de otros
+       dispositivos siguen válidos. La revocación global de una cuenta
+       continúa siendo el cambio de contraseña (rota el rid). */
     const outgoing = req.authUser;
     if (outgoing && outgoing.id !== user.id) {
-        rotateRid(outgoing);
-        /* Todos los sockets de la cuenta abandonada quedan sin sesión: se
-           cierran. */
-        for (const sk of [...(outgoing.sockets || [])]) { try { sk.destroy(); } catch { } }
+        /* Los sockets de la cuenta abandonada abiertos CON EL TOKEN DE ESTA
+           petición (este navegador) quedan sin dueño: se cierran. Los de
+           otros dispositivos llevan tokens distintos y siguen vivos. */
+        const tokenAqui = sessionCookie(req);
+        for (const sk of [...(outgoing.sockets || [])]) {
+            if (tokenAqui && sk.authToken === tokenAqui) { try { sk.destroy(); } catch { } }
+        }
         createLinkedAccountSession(outgoing, req, res);
     }
     const switched = createSession(user, req, res);

@@ -31,7 +31,12 @@ test('el .env se crea a partir del .env.example cuando no existe', t => {
 
     const contents = fs.readFileSync(envPath, 'utf8');
     assert.match(contents, /^PORT=3000$/m);
-    assert.match(contents, /^DB_USER=$/m);
+    /* La credencial del propietario se GENERA aleatoria: el "usuario" no
+       es un nombre, es un dato secreto más (de DB_USER + DB_PASSWORD sale
+       la llave maestra). Nunca un nombre ni el hueco vacío del ejemplo. */
+    assert.match(contents, /^DB_USER=[A-Za-z0-9_-]{16,}$/m, 'DB_USER aleatorio');
+    assert.match(contents, /^DB_PASSWORD=[A-Za-z0-9_-]{20,}$/m, 'DB_PASSWORD aleatorio');
+    assert.doesNotMatch(contents, /^DB_USER=admin$/m);
     // El .env puede contener secretos: sólo el propietario puede leerlo.
     assert.equal(fs.statSync(envPath).mode & 0o777, 0o600);
 });

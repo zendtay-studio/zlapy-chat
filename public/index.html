@@ -2047,10 +2047,17 @@
             margin: 0 auto
         }
 
-        #contactPanel .profileActions {
-            display: flex;
-            justify-content: center;
-            gap: 12px;
+        /* Acciones del perfil: rejilla de 4 columnas que se REPARTEN el ancho
+           (con minmax(0,…) en vez de flex fijo). Antes, con el panel
+           estrecho, las etiquetas («Videollamada») no cabían en horizontal
+           y desbordaban. Las etiquetas envuelven a dos líneas si hace
+           falta. */
+        #contactPanel .profileActions,
+        .sheetPage .profileActions {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            justify-items: center;
+            gap: 8px;
             width: 100%;
             margin: 8px 0
         }
@@ -2059,20 +2066,67 @@
         .sheetPage .cpAction {
             display: grid;
             justify-items: center;
-            gap: 7px;
-            width: 64px;
+            gap: 6px;
+            width: 100%;
             min-width: 0;
-            flex: 1 1 0;
-            max-width: 72px;
             padding: 0;
             border: 0;
             background: transparent;
             color: var(--muted);
             font-size: 10px;
             font-weight: 600;
-            line-height: 1.1;
-            white-space: nowrap;
+            line-height: 1.15;
+            white-space: normal;
+            overflow-wrap: anywhere;
             cursor: pointer
+        }
+
+        /* Escritorio: la ficha de contacto es una TARJETA centrada (estilo
+           WhatsApp Web), no una columna a pantalla completa: se veía
+           comprimida y desaprovechaba el ancho. En el móvil sigue a
+           pantalla completa. */
+        @media (min-width: 769px) {
+
+            #contactSheet.on main {
+                max-width: 440px;
+                margin: 24px auto;
+                padding: 28px 24px calc(28px + env(safe-area-inset-bottom));
+                background: var(--surface);
+                border: 1px solid var(--line);
+                border-radius: 22px;
+                box-shadow: 0 24px 60px #0009;
+                align-self: center;
+                height: auto;
+                overflow-y: auto
+            }
+
+            #contactSheet.on .profileActions {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 10px 18px
+            }
+
+            #contactSheet.on .cpAction {
+                font-size: 11px
+            }
+
+            #contactSheet.on .cpActionIcon {
+                width: 54px;
+                height: 54px;
+                border-radius: 18px
+            }
+        }
+
+        /* Nombre y textos del perfil: nunca desbordan en horizontal (un nombre
+           largo o una descripción con markdown envuelven). */
+        #contactPanel main b,
+        #contactPanel main .sub,
+        #contactPanel main .noteFloat,
+        #contactSheet b,
+        #contactSheet .sub,
+        #contactSheet .noteFloat {
+            max-width: 100%;
+            overflow-wrap: anywhere;
+            word-break: break-word
         }
 
         #contactPanel .cpActionIcon,
@@ -13427,10 +13481,20 @@
                 /* Las solicitudes de grupo ya viven dentro de la hoja común. */
                 return openContactRequests();
             }
+            /* Confirmaciones de lectura (ajuste de privacidad): apagadas para
+               TODOS = este cliente no envía el acuse «read». El apagado por
+               persona lo decide el SERVIDOR (descarta el acuse), que es la
+               autoridad. */
+            function readReceiptsOn() {
+                const p = profilesCache && profilesCache[me.username];
+                const modo = p && p.privacy && p.privacy.lecturas ? p.privacy.lecturas.mode : 'server';
+                return modo !== 'nobody';
+            }
             function sendRead(peer, ids) {
                 /* postReceipt admite hasta 500 ids por acuse: se van en lotes
                    para que una conversación con muchos pendientes no supere
                    el tope y se pierdan TODOS los acuses por un 400. */
+                if (!readReceiptsOn()) return;
                 for (let i = 0; i < ids.length; i += 400)
                     fetch('/receipt', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: me.username, to: peer, ids: ids.slice(i, i + 400), status: 'read' }) }).catch(() => { });
             }
@@ -21275,7 +21339,10 @@
                 profilesCache[username] = p;
                 document.getElementById('csTitle').textContent = ownProfile ? 'Mi perfil' : 'Perfil';
                 document.getElementById('csName').textContent = p.name || username;
+                /* El @usuario se oculta si la privacidad del contacto lo tiene
+                   apagado (sigue habiendo nombre visible). */
                 document.getElementById('csUsername').textContent = '@' + (p.username || username);
+                document.getElementById('csUsername').style.display = p.permisos && p.permisos.verUsuario === false ? 'none' : '';
                 const presence = document.getElementById('csPresence');
                 const contactPresence = contacts.find(contact => contact.username === username);
                 presence.textContent = ownProfile ? 'Este eres tú' : p.online !== undefined
@@ -21349,7 +21416,10 @@
                 if (cpTarget !== username) return; // se cerró o cambió de destino mientras llegaba la respuesta
                 profilesCache[username] = p;
                 document.getElementById('cpName').textContent = p.name || username;
+                /* Igual que en la hoja: el @usuario se oculta si la privacidad del
+                   contacto lo tiene apagado para mí. */
                 document.getElementById('cpUsername').textContent = '@' + (p.username || username);
+                document.getElementById('cpUsername').style.display = p.permisos && p.permisos.verUsuario === false ? 'none' : '';
                 const presence = document.getElementById('cpPresence');
                 const contactPresence = contacts.find(contact => contact.username === username);
                 presence.textContent = p.online !== undefined
@@ -22988,6 +23058,8 @@
                 { key: 'nota', label: 'Mi nota', sub: 'Quién puede ver mi nota (dura 24 h)' },
                 { key: 'descripcion', label: 'Descripción', sub: 'Quién puede ver mi descripción' },
                 { key: 'online', label: 'En línea', sub: 'Quién puede ver cuándo estoy en línea' },
+                { key: 'lecturas', label: 'Confirmaciones de lectura', sub: 'Quién ve cuándo leo sus mensajes (apagado: se quedan en gris)' },
+                { key: 'usuario', label: 'Mi @usuario', sub: 'Quién puede ver mi @usuario (apagado: solo verán mi nombre)' },
                 { key: 'historias', label: 'Mis historias', sub: 'Quién puede ver mis historias' },
                 { key: 'llamadas', label: 'Quién puede llamarme', sub: 'Quién puede llamarme' },
                 { key: 'mensajes', label: 'Quién puede escribirme', sub: 'Quién puede enviarme mensajes' },
@@ -22999,7 +23071,8 @@
                 foto: { mode: 'server', users: [] }, nota: { mode: 'contacts', users: [] },
                 descripcion: { mode: 'server', users: [] }, online: { mode: 'contacts', users: [] },
                 historias: { mode: 'contacts', users: [] }, llamadas: { mode: 'contacts', users: [] },
-                mensajes: { mode: 'contacts', users: [] }, compartir: { mode: 'contacts', users: [] }
+                mensajes: { mode: 'contacts', users: [] }, compartir: { mode: 'contacts', users: [] },
+                lecturas: { mode: 'server', users: [] }, usuario: { mode: 'server', users: [] }
             };
             function privResumen(k) {
                 const v = (settingsPriv || {})[k] || PRIVACY_DEFAULTS[k], n = (v.users || []).length;

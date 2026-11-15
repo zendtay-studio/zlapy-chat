@@ -94,6 +94,17 @@
                                 </button>
                                 <span class="char-count" id="nameCount">0/40</span>
                             </div>
+                            <div class="under-name">
+                                <button class="text-action" id="customIdToggle" type="button" aria-expanded="false" aria-controls="customIdWrap">
+                                    <svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg>
+                                    <span>Poner ID personalizada</span>
+                                </button>
+                            </div>
+                            <div class="desc-wrap" id="customIdWrap" hidden>
+                                <input class="name-input" id="groupCustomId" type="text" maxlength="32" placeholder="identificadora (p. ej. equipo)" aria-label="ID personalizada del grupo" autocomplete="off" spellcheck="false">
+                                <span class="char-count" id="customIdCount">0/32</span>
+                                <p class="customIdHint">Sirve para compartir el grupo con un enlace corto (zlapy.app/g/tu-id). Opcional; si la dejas vacía, el grupo usa su identificadora interna.</p>
+                            </div>
                             <div class="desc-wrap" id="descWrap" hidden>
                                 <textarea id="groupDesc" maxlength="500" rows="2" placeholder="¿De qué trata el grupo? (opcional)" aria-label="Descripción del grupo"></textarea>
                                 <span class="char-count" id="descCount">0/500</span>
