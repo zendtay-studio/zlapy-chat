@@ -1235,6 +1235,18 @@ button.contact:hover {
     margin-top: 2px
 }
 
+/* Descripción del integrante en su ficha: markdown de línea, UNA línea
+   con puntos si se pasa (la ficha es estrecha). */
+.profile-desc.sheetMarkdown {
+    display: block;
+    margin: 2px 16px 0;
+    color: var(--muted);
+    font-size: 13px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap
+}
+
 .pickerPerson .meta .sub {
     display: block;
     overflow: hidden;

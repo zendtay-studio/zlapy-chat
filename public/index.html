@@ -498,7 +498,14 @@
             color: #9ba5b0;
             line-height: 1.4;
             margin-top: 2px;
-            overflow-wrap: anywhere
+            overflow-wrap: anywhere;
+            /* La descripción en las solicitudes es UNA línea (con puntos si
+               se pasa), igual que en el resto de la app; antes se partía en
+               dos y tres renglones y desalineaba la ficha. */
+            display: -webkit-box;
+            -webkit-line-clamp: 1;
+            -webkit-box-orient: vertical;
+            overflow: hidden
         }
 
         .requestCard .requestButtons,
@@ -904,9 +911,16 @@
             width: 100%
         }
 
+        /* La descripción de la invitación va en UNA línea (la ficha tiene su
+           propio ancho); el recorte con puntos lo añade el propio HTML. */
         .groupInvite .giMeta .sub {
             color: inherit;
-            opacity: .72
+            opacity: .72;
+            display: block;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 100%
         }
 
         .contactCard,
@@ -6069,7 +6083,10 @@
             line-height: 1.4;
             word-break: break-word;
             max-width: 92%;
-            text-shadow: 0 1px 6px #0004
+            text-shadow: 0 1px 6px #0004;
+            /* El texto de la historia admite markdown y saltos de línea:
+               sin pre-wrap, un intro con varias líneas se aplanaba. */
+            white-space: pre-wrap
         }
 
         .storyAudioCard {
@@ -13363,7 +13380,7 @@
                     const incomingRows = incoming.map(request => `<div class="requestCard" data-user="${escapeHtml(request.username)}">
       <div class="avatar"><img src="${escapeHtml(request.avatar ? request.avatar : avatarUrl(request.username, request.id))}" alt=""></div>
       <div class="requestInfo"><b>${escapeHtml(request.name || request.username)} <span class="sub">@${escapeHtml(request.username)}</span></b>
-        <p>${escapeHtml(request.description || 'Sin descripción disponible')}</p></div>
+        <p>${decorateMarkdownInline(request.description || 'Sin descripción disponible')}</p></div>
       <div class="requestButtons">
         <button type="button" data-action="profile" title="Ver perfil" aria-label="Ver el perfil de @${escapeHtml(request.username)}">${requestActionIcon('profile')}</button>
         <button type="button" class="accept" data-action="accept" title="Aceptar" aria-label="Aceptar la solicitud de @${escapeHtml(request.username)}">${requestActionIcon('accept')}</button>
@@ -13985,6 +14002,14 @@
                         groupDetailsAfterClose = () => openGroupCreateEditPage(groupId);
                         closeGroupDetailsPage();
                     }
+                    return;
+                }
+                if (data.type === 'zlapy:open-contact' && typeof data.username === 'string' && data.username) {
+                    /* La ficha del contacto se abre POR ENCIMA de los
+                       detalles del grupo: el ATRÁS la cierra y vuelve
+                       a los detalles. */
+                    if (fromPanel) userCloseLayer('panel-group');
+                    openContactSheet(data.username);
                     return;
                 }
                 if (data.type === 'zlapy:open-chat' && typeof data.username === 'string' && data.username) {
@@ -15401,7 +15426,7 @@
                        (negrita, cursiva, tachado y `código`), nunca bloques.
                        Con borrador pendiente gana: «Borrador:» + el texto. */
                     const draftDm = draftOf(c.username);
-                    const sub = draftDm ? draftPreviewHTML(draftDm) : last ? decorateMarkdownInline(last) : escapeHtml(p && p.note ? '"' + p.note + '"' : presenceText(c));
+                    const sub = draftDm ? draftPreviewHTML(draftDm) : last ? decorateMarkdownInline(last) : p && p.note ? decorateMarkdownInline('"' + p.note + '"') : escapeHtml(presenceText(c));
                     const act = activeKind === 'dm' && active === c.username;
                     const key = dmPrefKey(c.username);
                     const pref = chatPref(key);
@@ -16404,10 +16429,12 @@
             function showNoteCard(p) {
                 const nf = document.getElementById('noteFloat');
                 if (!nf) return;
-                if (!p || !p.note) { nf.style.display = 'none'; nf.textContent = ''; nf.title = ''; return; }
+                if (!p || !p.note) { nf.style.display = 'none'; nf.innerHTML = ''; nf.title = ''; return; }
                 if (p.noteTs && Date.now() - p.noteTs >= NOTE_TTL_MS) { nf.style.display = 'none'; return; }
+                /* La nota lleva el mismo markdown de las burbujas (se inserta
+                   como HTML ya escapado por el formateador). */
+                nf.innerHTML = decorateMarkdownInline(String(p.note).slice(0, 80));
                 const esc = s => String(s).replace(/</g, '&lt;');
-                nf.textContent = String(p.note).slice(0, 80);
                 nf.title = String(p.note);
                 nf.style.display = 'block';
             }
@@ -16744,9 +16771,14 @@
                 const btn = isMember ? 'Abrir grupo'
                     : inv.joinPolicy === 'open' ? 'Unirse'
                         : inv.joinPolicy === 'closed' ? 'Ver grupo' : 'Solicitar unirse';
+                /* La descripción del grupo (500 en el servidor) se muestra
+                   recortada y con su markdown, como el resto de la app. */
+                const invDesc = String(inv.description || '').trim();
+                const invChars = Array.from(invDesc);
+                const invCorta = invChars.slice(0, 180).join('') + (invChars.length > 180 ? '…' : '');
                 return `<div class="groupInvite"><div class="avatar groupGrid" style="width:64px;height:64px;border-radius:14px">${groupAvHTML({ avatar: inv.avatar || '', members: inv.members || [] })}</div>
     <div class="giMeta"><b>${escapeHtml(inv.name || 'Grupo')}</b>
-    <span class="sub">${escapeHtml(inv.description || 'Sin descripción')}</span>
+    <span class="sub">${invCorta ? decorateMarkdownInline(invCorta) : escapeHtml('Sin descripción')}</span>
     <span class="sub">${Number(inv.memberCount) || (inv.members || []).length} miembros · ${inv.visibility === 'public' ? 'Público' : 'Privado'}</span></div>
     <button class="mBtn ok" onclick="event.stopPropagation();openGroupInvite('${jsArg(inv.groupId || '')}','${jsArg(inv.code || '')}')">${btn}</button></div>`;
             }
@@ -20299,7 +20331,7 @@
                     const bg = s.bg || '#f07a6b';
                     // defensa en profundidad: solo colores #rrggbb.
                     c.style.background = /^#[0-9a-f]{6}$/i.test(bg) ? bg : '#f07a6b';
-                    c.innerHTML = `<div class="stxtFull">${escapeHtml(s.text || '')}</div>`;
+                    c.innerHTML = `<div class="stxtFull">${decorateMarkdownInline(s.text || '')}</div>`;
                     dur = 6;
                 }
                 else if (s.kind === 'video') {
@@ -21262,7 +21294,9 @@
                     if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); viewAvatar(); }
                 };
                 const nb = document.getElementById('csNoteFloat');
-                if (p.note) { nb.textContent = String(p.note).slice(0, 60); nb.style.display = 'block'; }
+                /* La nota lleva el markdown de las burbujas (se inserta como HTML ya
+                   escapado por el formateador). */
+                if (p.note) { nb.innerHTML = decorateMarkdownInline(String(p.note).slice(0, 60)); nb.style.display = 'block'; }
                 else nb.style.display = 'none';
                 /* La descripción admite el mismo markdown que las burbujas (se
                    inserta como HTML ya escapado por el formateador). */
@@ -21334,7 +21368,9 @@
                     if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); viewAvatar(); }
                 };
                 const nb = document.getElementById('cpNoteFloat');
-                if (p.note) { nb.textContent = String(p.note).slice(0, 60); nb.style.display = 'block'; }
+                /* La nota lleva el markdown de las burbujas (se inserta como HTML ya
+                   escapado por el formateador). */
+                if (p.note) { nb.innerHTML = decorateMarkdownInline(String(p.note).slice(0, 60)); nb.style.display = 'block'; }
                 else nb.style.display = 'none';
                 /* La descripción admite el mismo markdown que las burbujas (se
                    inserta como HTML ya escapado por el formateador). */
@@ -22126,7 +22162,7 @@
                 ];
                 el.innerHTML =
                     `<div class="setHead" onclick="openSettingsSection('perfil')">
-        <div class="avWrap"><div class="bigAv" id="setAvatar"></div>${p.note ? `<div class="noteFloat">${escapeHtml(String(p.note).slice(0, 40))}</div>` : ''}</div>
+        <div class="avWrap"><div class="bigAv" id="setAvatar"></div>${p.note ? `<div class="noteFloat">${decorateMarkdownInline(String(p.note).slice(0, 40))}</div>` : ''}</div>
         <b>${escapeHtml(p.name || me.username)}</b><span>@${me.username}</span>
       </div>` +
                     rows.map(r => `<div class="setRow" data-s="${r[0]}"><div class="pic">${SET_ICON[r[0]] || SET_ICON.general}</div><div class="meta"><b>${r[1]}</b><span>${r[0] === 'version' ? `zlapy v${APP_BUILD_VERSION} · ${APP_BUILD_DATE}` : r[2]}</span></div><span class="sub">›</span></div>`).join('');

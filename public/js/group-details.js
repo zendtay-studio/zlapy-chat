@@ -451,6 +451,16 @@
         refs.deleteBtn.hidden = !isAdmin();
     }
 
+    /* Markdown compartido por la página (grupo e integrantes); si el
+       formateador no cargó, cae a texto escapado. */
+    function decorateSafe(texto) {
+        return typeof window.decorateMarkdownInline === 'function' ? window.decorateMarkdownInline(texto) : escapeHtml(texto);
+    }
+
+    function decorateBlockSafe(texto) {
+        return typeof window.decorateMarkdownText === 'function' ? window.decorateMarkdownText(texto) : escapeHtml(texto);
+    }
+
     function renderAbout() {
         const group = state.group;
         const description = typeof group.description === 'string' ? group.description.trim() : '';
@@ -460,8 +470,7 @@
         if (!description) return;
         /* La descripción admite el mismo markdown que las burbujas (se
            inserta como HTML ya escapado por el formateador). */
-        if (typeof window.decorateMarkdownText === 'function') refs.aboutText.innerHTML = window.decorateMarkdownText(description);
-        else refs.aboutText.textContent = description;
+        refs.aboutText.innerHTML = decorateBlockSafe(description);
         refs.aboutText.classList.add('clamped');
         refs.aboutText.classList.remove('is-empty');
         const long = refs.aboutText.scrollHeight > refs.aboutText.clientHeight + 2;
@@ -708,6 +717,12 @@
         const contact = contactByUsername(username);
         const admin = (state.group.admins || []).includes(username);
         const presence = contact ? presenceText(contact) : '';
+        const profile = profileFor(username);
+        /* Descripción del integrante (la privacidad la deja fuera si toca):
+           markdown de línea y una sola línea, como en el resto de la app. */
+        const profileDesc = String((profile && profile.desc) || '').trim();
+        const descChars = Array.from(profileDesc);
+        const descCorta = descChars.slice(0, 120).join('') + (descChars.length > 120 ? '…' : '');
         const actions = [];
 
         if (contact && !isSelf(username)) {
@@ -715,6 +730,11 @@
         }
         if (isAdmin() && !isSelf(username)) {
             actions.push(`<button class="mBtn" type="button" data-sheet-action="${admin ? 'remove-admin' : 'make-admin'}" data-user="${escapeHtml(username)}">${admin ? 'Quitar administrador' : 'Hacer administrador'}</button>`);
+        }
+        if (!isSelf(username)) {
+            /* «Agregar» solo cuando no es contacto: al añadirlo, el selector
+               de contactos y la ficha se refrescan con el nuevo. */
+            actions.push(`<button class="mBtn" type="button" data-sheet-action="${contact ? 'view-profile' : 'add-contact'}" data-user="${escapeHtml(username)}">${contact ? 'Ver perfil' : 'Agregar contacto'}</button>`);
         }
 
         const name = displayName(username);
@@ -725,6 +745,7 @@
             <div class="mText">@${escapeHtml(username)}${presence ? ' · ' + escapeHtml(presence) : ''}</div>
             ${admin ? '<span class="tag admin profile-role">Administrador</span>' : ''}
         </div>
+        ${descCorta ? `<div class="profile-desc sheetMarkdown">${decorateSafe(descCorta)}</div>` : ''}
         ${actions.length ? `<div class="mBtns">${actions.join('')}</div>` : ''}
         ${isAdmin() && !isSelf(username) ? `<div class="mBtns"><button class="mBtn peligro" type="button" data-sheet-action="remove-member" data-user="${escapeHtml(username)}">Quitar del grupo</button></div>` : ''}
         <div class="mBtns">
@@ -805,23 +826,12 @@
         /* El conjunto de integrantes sale de las páginas ya cargadas; en
            modo añadir se completa en segundo plano (sin perfilar) para
            filtrar bien a quien ya está dentro. */
-        const members = new Set(state.membersPages);
-        const available = state.contacts.filter(contact => !adding || !members.has(contact.username));
         if (adding) {
             void asegurarTodosMiembros().then(() => {
                 if (state.picker && state.picker.mode === 'add') renderPicker();
             });
         }
-        state.picker = {
-            mode,
-            selected: new Set(),
-            query: '',
-            emptyText: !state.contacts.length
-                ? 'Todavía no tienes contactos.'
-                : !available.length
-                    ? 'Tus contactos ya están en el grupo.'
-                    : 'No hay contactos que coincidan.'
-        };
+        state.picker = { mode, selected: new Set(), query: '' };
         refs.peopleTitle.textContent = adding ? 'Añadir participantes' : 'Compartir grupo';
         refs.peopleOk.textContent = adding ? 'Añadir' : 'Compartir';
         window.clearTimeout(state.copyTimer);
@@ -831,7 +841,23 @@
         refs.peopleSearch.value = '';
         refs.pickerOverlay.hidden = false;
         renderPicker();
+        /* El selector se abre SIEMPRE con los contactos cargados: antes los
+           pedía solo el modo «añadir» y en «Compartir grupo» (desde los
+           detalles) salía «Todavía no tienes contactos.» teniéndolos. */
+        if (!state.contacts.length && !state.contactsCargando) void loadContacts(true);
         refs.peopleSearch.focus({ preventScroll: true });
+    }
+
+    /* Texto del selector vacío: se calcula AL PINTAR (no al abrir), porque
+       la primera página de contactos puede llegar después. */
+    function pickerEmptyText(picker) {
+        if (state.contactsCargando && !state.contacts.length) return 'Cargando contactos…';
+        if (!state.contacts.length) return 'Todavía no tienes contactos.';
+        const members = new Set(state.membersPages);
+        const adding = picker.mode === 'add';
+        if (!state.contacts.some(contact => !adding || !members.has(contact.username)))
+            return adding ? 'Tus contactos ya están en el grupo.' : 'No hay contactos que coincidan.';
+        return 'No hay contactos que coincidan.';
     }
 
     function closePeoplePicker() {
@@ -863,7 +889,7 @@
                     <span class="meta"><b>${escapeHtml(displayName(username))}</b><span class="sub">@${escapeHtml(username)}</span></span>
                 </label>`;
             }).join('')
-            : `<div class="help">${escapeHtml(picker.emptyText)}</div>`;
+            : `<div class="help">${escapeHtml(pickerEmptyText(picker))}</div>`;
         refs.peopleOk.disabled = !picker.selected.size || state.busy;
         updatePickerHint(picker);
     }
@@ -1049,6 +1075,17 @@
             else showToast('Abre el chat desde la app para enviar un mensaje.', 'alert');
             return;
         }
+        if (action === 'view-profile' || action === 'add-contact') {
+            const target = username;
+            if (action === 'view-profile') {
+                closeSheet();
+                if (embedded) postToParent('zlapy:open-contact', { username: target });
+                else showToast('Abre su perfil desde la app.', 'alert');
+                return;
+            }
+            addContactFromSheet(target);
+            return;
+        }
         if (action === 'make-admin') {
             makeAdmin(username);
             return;
@@ -1060,6 +1097,22 @@
         if (action === 'remove-member') {
             closeSheet();
             removeMember(username);
+            return;
+        }
+    }
+
+    /* Añadir a un integrante como contacto desde su ficha: tras el POST,
+       entra en la lista local (selector de compartir y fichas siguientes). */
+    async function addContactFromSheet(username) {
+        if (!username || isSelf(username)) return;
+        try {
+            await post('/contacts', { username });
+            if (!state.contacts.some(contact => contact.username === username)) state.contacts.push({ username });
+            await ensureProfiles([username]);
+            closeSheet();
+            showToast('Contacto añadido.', 'check');
+        } catch (error) {
+            showToast(error.message || 'No se pudo añadir el contacto.', 'alert');
         }
     }
 
@@ -1114,7 +1167,7 @@
                 const r = el.getBoundingClientRect();
                 return r.height > 0 && r.bottom < window.innerHeight + 300;
             };
-            if (pickerAbierto()) {
+            if (pickerAbierto) {
                 if (state.contactsMore && !state.contactsCargando && cerca(refs.peopleList)) void loadContacts();
             } else if (state.membersMore && !state.membersCargando && cerca(refs.memberList)) {
                 void cargarMiembrosPagina(true);
@@ -1207,7 +1260,10 @@
             const [me, group] = await Promise.all([fetchMe(), fetchGroup()]);
             if (me) state.me = me;
             state.group = group;
-            await Promise.all([loadContacts(), loadPreferences(), cargarMiembrosPagina(false)]);
+            /* loadContacts(true): reset explícito — sin él la primera
+               llamada salía temprano (contactsMore arranca en false) y la
+               página de detalles se quedaba sin contactos. */
+            await Promise.all([loadContacts(true), loadPreferences(), cargarMiembrosPagina(false)]);
             await ensureProfiles([...groupProfileNames(group), ...state.contacts.map(contact => contact.username)]);
             revealGroup();
         } catch (error) {
