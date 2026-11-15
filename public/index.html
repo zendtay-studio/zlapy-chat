@@ -10097,14 +10097,22 @@
             box-shadow: none
         }
 
-        #settingsMain .testCard .mBtn {
-            border-color: var(--line);
-            background: var(--surface-hover);
-            color: var(--text)
+        /* Perfil bajo y altura CONSISTENTE en todos los botones de
+           prueba de «Vídeo y voz» (los sólidos grises los hacían
+           distintos entre sí y con alturas dispares). */
+        #settingsMain .testCard .mBtn,
+        #settingsMain .mBtn {
+            min-height: 46px;
+            background: transparent;
+            border: 1px solid var(--line);
+            color: var(--text);
+            border-radius: 15px
         }
 
-        #settingsMain .testCard .mBtn:hover {
-            background: var(--surface-active)
+        #settingsMain .testCard .mBtn:hover,
+        #settingsMain .mBtn:hover {
+            background: color-mix(in srgb, var(--text) 8%, transparent);
+            border-color: var(--accent)
         }
 
         .settingsSheet main {
@@ -14082,8 +14090,18 @@
                             if (activeKind === 'group' && activeGroup && activeGroup.id === groupId) openGroupPanel(groupId);
                         };
                     } else {
-                        groupDetailsAfterClose = () => openGroupCreateEditPage(groupId);
-                        closeGroupDetailsPage();
+                        /* Se abre YA: si se espera al cierre animado, el
+                           primer toque no muestra nada y el usuario toca
+                           dos veces. Se sustituye la entrada de detalles
+                           por la del editor (sin history.back pendiente). */
+                        groupDetailsAfterClose = null;
+                        if (groupDetailsRouteFrame) {
+                            try { history.replaceState({ ...(history.state && typeof history.state === 'object' ? history.state : {}), appRoute: 'group-create', groupId }, '', location.href); } catch { }
+                            groupDetailsRouteFrame.remove();
+                            groupDetailsRouteFrame = null;
+                        }
+                        groupDetailsClosing = false;
+                        openGroupCreateEditPage(groupId);
                     }
                     return;
                 }
@@ -15163,7 +15181,10 @@
                 const gid = activeGroup.id;
                 if (activeGroup.addPolicy !== 'all' && !activeGroup.admins.includes(me.username)) { debugToast('Solo los administradores del grupo pueden añadir participantes.'); return; }
                 const sel = await groupPickerModal('Añadir participantes', 'Añadir');
-                if (!Array.isArray(sel) || !sel.length) { openGroupDetailsPage(gid); return; }
+                /* Cancelar (o nadie seleccionado): se queda EN EL CHAT. Antes
+                   navegaba a los detalles del grupo, que no es adonde el
+                   usuario quería ir. */
+                if (!Array.isArray(sel) || !sel.length) return;
                 for (const u of sel) {
                     const response = await fetch('/groups/' + encodeURIComponent(gid), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ addMember: u }) });
                     const r = await response.json();
