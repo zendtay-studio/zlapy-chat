@@ -36,7 +36,7 @@ const { isEncrypted, openRequest, sealResponse } = require('./transport.js');
 const { getConfig, getHealthz } = require('../meta/routes.js');
 const { getAccountChatSettings, getNotes, getProfile, postAccountChatSettings, postAccountDelete, postAccountProfile, postAccountRegenerateKey, postNotes, postProfile, postPushAvatar } = require('../profile/routes.js');
 const { postPushSubscribe, postPushTest, postPushUnsubscribe } = require('../push/routes.js');
-const { VAPID, notifyUser, avatarPushUrl, pushBody, pushNameOf } = require('../push/vapid.js');
+const { VAPID, notifyUser, avatarPushGroupUrl, avatarPushUrl, pushBody, pushNameOf } = require('../push/vapid.js');
 const { push, pushName, pushRawName, userList, userListPage, USER_LIST_PAGE, USER_LIST_PAGE_MAX } = require('../realtime/notify.js');
 const { createDefaultAvatarSvg, createDefaultGroupAvatarSvg } = require('../shared/avatar.js');
 const { storeGallery, validateGallery } = require('../shared/gallery.js');
@@ -94,14 +94,18 @@ const handleRequest = (req, res) => {
     if (avatarPushMatch) {
         const pushUser = safeDecodeSegment(avatarPushMatch[1]);
         const cuenta = pushUser ? byName(pushUser.toLowerCase()) : null;
-        if (!cuenta) return json(res, 404, { error: 'avatar not found' });
+        /* Grupo (id g_…): MISMA ruta pública con su identicon geométrico.
+           La foto de grupo viaja cifrada igual que la de persona, así que
+           aquí también va el identicon. */
+        const grupo = !cuenta && pushUser && pushUser.startsWith('g_') ? readGroup(pushUser) : null;
+        if (!cuenta && !grupo) return json(res, 404, { error: 'avatar not found' });
         res.writeHead(200, {
             'Content-Type': 'image/svg+xml; charset=utf-8',
             'Cache-Control': 'public, max-age=300',
             'X-Content-Type-Options': 'nosniff',
             ...securityHeaders
         });
-        return res.end(createDefaultAvatarSvg(cuenta.id));
+        return res.end(grupo ? createDefaultGroupAvatarSvg(grupo.id) : createDefaultAvatarSvg(cuenta.id));
     }
     /* Miniatura PÚBLICA de la foto de perfil (icono de las push): la URL
        lleva un token de 24 bytes no adivinable — sin él no se puede
@@ -466,7 +470,7 @@ const handleRequest = (req, res) => {
                         }
                         for (const admin of g.admins) {
                             pushName(admin, { type: 'group-request', groupId: id });
-                            void notifyUser(admin, { title: 'Solicitud para unirse a ' + g.name, body: 'Alguien quiere unirse', tag: 'greq-' + id, renotify: true, icon: '/avatar/' + encodeURIComponent(g.id) + '.svg', url: '/?open=' + encodeURIComponent('group:' + g.id) });
+                            void notifyUser(admin, { title: 'Solicitud para unirse a ' + g.name, body: 'Alguien quiere unirse', tag: 'greq-' + id, renotify: true, icon: avatarPushGroupUrl(g.id), url: '/?open=' + encodeURIComponent('group:' + g.id) });
                         }
                         return json(res, 200, { ok: true, requested: true });
                     }
@@ -614,7 +618,7 @@ const handleRequest = (req, res) => {
                                     title: g.name,
                                     body: `${pushNameOf(actor)}: ${pushBody(kind, msg.data, msg.caption)}`,
                                     tag: 'grp-' + id,
-                                    icon: '/avatar/' + encodeURIComponent(g.id) + '.svg',
+                                    icon: avatarPushGroupUrl(g.id),
                                     url: '/?open=' + encodeURIComponent('group:' + g.id)
                                 });
                         }

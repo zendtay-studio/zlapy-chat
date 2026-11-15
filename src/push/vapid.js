@@ -171,6 +171,13 @@ const avatarPushUrl = username => {
         : '/avatar/push/' + encodeURIComponent(username) + '.svg';
 };
 
+/* Icono de GRUPO para las notificaciones: misma ruta pública que el
+   identicon de personas, pero con el id del grupo (la foto de grupo viaja
+   cifrada igual; aquí va su identicon geométrico). Antes se usaba la ruta
+   CON sesión y el servicio de push recibía un 401: el aviso de grupo se
+   quedaba sin icono. */
+const avatarPushGroupUrl = gid => '/avatar/push/' + encodeURIComponent(gid) + '.svg';
+
 /* Cuerpo de la notificación: el TEXTO del mensaje (o el tipo de adjunto si
    no hay texto). Antes los avisos decían «Tienes un mensaje» y había que
    abrir la app para saber de qué hablaban. */
@@ -206,6 +213,7 @@ module.exports = {
     recentPushLog,
     findPushSubRow,
     avatarPushUrl,
+    avatarPushGroupUrl,
     pushBody,
     pushNameOf,
 };
