@@ -2697,8 +2697,11 @@
             font-weight: 600
         }
 
+        /* «grabando audio» ya no va en rojo: usa el mismo color que
+           «escribiendo…», así los estados activos del chat se leen
+           iguales. */
         #chatSub.rec {
-            color: #ef5350
+            color: var(--accent-readable)
         }
 
         #chatSub.typing {
@@ -3255,8 +3258,10 @@
             display: flex;
             align-items: center;
             gap: 11px;
-            width: min(280px, 62vw);
-            min-width: min(220px, 58vw);
+            /* Llena la burbuja (que ya fija el ancho): sin mínimo fijo, no
+               puede desbordarla en pantallas estrechas. */
+            width: 100%;
+            min-width: 0;
             padding: 2px 0
         }
 
@@ -3343,7 +3348,12 @@
 
         .bubble.audioBubble {
             display: flow-root;
-            margin-bottom: 32px
+            margin-bottom: 32px;
+            /* El tamaño lo manda el REPRODUCTOR (como en las fotos): si el
+               mensaje es respuesta de un texto largo, la vista previa se
+               envuelve a este ancho en vez de estirar la burbuja, y la
+               barra nunca desborda la caja. */
+            width: min(280px, 62vw)
         }
 
         /* Sin hora que mostrar (mensajes seguidos a la misma hora) el audio
@@ -17001,6 +17011,9 @@
                 return a;
             }
             function toggleAudio(btn, id) {
+                /* En modo selección el reproductor no responde: el toque
+                   selecciona (dar play/avance ahí era un dolor). */
+                if (selModo) return;
                 const a = loadVoice(id);
                 if (!a) return;
                 if (a.paused) {
@@ -17086,6 +17099,7 @@
             /* El posicionamiento se calcula con la duración real si ya se midió:
                la que el navegador estima del blob puede ser muy otra. */
             function seekAudio(bar, id, e) {
+                if (selModo) return;
                 const a = loadVoice(id);
                 if (!a) return;
                 const total = audioMeta.get(voice.msgId) || (a.duration && isFinite(a.duration) ? a.duration : 0);
@@ -17093,6 +17107,7 @@
                 dragBar(bar, e, f => { a.currentTime = total * f; paintVoice(); });
             }
             function seekAudioKey(bar, id, e) {
+                if (selModo) return;
                 if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
                 const a = loadVoice(id);
                 if (!a) return;
