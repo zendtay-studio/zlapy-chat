@@ -520,14 +520,17 @@ function postReceipt(req, res, url, data, actor) {
             m.status = data.status;
             if (data.status === 'read') m.readAt = receiptAt;
             updateStoredMessage(m, row);
-            if (data.status === 'read') {
-                for (const [ownerId, peerId] of [[m.fromId, m.toId], [m.toId, m.fromId]]) {
-                    const summary = readSummaryEntry(ownerId, peerId);
-                    if (summary && summary.last && summary.last.id === m.id) {
-                        summary.last.status = 'read';
-                        summary.last.readAt = m.readAt;
-                        writeSummaryEntry(ownerId, peerId, summary);
-                    }
+            /* El resumen del último mensaje lleva el estado (la lista usa
+               last.status para las rayitas): con delivered TAMBIÉN se
+               actualiza — antes sólo read — para que las dos rayitas grises
+               sobrevivan a un refresco de página. */
+            for (const [ownerId, peerId] of [[m.fromId, m.toId], [m.toId, m.fromId]]) {
+                const summary = readSummaryEntry(ownerId, peerId);
+                if (summary && summary.last && summary.last.id === m.id &&
+                    (RANK[data.status] || 0) > (RANK[summary.last.status] || 0)) {
+                    summary.last.status = data.status;
+                    if (data.status === 'read') summary.last.readAt = m.readAt;
+                    writeSummaryEntry(ownerId, peerId, summary);
                 }
             }
             pkTouched.add(pairKeyFromIds(m.fromId, m.toId));
@@ -540,6 +543,61 @@ function postReceipt(req, res, url, data, actor) {
         if (u) push(u, { type: 'receipt', ids: processedIds, status: data.status, readAt: receiptAt });
     }
     return json(res, 200, { ok: true });
+}
+
+/* Puesta al día de acuses al (re)conectar una cuenta. El `status` vive
+   DENTRO del blob cifrado (no se puede filtrar por SQL), así que se toma
+   una ventana temporal acotada y el filtro real se hace al descifrar:
+   1) Lo RECIBIDO mientras la cuenta estuvo fuera pasa a "delivered" — el
+      remitente ve las dos rayitas grises apenas el destinatario está en
+      línea, sin esperar a que lo lea.
+   2) El estado PROPIO (entregado/leído por el otro) que cambió mientras
+      esta cuenta estaba fuera se re-empuja: el cliente lo aplica y las
+      rayitas no se quedan grises para siempre. Es idempotente: el cliente
+      sobrescribe con el mismo valor si ya lo sabía. */
+const CATCHUP_VENTANA_MS = 7 * 24 * 60 * 60 * 1000;
+const DELIVER_CATCHUP_LIMIT = 300;
+const STATUS_CATCHUP_LIMIT = 400;
+
+function catchUpReceipts(user, sinceTs) {
+    if (!user || !user.id) return;
+    const desde = Number.isFinite(sinceTs) && sinceTs > 0 ? sinceTs : Date.now() - CATCHUP_VENTANA_MS;
+    /* 1) Entregar lo recibido fuera de línea. */
+    const entregados = new Map(); // fromId -> ids
+    for (const row of Stmt.listRecentDmToUser.all(user.id, desde, DELIVER_CATCHUP_LIMIT)) {
+        const fresh = Stmt.getMessage.get(row.id);
+        const m = rowToMessage(fresh);
+        if (!m || m.status !== 'sent') continue;
+        m.status = 'delivered';
+        m.readAt = 0;
+        updateStoredMessage(m, fresh);
+        if (!entregados.has(m.fromId)) entregados.set(m.fromId, []);
+        entregados.get(m.fromId).push(m.id);
+    }
+    for (const [fromId, ids] of entregados) {
+        /* El resumen del remitente manda las rayitas de la lista: si el
+           último mensaje del chat es uno de los entregados, sube de estado. */
+        const summary = readSummaryEntry(fromId, user.id);
+        if (summary && summary.last && ids.includes(summary.last.id) &&
+            (RANK.delivered || 0) > (RANK[summary.last.status] || 0)) {
+            summary.last.status = 'delivered';
+            writeSummaryEntry(fromId, user.id, summary);
+        }
+        invalidateChatPage(pairKeyFromIds(fromId, user.id));
+        const sender = users.get(fromId);
+        if (sender) push(sender, { type: 'receipt', ids, status: 'delivered', readAt: 0 });
+    }
+    /* 2) Estados propios que cambiaron fuera de línea. */
+    const porEstado = { delivered: [], read: [] };
+    let maxReadAt = 0;
+    for (const row of Stmt.listRecentDmFromUser.all(user.id, desde, STATUS_CATCHUP_LIMIT)) {
+        const m = rowToMessage(Stmt.getMessage.get(row.id));
+        if (!m) continue;
+        if (m.status === 'read') { porEstado.read.push(m.id); if (m.readAt > maxReadAt) maxReadAt = m.readAt; }
+        else if (m.status === 'delivered') porEstado.delivered.push(m.id);
+    }
+    if (porEstado.delivered.length) push(user, { type: 'receipt', ids: porEstado.delivered, status: 'delivered', readAt: 0 });
+    if (porEstado.read.length) push(user, { type: 'receipt', ids: porEstado.read, status: 'read', readAt: maxReadAt });
 }
 
 function postMsgDelete(req, res, url, data, actor) {
@@ -782,6 +840,7 @@ module.exports = {
     postSend,
     postSeen,
     postReceipt,
+    catchUpReceipts,
     postMsgDelete,
     postMsgEdit,
     postMessageReaction,

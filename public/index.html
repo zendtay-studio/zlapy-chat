@@ -3278,6 +3278,12 @@
             transition: transform .16s ease, background .16s ease
         }
 
+        /* Nota de voz aún no escuchada (sólo las recibidas): el circulito se
+           ve atenuado; al reproducirla recupera su color normal. */
+        .audioMsg .voicePlay.unheard {
+            opacity: .5
+        }
+
         .audioMsg .voicePlay:hover {
             transform: scale(1.06)
         }
@@ -4276,6 +4282,14 @@
 
         .typingMessage .dots i:nth-child(3) {
             animation-delay: .4s
+        }
+
+        /* "enviando foto/audio/archivo…" dentro de la burbuja de actividad:
+           texto corto en el tono de los puntos de tipado. */
+        .typingMessage .enviandoTxt {
+            font-size: 13px;
+            opacity: .85;
+            white-space: nowrap
         }
 
         .typingMessage .recBars {
@@ -13027,7 +13041,7 @@
                     return;
                 }
                 if (msg.type === 'seen') { const entry = conversationMessageById.get(msg.id); if (entry) { entry.message.kind = 'seen'; entry.message.status = 'read'; entry.message.readAt = msg.readAt || entry.message.readAt || 0; entry.message.plain = null; entry.message.gallery = null; entry.message.signature = msg.signature || entry.message.signature; entry.message.signingPublicKey = msg.signingPublicKey || entry.message.signingPublicKey; entry.message.signatureValid = msg.signatureValid === true; } renderAll(); return; }
-                if (msg.type === 'msgEdit') { const entry = conversationMessageById.get(msg.id); if (entry && entry.message.kind === 'text') { entry.message.plain = msg.data; entry.message.edited = true; entry.message.signature = msg.signature || entry.message.signature; entry.message.signingPublicKey = msg.signingPublicKey || entry.message.signingPublicKey; entry.message.signatureValid = msg.signatureValid === true; } renderAll(); return; }
+                if (msg.type === 'msgEdit') { const entry = conversationMessageById.get(msg.id); if (entry && entry.message.kind === 'text') { /* Guarda el texto ANTERIOR para el resalte de la edición (viñetas): se calcula en el front, sin tocar el servidor. */ const previo = entry.message.plain; entry.message.plain = msg.data; entry.message.edited = true; entry.message.editPrevio = previo !== msg.data ? previo : (entry.message.editPrevio || ''); entry.message.signature = msg.signature || entry.message.signature; entry.message.signingPublicKey = msg.signingPublicKey || entry.message.signingPublicKey; entry.message.signatureValid = msg.signatureValid === true; } renderAll(); return; }
                 if (msg.type === 'msgDelete') {
                     const entry = conversationMessageById.get(msg.id);
                     if (entry) {
@@ -13099,6 +13113,7 @@
                 if (msg.type === 'call-missed') { loadCallLog(); return; }
                 if (msg.type === 'typing') { setTyping(msg.from, msg.on, msg.groupId); return; }
                 if (msg.type === 'recording') { setRecording(msg.from, msg.on, msg.groupId); return; }
+                if (msg.type === 'sending') { setSending(msg.from, msg.on, msg.groupId, msg.sendKind); return; }
                 if (msg.type === 'call-sdp') return onCallSdp(msg);
                 if (msg.type === 'call-ice') return onCallIce(msg);
                 if (msg.type === 'call-mute') return onCallMute(msg);
@@ -13395,7 +13410,13 @@
                 /* Las solicitudes de grupo ya viven dentro de la hoja común. */
                 return openContactRequests();
             }
-            function sendRead(peer, ids) { fetch('/receipt', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: me.username, to: peer, ids, status: 'read' }) }).catch(() => { }); }
+            function sendRead(peer, ids) {
+                /* postReceipt admite hasta 500 ids por acuse: se van en lotes
+                   para que una conversación con muchos pendientes no supere
+                   el tope y se pierdan TODOS los acuses por un 400. */
+                for (let i = 0; i < ids.length; i += 400)
+                    fetch('/receipt', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: me.username, to: peer, ids: ids.slice(i, i + 400), status: 'read' }) }).catch(() => { });
+            }
             function markReadOnOpen() {
                 if (!active) return;
                 const ids = (conv[active] || []).filter(m => m.from === active && m.status !== 'read').map(m => m.id);
@@ -13462,14 +13483,22 @@
             }
             async function addIncoming(m) {
                 const peer = peerOf(m);
+                /* Llegó el mensaje: su "enviando foto/audio/archivo…" ya no
+                   tiene sentido (también apaga por `on:false` del emisor y
+                   por una red de seguridad de tiempo en el receptor). */
+                if (m.from && m.from !== me.username) setSending(m.from, false, m.groupId);
                 if (conversationFor(peer).ids.has(m.id)) return;
                 const hydrated = await hydrateIncoming(m);
-                /* Eco de un envío optimista (el reloj sigue puesto): se
-                   SUSTITUYE la burbuja en su mismo sitio —igual que al editar
-                   un mensaje— en vez de borrarla y crear otra, que hacía un
-                   salto visible en la lista. */
-                const pendiente = (conv[peer] || []).find(t => t.pending && !t.sustituido && t.kind === 'text'
-                    && t.data === (hydrated.plain != null ? hydrated.plain : hydrated.data));
+                /* El eco SUSTITUYE la burbuja pendiente EN SU SITIO —igual que
+                   al editar un mensaje— en vez de insertar el mensaje nuevo y
+                   borrar el temporal después: eso se veía como dos burbujas
+                   (el reloj de envío + el mensaje final) y la lista daba un
+                   salto. Textos: el optimista (pending). Medios: la burbuja
+                   temporal de subida (temp) mientras no esté en error. */
+                const pendiente = (conv[peer] || []).find(t => !t.sustituido && t.mine && t.kind === hydrated.kind
+                    && (t.kind === 'text'
+                        ? t.pending && t.data === (hydrated.plain != null ? hydrated.plain : hydrated.data)
+                        : !!t.temp && t.uploadState !== 'error'));
                 if (pendiente) {
                     pendiente.sustituido = true;
                     const mezclado = { ...hydrated, ts: pendiente.ts, pending: false };
@@ -14926,9 +14955,31 @@
                 return hydrated;
             }
             async function addGroupMessage(groupId, m) {
+                /* Llegó el mensaje al grupo: apaga su "enviando X…". */
+                if (m.from && m.from !== me.username) setSending(m.from, false, groupId);
                 rememberGroupMessage(groupId, m);
                 const hydrated = await hydrateGroupMessage(groupId, m);
                 if (!hydrated) return;
+                /* Eco de un envío propio: SUSTITUYE la burbuja temporal EN SU
+                   SITIO (igual que los textos). `hydrate` ya insertó el eco
+                   nuevo, así que aquí se retira ese insert y el mezclado pasa
+                   a ocupar el lugar del temporal — sin "dos audios" un
+                   instante ni el salto de lista del quitar/poner. */
+                if (hydrated.mine) {
+                    const lista = conv[groupId] || [];
+                    const pendiente = lista.find(t => t !== hydrated && t.temp && t.mine && !t.sustituido
+                        && t.uploadState !== 'error' && t.kind === hydrated.kind);
+                    if (pendiente) {
+                        pendiente.sustituido = true;
+                        const mezclado = { ...hydrated, ts: pendiente.ts, pending: false };
+                        const conEco = lista.includes(hydrated);
+                        replaceConversation(groupId, lista
+                            .filter(message => conEco ? message !== hydrated : true)
+                            .map(message => message === pendiente ? mezclado : message));
+                        if (groupId === activeGroup?.id) renderAll(true);
+                        return;
+                    }
+                }
                 if (groupId === activeGroup?.id) {
                     renderAll(hydrated.mine);
                 } else if (!hydrated.mine) {
@@ -15614,6 +15665,10 @@
                 if (!el || active !== u) return;
                 if (recState['dm:' + u]) { setChatSubText('grabando audio...', 'rec'); return; }
                 if (typingState['dm:' + u]) { setChatSubText('escribiendo...', 'typing'); return; }
+                /* "enviando foto/audio/archivo…" — mismo color que escribiendo
+                   (los estados activos del chat se leen igual); grabando y
+                   escribiendo tienen prioridad sobre él. */
+                if (sendingState['dm:' + u]) { setChatSubText('enviando ' + sendingState['dm:' + u] + '...', 'typing'); return; }
                 setChatSubText(presenceText(c));
             }
 
@@ -16522,8 +16577,73 @@
                 }
                 return display;
             }
+            /* Resalte de la edición (viñetas): compara el texto anterior con el
+               nuevo PALABRA A PALABRA y marca con una viñeta (•) las
+               palabras AÑADIDAS. Lo que se quitó simplemente desaparece
+               (no se tacha ni se lista: el mensaje muestra el texto
+               final). Todo en el front: el servidor nunca ve esta
+               presentación. Devuelve null si no hay diferencia real o el
+               cambio es demasiado grande (mensajes larguísimos: se
+               renderiza normal). */
+            const EDIT_DIFF_TOPE = 2000;
+            function editDiffTokens(previo, nuevo) {
+                const tokenizar = t => String(t == null ? '' : t).match(/\s+|[^\s]+/g) || [];
+                const a = tokenizar(previo), b = tokenizar(nuevo);
+                if (a.length > EDIT_DIFF_TOPE || b.length > EDIT_DIFF_TOPE) return null;
+                // Igualdad exacta: no hay nada que resaltar.
+                if (a.join('') === b.join('')) return null;
+                // Recorta prefijo y sufijo comunes: sólo el núcleo cambiado
+                // pasa por el LCS (si no, un mensaje largo lo haría enorme).
+                let p = 0;
+                while (p < a.length && p < b.length && a[p] === b[p]) p++;
+                let s = 0;
+                while (s < a.length - p && s < b.length - p && a[a.length - 1 - s] === b[b.length - 1 - s]) s++;
+                const nucleoA = a.slice(p, a.length - s), nucleoB = b.slice(p, b.length - s);
+                if (nucleoA.length * nucleoB.length > EDIT_DIFF_TOPE * 20) return null;
+                // LCS clásico sobre el núcleo.
+                const n = nucleoA.length, m = nucleoB.length;
+                const dp = new Array((n + 1) * (m + 1)).fill(0);
+                for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) {
+                    dp[i * (m + 1) + j] = nucleoA[i] === nucleoB[j]
+                        ? dp[(i + 1) * (m + 1) + (j + 1)] + 1
+                        : Math.max(dp[(i + 1) * (m + 1) + j], dp[i * (m + 1) + (j + 1)]);
+                }
+                const tramos = [];
+                const empujar = (tipo, texto) => { if (!texto) return; const ultimo = tramos[tramos.length - 1]; if (ultimo && ultimo.tipo === tipo) ultimo.texto += texto; else tramos.push({ tipo, texto }); };
+                let i = 0, j = 0;
+                while (i < n && j < m) {
+                    if (nucleoA[i] === nucleoB[j]) { empujar('igual', nucleoB[j]); i++; j++; }
+                    else if (dp[(i + 1) * (m + 1) + j] >= dp[i * (m + 1) + (j + 1)]) { empujar('quitado', nucleoA[i]); i++; }
+                    else { empujar('anadido', nucleoB[j]); j++; }
+                }
+                while (i < n) empujar('quitado', nucleoA[i++]);
+                while (j < m) empujar('anadido', nucleoB[j++]);
+                const comun = lista => lista.join('');
+                return [
+                    { tipo: 'igual', texto: comun(a.slice(0, p)) },
+                    ...tramos,
+                    { tipo: 'igual', texto: comun(a.slice(a.length - s)) }
+                ].filter(tramo => tramo.texto !== '');
+            }
+            function editDiffHTML(previo, nuevo) {
+                const tramos = editDiffTokens(previo, nuevo);
+                if (!tramos || !tramos.some(tramo => tramo.tipo !== 'igual')) return null;
+                return tramos.map(tramo => {
+                    // Lo añadido se envuelve (la viñeta la pone el CSS); lo
+                    // quitado no se muestra; lo igual va tal cual.
+                    if (tramo.tipo === 'anadido') return `<span class="mdEditAdd">${decorateMarkdownInline(tramo.texto)}</span>`;
+                    if (tramo.tipo === 'quitado') return '';
+                    return decorateMarkdownInline(tramo.texto);
+                }).join('');
+            }
             function messageTextHTML(value, message) {
                 const text = String(value);
+                /* Mensaje editado con texto anterior guardado: se pinta el
+                   resalte palabra por palabra (viñetas de cambio). */
+                if (message && message.editPrevio) {
+                    const diff = editDiffHTML(message.editPrevio, text);
+                    if (diff) return diff; // el «(editado)» lo añade quien llama
+                }
                 const characters = Array.from(text);
                 if (characters.length <= CHAT_TEXT_LIMITS.preview) return renderMessageText(text, message);
                 const prefix = characters.slice(0, CHAT_TEXT_LIMITS.preview).join('');
@@ -16916,6 +17036,36 @@
             const PLAY_SVG = '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>';
             const PAUSE_SVG = '<svg viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
             const voice = { el: null, id: null, msgId: null, url: '' };
+            /* Notas de voz escuchadas — SOLO local, por cuenta (como las
+               preferencias): el circulito de las notas recibidas se ve
+               atenuado hasta que se reproducen, y al oírlas vuelven a su
+               color normal. No hay ida y vuelta con el servidor. La carga
+               es perezosa: `me` todavía no existe cuando evalúa el script. */
+            const AUDIO_HEARD_TOPE = 600;
+            let audioHeard = null;
+            function audioHeardSet() {
+                if (!accountStorageKey('audio_heard')) return new Set();
+                if (!audioHeard) {
+                    try { audioHeard = new Set(JSON.parse(readAccountStorage('audio_heard', '') || '[]')); }
+                    catch { audioHeard = new Set(); }
+                }
+                return audioHeard;
+            }
+            function marcarAudioOido(id) {
+                if (!id || !accountStorageKey('audio_heard')) return;
+                const set = audioHeardSet();
+                if (set.has(id)) return;
+                set.add(id);
+                /* FIFO: la lista no puede crecer sin techo en localStorage. */
+                if (set.size > AUDIO_HEARD_TOPE) {
+                    const lista = [...set].slice(-AUDIO_HEARD_TOPE);
+                    set.clear();
+                    for (const x of lista) set.add(x);
+                }
+                writeAccountStorage('audio_heard', JSON.stringify([...set]));
+                for (const el of document.querySelectorAll('.audioMsg[data-mid="' + id + '"] .voicePlay'))
+                    el.classList.remove('unheard');
+            }
             const audioUrls = new Map();
             const audioMeta = new Map();
             let audioDecodeCtx = null;
@@ -16953,6 +17103,10 @@
                 a.preload = 'metadata';
                 a.style.cssText = 'display:none';
                 for (const ev of ['timeupdate', 'loadedmetadata', 'play', 'pause', 'seeked']) a.addEventListener(ev, paintVoice);
+                /* Al empezar a sonar, la nota queda "escuchada" (como en
+                   WhatsApp): el circulito de las notas recibidas recupera su
+                   color. El set es por cuenta, sobrevive a recargas. */
+                a.addEventListener('play', () => { if (voice.id) marcarAudioOido(voice.id); });
                 a.addEventListener('ended', voiceEnded);
                 document.body.appendChild(a);
                 voice.el = a;
@@ -17077,7 +17231,7 @@
                     });
                 }
                 return `<div class="audioMsg" data-mid="${id}">
-    <button class="voicePlay" type="button" aria-label="Reproducir nota de voz" title="Reproducir nota de voz" onclick="toggleAudio(this,'${jsArg(id)}')">${PLAY_SVG}</button>
+    <button class="voicePlay${m.mine || audioHeardSet().has(m.id) ? '' : ' unheard'}" type="button" aria-label="Reproducir nota de voz" title="Reproducir nota de voz" onclick="toggleAudio(this,'${jsArg(id)}')">${PLAY_SVG}</button>
     <div class="voiceDetails">
       <div class="voiceTitle"><span>Nota de voz</span></div>
       <div class="bar" role="slider" aria-label="Posición de la nota de voz" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" tabindex="0" onpointerdown="seekAudio(this,'${jsArg(id)}',event)" onkeydown="seekAudioKey(this,'${jsArg(id)}',event)"><div class="fill" id="f${id}"></div></div>
@@ -17196,15 +17350,19 @@
             function paintTypingBubble() {
                 const messages = document.getElementById('msgs');
                 if (!messages) return;
-                let who = null, mode = null;
+                let who = null, mode = null, sendTxt = null;
                 if (activeKind === 'dm' && active) {
                     if (recState['dm:' + active]) { who = active; mode = 'rec'; }
                     else if (typingState['dm:' + active]) { who = active; mode = 'typing'; }
+                    else if (sendingState['dm:' + active]) { who = active; mode = 'sending'; sendTxt = sendingState['dm:' + active]; }
                 } else if (activeKind === 'group' && activeGroup) {
                     const members = activeGroup.members.filter(m => m !== me.username);
                     const r = members.find(m => recState['g:' + activeGroup.id + ':' + m]);
                     const t = members.find(m => typingState['g:' + activeGroup.id + ':' + m]);
-                    if (r) { who = r; mode = 'rec'; } else if (t) { who = t; mode = 'typing'; }
+                    const s = members.find(m => sendingState['g:' + activeGroup.id + ':' + m]);
+                    if (r) { who = r; mode = 'rec'; }
+                    else if (t) { who = t; mode = 'typing'; }
+                    else if (s) { who = s; mode = 'sending'; sendTxt = sendingState['g:' + activeGroup.id + ':' + s]; }
                 }
                 let indicator = messages.querySelector('.typingMessage');
                 if (!who) {
@@ -17219,7 +17377,9 @@
                 const name = replyQuien({ from: who });
                 const activity = mode === 'rec'
                     ? `<span class="recBars" aria-hidden="true"><i></i><i></i><i></i><i></i></span>`
-                    : `<span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>`;
+                    : mode === 'sending'
+                        ? `<span class="enviandoTxt">enviando ${sendTxt}…</span>`
+                        : `<span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>`;
                 if (!indicator) {
                     indicator = document.createElement('div');
                     indicator.className = 'bubble them typingMessage';
@@ -17274,6 +17434,34 @@
                 if (!active || active === me.username || active === '__saved__') return;
                 if (activeKind === 'group' && activeGroup) send({ type: 'group-recording', groupId: activeGroup.id, on: !!on });
                 else send({ type: 'recording', to: active, on: !!on });
+            }
+
+            /* ===== "enviando foto/audio/archivo…" (estilo Telegram) =====
+               Mientras un archivo sube, el otro lado ve el estado en la
+               cabecera (DM) o en la burbuja de actividad (grupo). Se apaga
+               al llegar el mensaje, al terminar la subida o por una red de
+               seguridad de tiempo. */
+            const sendingState = {};
+            const sendingTimers = {};
+            const SEND_LABELS = { image: 'foto', video: 'video', audio: 'audio', file: 'archivo', sticker: 'sticker', poll: 'encuesta', contact: 'contacto' };
+            const sendLabelDe = k => SEND_LABELS[k] || 'archivo';
+            function setSending(who, on, groupId, sendKind) {
+                if (!who || who === me.username) return;
+                const key = groupId ? 'g:' + groupId + ':' + who : 'dm:' + who;
+                clearTimeout(sendingTimers[key]);
+                if (on) {
+                    sendingState[key] = sendLabelDe(sendKind);
+                    /* Red de seguridad: si el emisor se cae a mitad de subida
+                       y el `on:false` nunca llega, el estado se suelta solo. */
+                    sendingTimers[key] = setTimeout(() => {
+                        delete sendingState[key];
+                        paintTypingBubble();
+                        if (activeKind === 'dm' && active === who) updateChatSub(who);
+                    }, 120000);
+                } else delete sendingState[key];
+                paintTypingBubble();
+                if (activeKind === 'dm' && active === who) updateChatSub(who);
+                else if (activeKind === 'group' && activeGroup && groupId === activeGroup.id) paintTypingBubble();
             }
 
             let replyTo = null, menuMsg = null, editando = null;
@@ -18184,6 +18372,17 @@
                     return false;
                 }
                 if (targetKind === 'group' && !targetGroup) return false;
+                /* "enviando foto/audio/archivo…" (estilo Telegram): avisa a
+                   los demás mientras el archivo viaja; el `finally` lo apaga
+                   siempre — llegue, falle o se cancele. Los mensajes de texto
+                   no avisan: son instantáneos. */
+                const esTexto = kind === 'text';
+                const avisaEnvio = on => {
+                    if (esTexto) return;
+                    if (targetKind === 'group' && targetGroup) send({ type: 'group-sending', groupId: targetGroup.id, on: !!on, sendKind: kind });
+                    else if (target && target !== me.username && target !== '__saved__') send({ type: 'sending', to: target, on: !!on, sendKind: kind });
+                };
+                if (!esTexto) avisaEnvio(true);
                 const mediaKey = targetKind === 'group' ? targetGroup.id : target;
                 let hash = '', have = false, data = '';
                 if (kind === 'text') data = new TextDecoder().decode(buf);
@@ -18263,6 +18462,8 @@
                 } catch (error) {
                     failTemp();
                     throw error;
+                } finally {
+                    avisaEnvio(false);
                 }
             }
             async function sendText(textOverride) {
@@ -24196,6 +24397,13 @@
                    dispositivos se refleja sin recolocar nada a mano. */
                 document.addEventListener('visibilitychange', () => {
                     if (!document.hidden && !call && typeof loadChatSummary === 'function') loadChatSummary();
+                    /* De vuelta en primer plano con el chat abierto: si algún
+                       acuse de lectura se perdió (radio dormida, fallo de red
+                       puntual), se re-manda — markReadOnOpen sólo envía lo
+                       que localmente sigue sin leer, y el servidor ya rankea
+                       delivered < read, así que reenviar es seguro. */
+                    if (!document.hidden && activeKind === 'dm' && active &&
+                        document.body.classList.contains('chat-open')) markReadOnOpen();
                 });
                 const deep = new URLSearchParams(location.search);
                 Promise.all([

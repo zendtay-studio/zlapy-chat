@@ -24,6 +24,7 @@ const { MAX_BUFFER_BYTES, closeFrame, parseFrames } = require('./frames.js');
 const { acceptHandshake, openFrame } = require('./encrypted.js');
 const { WS_FRAME_BURST, WS_FRAME_RATE, WS_MAX_PER_USER, broadcastUsersAround, liveStories, push, pushName, pushStories, storyForViewer, updateContactRequests, userList, wsSend } = require('./notify.js');
 const { MESSAGE_LIMITS, characterCount } = require('../shared/limits.js');
+const { catchUpReceipts } = require('../chat/routes.js');
 const { NOTE_TTL, validAvatar } = require('../shared/validation.js');
 const { callFiles, notesMap, pendingOffers, profiles, stories, users, setStories } = require('../state.js');
 const { byId, byName } = require('../users/helpers.js');
@@ -71,11 +72,17 @@ const wsUpgradeInner = (req, socket) => {
         try { oldest.destroy(); } catch { }
     }
     u.sockets.add(socket);
+    /* Puesta al día de acuses sólo cuando este es el ÚNICO socket de la
+       cuenta: con otra sesión viva los estados ya fluyen en vivo por push
+       a todos los sockets del usuario. */
+    const reconectaSolo = u.sockets.size === 1;
+    const vistoAntes = typeof u.lastSeen === 'number' ? u.lastSeen : 0;
     u.online = true;
     u.lastSeen = null;
     u.lastHeartbeat = Date.now();
     broadcastUsersAround(u.id);
     push(u, { type: 'users', users: userList(u.id) });
+    if (reconectaSolo) catchUpReceipts(u, vistoAntes);
     updateContactRequests(u);
     push(u, { type: 'stories', stories: liveStories().filter(x => permite(profiles[x.from], 'historias', u.username)).map(x => storyForViewer(x, u.username)) });
     for (const [k, o] of [...pendingOffers]) {
@@ -217,6 +224,24 @@ const wsUpgradeInner = (req, socket) => {
                 if (!g || !g.memberIds.includes(u.id)) return;
                 const evt = m.type === 'group-typing' ? 'typing' : 'recording';
                 for (const mem of g.members) if (mem !== from) pushName(mem, { type: evt, from, on: !!m.on, group: true, groupId: g.id });
+                return;
+            }
+            /* "enviando foto/audio/archivo…" (estilo Telegram): aviso efímero
+               mientras un archivo sube. Mismas guardas que el tipado (el tipo
+               es público y efímero, no entra a la base) y el `sendKind` se
+               acota a una cadena corta para no reenviar basura. */
+            if (m.type === 'sending') {
+                if (typeof m.to !== 'string' || !byName(m.to) || !permite(profiles[m.to], 'mensajes', from) ||
+                    isBlockedBy(profiles[m.to], from) || isBlockedBy(profiles[from], m.to)) return;
+                pushName(m.to, { type: 'sending', from, on: !!m.on, sendKind: typeof m.sendKind === 'string' ? m.sendKind.slice(0, 24) : '' });
+                return;
+            }
+            if (m.type === 'group-sending') {
+                if (typeof m.groupId !== 'string' || !m.groupId) return;
+                const g = readGroup(m.groupId);
+                if (!g || !g.memberIds.includes(u.id)) return;
+                const sendKind = typeof m.sendKind === 'string' ? m.sendKind.slice(0, 24) : '';
+                for (const mem of g.members) if (mem !== from) pushName(mem, { type: 'sending', from, on: !!m.on, sendKind, group: true, groupId: g.id });
                 return;
             }
             if (m.type === 'privacy') {

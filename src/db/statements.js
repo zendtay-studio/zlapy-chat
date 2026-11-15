@@ -112,6 +112,13 @@ const Stmt = {
         crypto_version = ?, crypto_group_id = ?, signature = ?, signing_public_key = ? WHERE id = ?`),
     deleteMessage: db.prepare('DELETE FROM messages WHERE id = ?'),
     getMessage: db.prepare('SELECT * FROM messages WHERE id = ?'),
+    /* Puesta al día de acuses al reconectar (catchUpReceipts en routes.js):
+       el `status` vive DENTRO del blob cifrado, así que el candidato se
+       elige por ventana temporal y el filtro real se hace al descifrar. */
+    listRecentDmToUser: db.prepare(`SELECT id FROM messages
+        WHERE to_id = ? AND from_id != to_id AND chat LIKE 'chat:%' AND ts > ? ORDER BY ts DESC LIMIT ?`),
+    listRecentDmFromUser: db.prepare(`SELECT id FROM messages
+        WHERE from_id = ? AND from_id != to_id AND chat LIKE 'chat:%' AND ts > ? ORDER BY ts DESC LIMIT ?`),
     getMessageReaction: db.prepare('SELECT emoji FROM message_reactions WHERE message_id = ? AND user_id = ?'),
     upsertMessageReaction: db.prepare(`INSERT INTO message_reactions (message_id, user_id, emoji, updated_at)
         VALUES (?, ?, ?, ?) ON CONFLICT(message_id, user_id) DO UPDATE SET

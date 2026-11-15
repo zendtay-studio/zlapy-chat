@@ -849,6 +849,20 @@ textarea {
             margin-right: 2px
         }
 
+        /* Resalte de la edición: las palabras AÑADIDAS se pintan como el
+           código inline del markdown (monoespaciada + fondo suave del
+           color del texto), que es la "viñeta" que identifica el cambio.
+           Sin puntos ni tachados: es el mismo formato que ya existe. */
+        .mdEditAdd {
+            font-family: ui-monospace, 'Cascadia Mono', 'Roboto Mono', Menlo, Consolas, monospace;
+            font-size: 0.92em;
+            padding: 1px 5px;
+            border-radius: 5px;
+            background: color-mix(in srgb, currentColor 12%, transparent);
+            -webkit-box-decoration-break: clone;
+            box-decoration-break: clone
+        }
+
         .mdCita {
             margin: 4px 0;
             padding: 2px 0 2px 10px;
