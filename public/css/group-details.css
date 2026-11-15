@@ -1632,3 +1632,62 @@ body {
         height: 176px
     }
 }
+
+/* Selector de personas: interruptor en vez de checkbox nativo (el mismo
+   que las listas de ajustes de la app). */
+.pickerPerson input[type=checkbox] {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none
+}
+
+.pickerPerson .mSwitch {
+    order: 3;
+    margin-left: auto;
+    position: relative;
+    box-sizing: border-box;
+    width: 48px;
+    height: 28px;
+    flex: none;
+    border: 1px solid #454d57;
+    border-radius: 14px;
+    background: #343b44;
+    transition: background .18s
+}
+
+.pickerPerson .mSwitch::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--surface);
+    transition: left .18s
+}
+
+.pickerPerson input:checked ~ .mSwitch {
+    border-color: transparent;
+    background: var(--accent)
+}
+
+.pickerPerson input:checked ~ .mSwitch::after {
+    left: 22px
+}
+
+.pickerPerson {
+    display: flex;
+    align-items: center;
+    gap: 12px
+}
+
+.pickerPerson .av {
+    order: 1
+}
+
+.pickerPerson .meta {
+    order: 2
+}

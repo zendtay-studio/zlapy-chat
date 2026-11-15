@@ -3977,12 +3977,15 @@
             flex-wrap: wrap
         }
 
+        /* Botones neutros de ajustes y hojas: perfil BAJO (borde fino,
+           fondo transparente, texto claro). Los sólidos grises hacían que
+           todos los botones se leyeran igual entre sí. */
         .mBtn {
             flex: 1;
             min-width: 110px;
-            background: #2a3942;
-            color: #e9edef;
-            border: none;
+            background: transparent;
+            color: var(--text);
+            border: 1px solid var(--line);
             border-radius: 10px;
             padding: 12px 14px;
             font-size: 14.5px;
@@ -4034,7 +4037,8 @@
         }
 
         .mBtn:hover {
-            background: #31424c
+            background: color-mix(in srgb, var(--text) 8%, transparent);
+            border-color: var(--accent)
         }
 
         .mBtn.ok {
@@ -4098,11 +4102,11 @@
             flex: none
         }
 
-        /* Selector de contactos de Privacidad (“Solo…” / “Excepto…”): el
-           checkbox nativo se oculta y en su sitio va el mismo interruptor
-           de las filas de Ajustes. El input sigue ahí (accesible por
-           teclado) y el label entero alterna. */
-        #privacyContactList .mRow input[type=checkbox] {
+        /* Filas de listas modales (Privacidad, añadir participantes,
+           compartir…): el checkbox nativo se oculta y en su sitio va el
+           mismo interruptor de las filas de Ajustes. El input sigue ahí
+           (accesible por teclado) y el label entero alterna. */
+        .mList .mRow input[type=checkbox] {
             position: absolute;
             width: 1px;
             height: 1px;
@@ -4111,7 +4115,7 @@
             order: 4
         }
 
-        #privacyContactList .mRow .mSwitch {
+        .mList .mRow .mSwitch {
             order: 3;
             margin-left: auto;
             position: relative;
@@ -4125,7 +4129,7 @@
             transition: background .18s
         }
 
-        #privacyContactList .mRow .mSwitch::after {
+        .mList .mRow .mSwitch::after {
             content: '';
             position: absolute;
             top: 2px;
@@ -4137,16 +4141,16 @@
             transition: left .18s
         }
 
-        #privacyContactList .mRow input:checked ~ .mSwitch {
+        .mList .mRow input:checked ~ .mSwitch {
             border-color: transparent;
             background: var(--accent)
         }
 
-        #privacyContactList .mRow input:checked ~ .mSwitch::after {
+        .mList .mRow input:checked ~ .mSwitch::after {
             left: 22px
         }
 
-        #privacyContactList .mRow input:focus-visible ~ .mSwitch {
+        .mList .mRow input:focus-visible ~ .mSwitch {
             outline: 2px solid var(--accent);
             outline-offset: 2px
         }
@@ -7882,6 +7886,14 @@
             box-shadow: 0 2px 10px #0008
         }
 
+        /* Modo espejo (mi cámara): la vista previa se ve como en un
+           espejo, que es lo natural para quien se graba a sí mismo. Sin
+           él, el bruto de la cámara frontal parece «invertido» (tu mano
+           derecha sale a la izquierda). Ajuste en Ajustes > Chats. */
+        #localVideo.espejo {
+            transform: scaleX(-1)
+        }
+
         #localVideo.off {
             display: none
         }
@@ -10723,7 +10735,7 @@
                 style="width:44px;height:44px;border-radius:6px;background:#2a3942;display:flex;align-items:center;justify-content:center;color:#e9edef;font-size:11px">
             </div>
             <div style="flex:1;min-width:0"><b id="fdName" style="color:#e9edef;font-size:14px"></b></div>
-            <button class="btn" onclick="cancelDraft()" style="color:#e9edef">✕</button>
+            <button class="btn" onclick="cancelDraft();quitarBorradorAdjunto()" style="color:#e9edef">✕</button>
             <button class="btn" style="color:var(--accent-readable)" onclick="sendDraft()"><svg viewBox="0 0 24 24">
                     <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"></path>
                 </svg></button>
@@ -11281,7 +11293,6 @@
                         <rect x="3" y="6" width="12" height="12" rx="2.5" fill="none" stroke="currentColor"
                             stroke-width="1.8"></rect>
                         <path d="M15 11l6-3.5v9L15 13z"></path>
-                        <path class="iconSlash" d="M3 3l18 18"></path>
                     </svg></button>
                 <button id="btnSpeaker" onclick="toggleSpeaker()" title="Altavoz / bocina interna"
                     style="display:none"><svg viewBox="0 0 24 24">
@@ -12999,7 +13010,7 @@
                     return;
                 }
 
-                if (msg.type === 'group') { upsertGroup(msg.group); renderContacts(); loadGroupRequests(); if (activeKind === 'group' && activeGroup && activeGroup.id === msg.group.id) { activeGroup = msg.group; updateGroupHeader(); } return; }
+                if (msg.type === 'group') { upsertGroup(msg.group); renderContacts(); loadGroupRequests(); if (activeKind === 'group' && activeGroup && activeGroup.id === msg.group.id) { activeGroup = msg.group; updateGroupHeader(); } /* Un cambio de grupo también pinta la conversación abierta: las invitaciones compartidas en un DM leen los datos EN VIVO y deben reflejar el nuevo nombre/foto/descripción sin recargar. */ else if (active && activeKind === 'dm') renderConversation(activeConversationKey(), true); return; }
                 if (msg.type === 'group-left') {
                     groups = groups.filter(g => g.id !== msg.groupId);
                     renderContacts();
@@ -14831,7 +14842,7 @@
                 hideChatMenu();
                 if (cpTarget !== null) dismissLayer('panel-contact'); // el panel es del chat anterior
                 if (gpTarget !== null) dismissLayer('panel-group'); // y el del grupo anterior
-                if (pendingDrafts.length) cancelDraft();
+                if (pendingDrafts.length) { guardarBorradorAdjunto(); cancelDraft(); }
                 /* Igual que en openChat: la edición muere al cambiar de chat. */
                 if (editando) clearEdit();
                 /* Guarda el borrador del chat ANTERIOR antes de tocar
@@ -14906,7 +14917,8 @@
                 /* Borrador del grupo: lo escrito antes vuelve al campo (vacío
                    si no hay; si la cuenta no puede escribir, también vacío). */
                 const groupInput = document.getElementById('msgInput');
-                const groupDraft = !groupInput.disabled && !pendingDrafts.length && !editando ? draftOf('g:' + g.id) : '';
+                const borradorAdjGrupo = restaurarBorradorAdjunto(textDraftKey());
+                const groupDraft = !borradorAdjGrupo && !groupInput.disabled && !pendingDrafts.length && !editando ? draftOf('g:' + g.id) : '';
                 groupInput.value = groupDraft || '';
                 if (groupDraft) { try { groupInput.setSelectionRange(groupDraft.length, groupDraft.length); } catch { } }
                 updateSendBtn();
@@ -15118,6 +15130,7 @@
                     html: `<input id="gpSearch" placeholder="Buscar…">
       <div class="mList" id="gpList">${list.length ? list.map(c => `<label class="mRow" data-u="${escapeHtml((c.username + ' ' + displayNameOf(c.username)).toLowerCase())}">
         <input type="checkbox" value="${c.username}">
+        <span class="mSwitch" aria-hidden="true"></span>
         <div class="avatar sm">${avOrLetter(c.username)}</div>
         <div class="meta"><div class="name">${escapeHtml(displayNameOf(c.username))}</div><div class="sub">${presenceText(c)}</div></div>
       </label>`).join('') : '<div class="sub" style="padding:10px">No tienes contactos todavía</div>'}</div>
@@ -15489,8 +15502,8 @@
                     /* Vista previa del último mensaje: markdown de línea
                        (negrita, cursiva, tachado y `código`), nunca bloques.
                        Con borrador pendiente gana: «Borrador:» + el texto. */
-                    const draftDm = draftOf(c.username);
-                    const sub = draftDm ? draftPreviewHTML(draftDm) : last ? decorateMarkdownInline(last) : p && p.note ? decorateMarkdownInline('"' + p.note + '"') : escapeHtml(presenceText(c));
+                    const previaDm = draftPreviewCompleto(c.username);
+                    const sub = previaDm || (last ? decorateMarkdownInline(last) : p && p.note ? decorateMarkdownInline('"' + p.note + '"') : escapeHtml(presenceText(c)));
                     const act = activeKind === 'dm' && active === c.username;
                     const key = dmPrefKey(c.username);
                     const pref = chatPref(key);
@@ -15515,7 +15528,6 @@
                 if (renderVersion !== contactRenderVersion) return;
                 const groupRows = groups.filter(g => !q || g.name.toLowerCase().includes(q)).map(g => {
                     const last = lastPreview(g.id);
-                    const draftG = draftOf('g:' + g.id);
                     const lastMessage = lastConversationMessage(g.id);
                     const act = activeKind === 'group' && activeGroup && activeGroup.id === g.id;
                     const key = groupPrefKey(g.id);
@@ -15532,7 +15544,7 @@
                         pinnedAt,
                         html: `<div class="contact contact-list-row${act ? ' active' : ''}${pinnedAt > 0 ? ' pinned' : ''}${pref.muted ? ' muted' : ''}" data-chat-peer="${escapeHtml(key)}">
       <div class="avatar groupGrid">${groupAvHTML(g)}</div>
-      <div class="meta"><div class="contactMetaTop"><div class="name">${escapeHtml(g.name)}</div></div><div class="sub" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${draftG ? draftPreviewHTML(draftG) : last ? decorateMarkdownInline(last) : escapeHtml(g.members.length + ' participantes')}</div></div>
+      <div class="meta"><div class="contactMetaTop"><div class="name">${escapeHtml(g.name)}</div></div><div class="sub" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${draftPreviewCompleto('g:' + g.id) || (last ? decorateMarkdownInline(last) : escapeHtml(g.members.length + ' participantes'))}</div></div>
       <div class="contactAside">${stamp}<div class="contactStateIcons">${stateIcons}${unreadCount ? `<div class="unread">${unreadCount}</div>` : ''}</div></div>
     </div>`
                     };
@@ -15543,14 +15555,13 @@
                 const savedPinnedAt = savedSummary.pinnedAt || savedPref.pinnedAt;
                 const savedLastMessage = lastConversationMessage(me.username);
                 const savedPreview = lastPreview(me.username);
-                const savedDraft = draftOf(me.username);
                 const savedMatches = !q || ('mensajes guardados ' + savedPreview).toLowerCase().includes(q);
                 const savedRows = savedMatches && !savedPref.archived && !savedSummary.archived ? [{
                     ts: tsOf(me.username),
                     pinnedAt: savedPinnedAt,
                     html: `<div class="contact contact-list-row${activeKind === 'dm' && active === me.username ? ' active' : ''}${savedPinnedAt > 0 ? ' pinned' : ''}${savedPref.muted ? ' muted' : ''}" data-chat-peer="saved">
       <div class="avatar" style="background:#2a3942">${savedMessagesIcon()}</div>
-      <div class="meta"><div class="contactMetaTop"><div class="name">Mensajes Guardados</div></div><div class="sub" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${savedDraft ? draftPreviewHTML(savedDraft) : savedPreview ? decorateMarkdownInline(savedPreview) : escapeHtml('Envíate notas y archivos')}</div></div>
+      <div class="meta"><div class="contactMetaTop"><div class="name">Mensajes Guardados</div></div><div class="sub" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${draftPreviewCompleto(me.username) || (savedPreview ? decorateMarkdownInline(savedPreview) : escapeHtml('Envíate notas y archivos'))}</div></div>
       <div class="contactAside">${savedLastMessage ? `<span class="contactStamp">${chatTime(savedLastMessage.status === 'read' && savedLastMessage.readAt ? savedLastMessage.readAt : savedLastMessage.ts)}${savedLastMessage.from === me.username ? TICK({ ...savedLastMessage, mine: true }) : ''}</span>` : '<span class="contactStamp"></span>'}<div class="contactStateIcons">${savedPref.muted ? '<span title="Silenciado" aria-label="Mensajes guardados silenciados"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h12"/><path d="M10 21h4"/><path d="m3 3 18 18"/></svg></span>' : ''}${savedPinnedAt > 0 ? '<span title="Fijado" aria-label="Mensajes guardados fijados"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 9V4l1-1V2H7v1l1 1v5l-2 2v2h5v8l1 2 1-2v-8h5v-2l-2-2Z"/></svg></span>' : ''}${contactUnreadCount(savedKey) ? `<div class="unread">${contactUnreadCount(savedKey)}</div>` : ''}</div></div>
     </div>`
                 }] : [];
@@ -15661,7 +15672,7 @@
                 hideChatMenu();
                 if (cpTarget !== null) dismissLayer('panel-contact'); // el panel es del chat anterior
                 if (gpTarget !== null) dismissLayer('panel-group');
-                if (pendingDrafts.length) cancelDraft();
+                if (pendingDrafts.length) { guardarBorradorAdjunto(); cancelDraft(); }
                 /* La edición no sobrevive al cambio de chat: el texto del
                    campo pertenece al mensaje viejo; enviarlo aquí sería
                    editar el mensaje equivocado. */
@@ -15709,7 +15720,8 @@
                    al campo (y el campo nunca hereda texto del chat anterior:
                    se asigna siempre). Los borradores de adjunto ganan: su
                    flujo ya tomó el campo. */
-                const restoredDraft = !pendingDrafts.length && !editando ? draftOf(name) : '';
+                const borradorAdjunto = restaurarBorradorAdjunto(textDraftKey());
+                const restoredDraft = !borradorAdjunto && !pendingDrafts.length && !editando ? draftOf(name) : '';
                 const openInput = document.getElementById('msgInput');
                 openInput.value = restoredDraft || '';
                 if (restoredDraft) { try { openInput.setSelectionRange(restoredDraft.length, restoredDraft.length); } catch { } }
@@ -16088,6 +16100,7 @@
                 /* Guarda el borrador del chat que se cierra ANTES de borrar
                    el estado (flush del guardado con retardo incluido). */
                 flushDraftSave();
+                if (pendingDrafts.length) guardarBorradorAdjunto();
                 document.body.classList.remove('chat-open');
                 active = null; activeKind = 'dm'; activeGroup = null;
                 const empty = document.getElementById('empty');
@@ -16749,16 +16762,78 @@
                     { tipo: 'igual', texto: comun(a.slice(a.length - s)) }
                 ].filter(tramo => tramo.texto !== '');
             }
+            /* Divide el texto en BLOQUES de markdown: valla de código,
+               tabla, lista y párrafo. El resalte palabra por palabra solo
+               sabe de línea: con bloques se compara bloque a bloque y lo
+               añadido se pinta ENTERO (con su formato), nunca como texto
+               crudo. */
+            function bloquesDe(texto) {
+                const lineas = String(texto || '').split('\n');
+                const bloques = [];
+                let actual = [];
+                const tipo = l => l.trim();
+                const vaciar = () => { if (actual.length) { bloques.push(actual.join('\n')); actual = []; } };
+                for (let i = 0; i < lineas.length; i++) {
+                    const linea = lineas[i];
+                    const t = tipo(linea);
+                    if (t.startsWith('```')) {
+                        // Valla: desde la apertura hasta el cierre (o el final).
+                        actual.push(linea);
+                        i++;
+                        while (i < lineas.length) { actual.push(lineas[i]); if (tipo(lineas[i]).startsWith('```')) { i++; break; } i++; }
+                        vaciar();
+                        continue;
+                    }
+                    const esTabla = t.startsWith('|');
+                    const esLista = /^[*-]\s|\d+\.\s/.test(t);
+                    const esCita = t.startsWith('>');
+                    const antes = actual.length ? (tipo(actual[actual.length - 1]).startsWith('|') ? 'tabla' : /^[*-]\s|\d+\.\s/.test(tipo(actual[actual.length - 1])) ? 'lista' : tipo(actual[actual.length - 1]).startsWith('>') ? 'cita' : 'parrafo') : 'parrafo';
+                    const ahora = esTabla ? 'tabla' : esLista ? 'lista' : esCita ? 'cita' : 'parrafo';
+                    if (actual.length && antes !== ahora) vaciar();
+                    actual.push(linea);
+                }
+                vaciar();
+                return bloques;
+            }
             function editDiffHTML(previo, nuevo) {
+                const conBloques = textoConBloques(previo) || textoConBloques(nuevo);
+                if (conBloques) {
+                    const a = bloquesDe(previo), b = bloquesDe(nuevo);
+                    // LCS de bloques (pocos: el coste queda acotado).
+                    const n = a.length, m = b.length;
+                    if (!b.length) return null;
+                    const dp = new Array((n + 1) * (m + 1)).fill(0);
+                    for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--)
+                        dp[i * (m + 1) + j] = a[i] === b[j] ? dp[(i + 1) * (m + 1) + (j + 1)] + 1 : Math.max(dp[(i + 1) * (m + 1) + j], dp[i * (m + 1) + (j + 1)]);
+                    const salida = [];
+                    let i = 0, j = 0;
+                    while (j < m) {
+                        if (i < n && a[i] === b[j]) { salida.push(decorateMarkdownText(b[j])); i++; j++; }
+                        else if (i < n && dp[(i + 1) * (m + 1) + j] >= dp[i * (m + 1) + (j + 1)]) { i++; } // quitado: no se muestra
+                        else { salida.push(`<div class="mdEditAddBloque">${decorateMarkdownText(b[j])}</div>`); j++; }
+                    }
+                    while (i < n) i++;
+                    const html = salida.join('');
+                    return html.trim() ? html : null;
+                }
                 const tramos = editDiffTokens(previo, nuevo);
                 if (!tramos || !tramos.some(tramo => tramo.tipo !== 'igual')) return null;
                 return tramos.map(tramo => {
                     // Lo añadido se envuelve (la viñeta la pone el CSS); lo
-                    // quitado no se muestra; lo igual va tal cual.
+                    // quitado no se muestra; lo igual va tal cual. Los
+                    // espacios de los extremos del añadido CUENTAN: « xd»
+                    // se resalta entero, no solo «xd».
                     if (tramo.tipo === 'anadido') return `<span class="mdEditAdd">${decorateMarkdownInline(tramo.texto)}</span>`;
                     if (tramo.tipo === 'quitado') return '';
                     return decorateMarkdownInline(tramo.texto);
                 }).join('');
+            }
+            /* Markdown de BLOQUE (tablas, código, listas, citas, títulos): el
+               resalte palabra por palabra solo sabe de línea, así que con
+               bloques se pinta el texto COMPLETO (si no, una tabla editada
+               saldría como texto crudo con pipes). */
+            function textoConBloques(t) {
+                return /(^|\n)(```|\||[*-]\s|\d+\.\s|>\s|#{1,6}\s)/.test(t);
             }
             function messageTextHTML(value, message) {
                 const text = String(value);
@@ -16831,20 +16906,32 @@
             }
             function groupInviteHTML(m) {
                 const inv = m.invite || {};
-                const isMember = (groups || []).some(g => g.id === inv.groupId);
+                /* Datos EN VIVO del grupo cuando se tienen (la invitación
+                   guardó una foto fija de cuando se compartió): si el grupo
+                   se editó —nombre, descripción, foto, miembros— la tarjeta
+                   lo refleja en vez de mostrar el texto congelado. */
+                const vivo = (groups || []).find(g => g.id === inv.groupId) || null;
+                const isMember = !!vivo ? vivo.members.includes(me.username) : (inv.members || []).includes(me.username);
+                const nombre = vivo ? (vivo.name || 'Grupo') : (inv.name || 'Grupo');
+                const descFuente = vivo ? vivo.description : inv.description;
+                const avatarFuente = vivo ? (vivo.avatar || '') : (inv.avatar || '');
+                const miembros = vivo && Number.isFinite(vivo.membersTotal) ? vivo.membersTotal
+                    : Number(inv.memberCount) || (inv.members || []).length;
+                const visibilidad = vivo ? vivo.visibility : inv.visibility;
+                const politica = vivo ? vivo.joinPolicy : inv.joinPolicy;
                 const btn = isMember ? 'Abrir grupo'
-                    : inv.joinPolicy === 'open' ? 'Unirse'
-                        : inv.joinPolicy === 'closed' ? 'Ver grupo' : 'Solicitar unirse';
+                    : politica === 'open' ? 'Unirse'
+                        : politica === 'closed' ? 'Ver grupo' : 'Solicitar unirse';
                 /* La descripción del grupo (500 en el servidor) se muestra
                    recortada y con su markdown, como el resto de la app. */
-                const invDesc = String(inv.description || '').trim();
+                const invDesc = String(descFuente || '').trim();
                 const invChars = Array.from(invDesc);
                 const invCorta = invChars.slice(0, 180).join('') + (invChars.length > 180 ? '…' : '');
-                return `<div class="groupInvite"><div class="avatar groupGrid" style="width:64px;height:64px;border-radius:14px">${groupAvHTML({ avatar: inv.avatar || '', members: inv.members || [] })}</div>
-    <div class="giMeta"><b>${escapeHtml(inv.name || 'Grupo')}</b>
+                return `<div class="groupInvite"><div class="avatar groupGrid" style="width:64px;height:64px;border-radius:14px">${groupAvHTML({ avatar: avatarFuente, members: (vivo ? vivo.members : inv.members) || [] })}</div>
+    <div class="giMeta"><b>${escapeHtml(nombre)}</b>
     <span class="sub">${invCorta ? decorateMarkdownInline(invCorta) : escapeHtml('Sin descripción')}</span>
-    <span class="sub">${Number(inv.memberCount) || (inv.members || []).length} miembros · ${inv.visibility === 'public' ? 'Público' : 'Privado'}</span></div>
-    <button class="mBtn ok" onclick="event.stopPropagation();openGroupInvite('${jsArg(inv.groupId || '')}','${jsArg(inv.code || '')}')">${btn}</button></div>`;
+    <span class="sub">${miembros} miembros · ${visibilidad === 'public' ? 'Público' : 'Privado'}</span></div>
+    <button class="mBtn ok" onclick="event.stopPropagation();openGroupInvite('${jsArg(vivo ? vivo.id : (inv.groupId || ''))}','${jsArg(inv.code || '')}')">${btn}</button></div>`;
             }
             function contactCardHTML(message) {
                 let contact;
@@ -17219,6 +17306,14 @@
             function draftOf(key) {
                 const map = textDraftsMap();
                 return key && map ? (map.get(key) || '') : '';
+            }
+            /* Previa del borrador de la lista: adjunto (foto/audio/…)
+               manda sobre el texto; si no hay nada, cadena vacía. */
+            function draftPreviewCompleto(key) {
+                const adj = borradorAdjuntoDe(key);
+                if (adj) return '<span class="draftTag">Borrador:</span> <span class="draftText">' + escapeHtml(etiquetaBorradorAdjunto(adj.files, adj.documents)) + '…</span>';
+                const texto = draftOf(key);
+                return texto ? draftPreviewHTML(texto) : '';
             }
             /* «Borrador:» en rojo + texto plano en tinta normal (el CSS lo
                pinta); es un texto sin terminar: sin markdown. */
@@ -18288,6 +18383,7 @@
                    insertan justo encima de los grupos. */
                 const filaShare = r => `<label class="mRow" data-u="${escapeHtml(r.search.toLowerCase())}">
         <input type="checkbox" value="${escapeHtml(r.id)}">
+        <span class="mSwitch" aria-hidden="true"></span>
         <div class="avatar sm"${r.id === 'dm:' + me.username ? ' style="background:#2a3942"' : ''}>${r.avatar}</div>
         <div class="meta"><div class="name">${escapeHtml(r.name)}</div><div class="sub">${escapeHtml(r.sub)}</div></div>
       </label>`;
@@ -19281,6 +19377,21 @@
                 const selectedFiles = [...files];
                 pendingDrafts = [...pendingDrafts, ...selectedFiles];
                 if (asDocument) for (const file of selectedFiles) pendingDraftDocuments.add(file);
+                pintarBorradorAdjunto();
+                for (const id of ['fileInput', 'cameraInput', 'documentInput']) document.getElementById(id).value = '';
+            }
+            /* Borradores de ADJUNTO por chat (en memoria, como los de texto): al
+               salir del chat se guardan y al volver se recuperan, en vez de
+               descartarse. La etiqueta «Borrador: foto…» los anuncia en la
+               lista. */
+            const adjuntoBorradores = new Map();
+            function guardarBorradorAdjunto() {
+                const key = textDraftKey();
+                if (!key || !pendingDrafts.length) return;
+                adjuntoBorradores.set(key, { files: [...pendingDrafts], documents: [...pendingDraftDocuments], destination: pendingDraftDestination });
+            }
+            function quitarBorradorAdjunto() { const key = textDraftKey(); if (key) adjuntoBorradores.delete(key); }
+            function pintarBorradorAdjunto() {
                 const fd = document.getElementById('fileDraft');
                 const f = pendingDrafts[0];
                 const imageCount = pendingDrafts.filter(file => !pendingDraftDocuments.has(file) && file.type.startsWith('image/')).length;
@@ -19295,7 +19406,36 @@
                 if (!draftPlaceholder) draftPlaceholder = document.getElementById('msgInput').placeholder;
                 document.getElementById('msgInput').placeholder = imageCount ? 'Añade un comentario (opcional)' : 'Comentario (opcional)';
                 document.getElementById('onceBtn').style.display = pendingDrafts.some(file => !pendingDraftDocuments.has(file) && /^(image|video|audio)\//.test(file.type)) ? 'flex' : 'none';
-                for (const id of ['fileInput', 'cameraInput', 'documentInput']) document.getElementById(id).value = '';
+                updateSendBtn();
+            }
+            function restaurarBorradorAdjunto(key) {
+                if (!key) return false;
+                const guardado = adjuntoBorradores.get(key);
+                if (!guardado || !guardado.files.length) return false;
+                const destino = destinationIsActive(guardado.destination) ? guardado.destination : currentAttachmentDestination();
+                pendingDraftDestination = destino;
+                pendingDrafts = [...guardado.files];
+                pendingDraftDocuments = new Set(guardado.documents);
+                adjuntoBorradores.delete(key);
+                pintarBorradorAdjunto();
+                return true;
+            }
+            /* Etiqueta para la lista: «Borrador: foto» / «audio» / «archivo». */
+            function etiquetaBorradorAdjunto(files, documents) {
+                if (!files.length) return '';
+                const imagenes = files.filter(file => !documents.has(file) && file.type.startsWith('image/')).length;
+                if (files.length > 1) return imagenes > 1 ? imagenes + ' fotos' : files.length + ' archivos';
+                const f = files[0];
+                if (imagenes) return 'Foto';
+                if (f.type.startsWith('video/')) return 'Vídeo';
+                if (f.type.startsWith('audio/')) return 'Audio';
+                if (documents.has(f) || !f.type.startsWith('image/')) return 'Archivo';
+                return f.name || 'Archivo';
+            }
+            function borradorAdjuntoDe(key) {
+                if (!key) return null;
+                if (textDraftKey() === key && pendingDrafts.length) return { files: pendingDrafts, documents: pendingDraftDocuments };
+                return adjuntoBorradores.get(key) || null;
             }
             function cancelDraft() {
                 pendingDrafts = [];
@@ -22476,6 +22616,7 @@
         <button class="mBtn" type="button" id="resetChatFontSize">Restablecer tamaño del texto</button>
       </div>
       <div class="switchRow"><div class="meta"><b>Auto play del siguiente audio</b><span>Al terminar una nota de voz, se reproduce la que sigue (de quien sea)</span></div><button class="tgl${ap ? ' on' : ''}" id="swAutoPlay"></button></div>
+        <div class="switchRow"><div class="meta"><b>Modo espejo de mi cámara</b><span>En las videollamadas, mi vista previa se muestra como en un espejo (desactivado, se ve el bruto de la cámara)</span></div><button class="tgl${callMirrorOn() ? ' on' : ''}" id="swCamEspejo" type="button" aria-pressed="${callMirrorOn()}" aria-label="Modo espejo de mi cámara"></button></div>
         <div class="switchRow"><div class="meta"><b>Resaltar ediciones</b><span>Al editar un texto, las palabras añadidas llevan un resalte; apagado, se ve solo el texto final</span></div><button class="tgl${er ? ' on' : ''}" id="swEditResalte" type="button" aria-pressed="${er}" aria-label="Resaltar ediciones"></button></div>
         <div class="chatAppearanceSubhead">Reacciones rápidas</div>
         <div class="switchRow"><div class="meta"><b>Barra de reacciones al doble toque</b><span>Muestra tus 6 reacciones sobre el mensaje; apagado, el doble toque aplica una reacción al instante sin ninguna interfaz</span></div><button class="tgl${rxPrefs.dobleTap === 'menu' ? ' on' : ''}" id="swRxDt" type="button" aria-pressed="${rxPrefs.dobleTap === 'menu'}" aria-label="Barra de reacciones al doble toque"></button></div>
@@ -22643,6 +22784,11 @@
                     updatePreviews(appearance);
                     document.getElementById('swAutoPlay').onclick = e => {
                         setUserSetting('autoplay_audio', e.target.classList.contains('on') ? '0' : '1');
+                        paintSettings();
+                    };
+                    document.getElementById('swCamEspejo').onclick = e => {
+                        setUserSetting('espejo_llamada', e.target.classList.contains('on') ? '0' : '1');
+                        aplicarEspejoLlamada();
                         paintSettings();
                     };
                     /* Resalte de ediciones: se decide AL PINTAR cada burbuja,
@@ -23548,6 +23694,13 @@
             }
             function soundOn() { return userSetting('sounds', '1', 'zlapy_sounds') !== '0'; }
             function autoPlayNextOn() { return userSetting('autoplay_audio', '1', 'zlapy_autoplay_audio') !== '0'; }
+            /* Modo espejo de mi cámara en las llamadas (activado por
+               defecto: la vista previa «natural», como en un espejo). */
+            function callMirrorOn() { return userSetting('espejo_llamada', '1') !== '0'; }
+            function aplicarEspejoLlamada() {
+                const local = document.getElementById('localVideo');
+                if (local) local.classList.toggle('espejo', callMirrorOn());
+            }
             /* Resalte de ediciones (viñetas del diff): ON por defecto. */
             function editHighlightOn() { return userSetting('resaltar_ediciones', '1') !== '0'; }
             function beep() { if (!soundOn()) return; try { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); tone([880], .09, 0, .06); } catch { } }
@@ -24370,6 +24523,7 @@
                 if (call && call.stream) {
                     document.getElementById('localVideo').srcObject = call.stream;
                     document.getElementById('localVideo').style.display = video ? 'block' : 'none';
+                    aplicarEspejoLlamada();
                     document.getElementById('remoteVideo').style.display = video ? 'block' : 'none';
                     if (video) document.getElementById('stageInfo').style.display = 'none';
                 } else {
@@ -24948,7 +25102,6 @@
                 <rect x="3" y="6" width="12" height="12" rx="2.5" fill="none" stroke="currentColor"
                     stroke-width="1.8"></rect>
                 <path d="M15 11l6-3.5v9L15 13z"></path>
-                <path class="iconSlash" d="M3 3l18 18"></path>
             </svg></button>
         <button id="banHang" onclick="event.stopPropagation();endCall('hangup')"><svg viewBox="0 0 24 24">
                 <path d="M6 3h3l2 5-2.5 1.5a11 11 0 006 6L16 13l5 2v3a2 2 0 01-2.2 2A16 16 0 014 5.2 2 2 0 016 3z">

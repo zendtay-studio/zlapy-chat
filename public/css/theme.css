@@ -639,16 +639,26 @@ body.page-stories a {
   margin-top: 4px
 }
 
+/* Perfil bajo (borde fino, fondo transparente, texto claro): los
+   botones sólidos grises hacían que todos se leyeran igual. */
 .mBtn,
 .pickerBtns button,
 .page-privacy .btns button {
   min-height: 46px;
-  background: var(--surface-raised);
+  background: transparent;
   color: var(--text);
   border: 1px solid var(--line);
   border-radius: 15px;
   padding: 11px 16px;
-  font-weight: 600
+  font-weight: 600;
+  transition: background .16s ease, border-color .16s ease
+}
+
+.mBtn:hover,
+.pickerBtns button:hover,
+.page-privacy .btns button:hover {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  border-color: var(--accent)
 }
 
 .mBtn.ok,
@@ -860,6 +870,15 @@ textarea {
             border-radius: 5px;
             background: color-mix(in srgb, currentColor 12%, transparent);
             -webkit-box-decoration-break: clone;
+        }
+
+        /* Bloque ENTERO añadido en una edición (tabla, lista, valla de
+           código): mismo fondo de resalte, pero a nivel de bloque. */
+        .mdEditAddBloque {
+            background: color-mix(in srgb, currentColor 12%, transparent);
+            border-radius: 8px;
+            padding: 2px 6px;
+            margin: 2px -6px;
             box-decoration-break: clone
         }
 
@@ -959,7 +978,12 @@ textarea {
 
         .mdTabla {
             border-collapse: collapse;
-            font-size: .92em
+            font-size: .92em;
+            /* Ancho natural: si la tabla es más ancha que la burbuja, el
+               contenedor (.mdTablaEnv, overflow-x: auto) scrollea en
+               horizontal en vez de aplastar las columnas unas contra otras. */
+            width: max-content;
+            min-width: 100%
         }
 
         .mdTabla th,
@@ -988,7 +1012,7 @@ textarea {
            el texto del borrador en el color de tinta normal (como
            WhatsApp), adaptativo con el tema. */
         .contact .sub .draftTag {
-            color: #ea4335;
+            color: var(--accent);
             font-weight: 600
         }
 

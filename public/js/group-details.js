@@ -885,6 +885,7 @@
                     : escapeHtml(initials(displayName(username) || username));
                 return `<label class="pickerPerson">
                     <input type="checkbox" value="${escapeHtml(username)}" ${checked ? 'checked' : ''}>
+                    <span class="mSwitch" aria-hidden="true"></span>
                     <span class="av" style="${avatarStyle(username)}">${art}</span>
                     <span class="meta"><b>${escapeHtml(displayName(username))}</b><span class="sub">@${escapeHtml(username)}</span></span>
                 </label>`;
