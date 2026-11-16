@@ -16,6 +16,7 @@
     <link rel="icon" type="image/webp" href="/image/isotype-308.webp">
     <link rel="stylesheet" href="/css/fonts.css">
     <script src="/js/markdown-chat.js"></script>
+    <script src="/js/button-theme.js"></script>
 
     <meta property="og:title" content="Zlapy">
     <meta property="og:description" content="Chats, historias y llamadas. Rápido, privado y sin depender de terceros.">
@@ -10100,8 +10101,12 @@
         /* Perfil bajo y altura CONSISTENTE en todos los botones de
            prueba de «Vídeo y voz» (los sólidos grises los hacían
            distintos entre sí y con alturas dispares). */
-        #settingsMain .testCard .mBtn,
-        #settingsMain .mBtn {
+        /* Categoría «cancelar» (borde fino, sin relleno). Las variantes
+           (.ok primaria, .sec secundaria, .peligro eliminar) quedan FUERA:
+           este selector con ID tenía más especificidad que theme.css y las
+           aplastaba, dejando todos los botones de Ajustes iguales. */
+        #settingsMain .testCard .mBtn:not(.ok, .sec, .peligro),
+        #settingsMain .mBtn:not(.ok, .sec, .peligro) {
             min-height: 46px;
             background: transparent;
             border: 1px solid var(--line);
@@ -10109,8 +10114,8 @@
             border-radius: 15px
         }
 
-        #settingsMain .testCard .mBtn:hover,
-        #settingsMain .mBtn:hover {
+        #settingsMain .testCard .mBtn:not(.ok, .sec, .peligro):hover,
+        #settingsMain .mBtn:not(.ok, .sec, .peligro):hover {
             background: color-mix(in srgb, var(--text) 8%, transparent);
             border-color: var(--accent)
         }
@@ -15285,7 +15290,7 @@
     </div>`;
                 }).join('');
                 list.innerHTML = rows + (groupDiscoverMore
-                    ? '<button class="mBtn" type="button" data-group-discover-more>Cargar más grupos</button>'
+                    ? '<button class="mBtn sec" type="button" data-group-discover-more>Cargar más grupos</button>'
                     : '');
             }
             function wireGroupDiscoverSheet() {
@@ -15408,7 +15413,7 @@
                 } catch (error) {
                     if (version !== groupDiscoverLoadVersion) return;
                     console.error('[groups] No se pudieron cargar los grupos públicos:', error);
-                    list.innerHTML = `<div class="requestModalEmpty"><b>No se pudieron cargar los grupos</b><span>${escapeHtml(error.message || 'Comprueba tu conexión e inténtalo de nuevo.')}</span><button class="mBtn" type="button" data-group-discover-retry>Reintentar</button></div>`;
+                    list.innerHTML = `<div class="requestModalEmpty"><b>No se pudieron cargar los grupos</b><span>${escapeHtml(error.message || 'Comprueba tu conexión e inténtalo de nuevo.')}</span><button class="mBtn sec" type="button" data-group-discover-retry>Reintentar</button></div>`;
                 }
             }
             function openContactActionsMenu(event) {
@@ -22344,6 +22349,10 @@
                 root.style.setProperty('--accent', appearance.accent || appearance.sender);
                 root.style.setProperty('--accent-ink', appearance.senderText);
                 root.style.setProperty('--accent-secondary', appearance.receiver);
+                /* Primaria y secundaria se derivan del acento elegido (Coral
+                   conserva su salvia; un acento oscuro se aclara para que el
+                   botón no sea invisible sobre el fondo). */
+                if (window.ZlapyButtonTheme) window.ZlapyButtonTheme(appearance.accent || appearance.sender);
                 chat.style.setProperty('--chat-wall-color', appearance.wall);
                 chat.style.setProperty('--chat-meta-text', chatMetadataTextColor(appearance));
                 chat.style.setProperty('--chat-wall-overlay', `rgba(9,12,15,${appearance.opacity / 100})`);
@@ -22581,11 +22590,11 @@
           ${account.id === me.id ? '' : `<button class="accountIconAction" type="button" data-switch-id="${account.id}" title="Cambiar a @${escapeHtml(account.username)}" aria-label="Cambiar a @${escapeHtml(account.username)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7h-9a4 4 0 0 0-4 4v1"/><path d="m4 9 3 3 3-3M4 17h9a4 4 0 0 0 4-4v-1"/><path d="m20 15-3-3-3 3"/></svg></button><button class="accountIconAction danger" type="button" data-remove-id="${account.id}" title="Quitar cuenta" aria-label="Quitar ${escapeHtml(account.username)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg></button>`}
         </div>`).join('')}
       </div>
-      <button class="mBtn" id="addAccount">Agregar cuenta</button>
+      <button class="mBtn sec" id="addAccount">Agregar cuenta</button>
       <div class="setHead accountSectionHead"><b>Seguridad de la cuenta</b><span>Los cambios sensibles (contraseña, usuario o borrado) exigen tu contraseña actual.</span></div>
-      <button class="mBtn" id="changePassword">Cambiar contraseña</button>
-      <button class="mBtn" id="regenerateKey">Regenerar clave de cifrado</button>
-      <button class="mBtn peligro" id="logoutAccount">Cerrar sesión de esta cuenta</button>
+      <button class="mBtn sec" id="changePassword">Cambiar contraseña</button>
+      <button class="mBtn sec" id="regenerateKey">Regenerar clave de cifrado</button>
+      <button class="mBtn sec" id="logoutAccount">Cerrar sesión de esta cuenta</button>
       <button class="mBtn peligro" id="deleteAccountButton">Eliminar cuenta</button></div>`;
                     document.getElementById('addAccount').onclick = addLinkedAccount;
                     main.querySelectorAll('[data-switch-id]').forEach(button =>
@@ -22650,10 +22659,10 @@
         <div class="wallDots" aria-label="Colores de fondo">${WALLS.map((wall, index) => `<button type="button" data-wall-index="${index}" title="${wall.label}" aria-label="Fondo ${wall.label}" style="background-color:${wall.c};background-image:radial-gradient(circle at 25% 28%,#ffffff45 0 1px,transparent 2px),linear-gradient(145deg,#ffffff12,transparent 60%)" class="${wall.c === appearance.wall ? 'on' : ''}"></button>`).join('')}</div>
         <label class="chatAppearanceColorRow" for="chatWallColor"><span>Color de fondo personalizado</span><input class="chatAppearanceColor" type="color" id="chatWallColor" value="${appearance.wall}"></label>
         <input class="chatAppearanceFile" type="file" id="chatWallpaperFile" accept="image/*">
-        <div class="chatAppearanceActions"><button class="mBtn" type="button" id="chooseChatWallpaper">Elegir foto de fondo</button><button class="mBtn" type="button" id="removeChatWallpaper" ${appearance.image ? '' : 'disabled'}>Quitar foto</button></div>
+        <div class="chatAppearanceActions"><button class="mBtn sec" type="button" id="chooseChatWallpaper">Elegir foto de fondo</button><button class="mBtn sec" type="button" id="removeChatWallpaper" ${appearance.image ? '' : 'disabled'}>Quitar foto</button></div>
         <label><span class="chatAppearanceColorRow"><span>Oscurecimiento del fondo</span><span class="chatAppearanceValue" id="chatOpacityValue">${appearance.opacity}%</span></span><input class="chatAppearanceRange" type="range" id="chatOpacity" min="0" max="80" step="1" value="${appearance.opacity}" aria-label="Intensidad del oscurecimiento del fondo"><span class="chatAppearanceHint">Ajusta la opacidad de la capa oscura sobre el fondo.</span></label>
         <label><span class="chatAppearanceColorRow"><span>Desenfoque de la foto</span><span class="chatAppearanceValue" id="chatBlurValue">${appearance.blur}px</span></span><input class="chatAppearanceRange" type="range" id="chatBlur" min="0" max="20" step="1" value="${appearance.blur}" aria-label="Desenfoque de la foto de fondo"><span class="chatAppearanceHint">El efecto solo se aplica cuando eliges una foto de fondo.</span></label>
-        <button class="mBtn" type="button" id="resetChatWallpaper">Restablecer fondo</button>
+        <button class="mBtn sec" type="button" id="resetChatWallpaper">Restablecer fondo</button>
         <div class="chatAppearanceSubhead">Temas y colores de mensajes</div>
         <div class="chatAppearanceHint">Selecciona un tema o ajusta los colores de cada burbuja; la vista previa se actualiza al instante.</div>
         <div class="chatThemeGroups" role="group" aria-label="Temas de color de mensajes">${themesMarkup}</div>
@@ -22666,11 +22675,11 @@
           <label class="chatColorPicker" for="chatSenderTextColor"><span class="chatColorPickerLabel">Texto de mis mensajes</span><input class="chatAppearanceColor" type="color" id="chatSenderTextColor" value="${appearance.senderText}"${appearance.autoText !== false ? ' disabled' : ''}></label>
           <label class="chatColorPicker" for="chatAccentColor"><span class="chatColorPickerLabel">Acento de la app</span><input class="chatAppearanceColor" type="color" id="chatAccentColor" value="${appearance.accent || appearance.sender}"></label>
         </div>
-        <div class="chatAppearanceActions"><button class="mBtn" type="button" id="resetChatMessageColors">Restablecer colores</button></div>
+        <div class="chatAppearanceActions"><button class="mBtn sec" type="button" id="resetChatMessageColors">Restablecer colores</button></div>
         <div class="chatAppearanceSubhead">Tamaño del texto</div>
         <div class="chatAppearanceHint">Haz los mensajes más cómodos de leer en la conversación.</div>
         <label><span class="chatAppearanceColorRow"><span>Tamaño actual</span><span class="chatAppearanceValue" id="chatFontSizeValue">${appearance.fontSize}px</span></span><input class="chatAppearanceRange" type="range" id="chatFontSize" min="12" max="22" step="1" value="${appearance.fontSize}" aria-label="Tamaño del texto del chat"></label>
-        <button class="mBtn" type="button" id="resetChatFontSize">Restablecer tamaño del texto</button>
+        <button class="mBtn sec" type="button" id="resetChatFontSize">Restablecer tamaño del texto</button>
       </div>
       <div class="switchRow"><div class="meta"><b>Auto play del siguiente audio</b><span>Al terminar una nota de voz, se reproduce la que sigue (de quien sea)</span></div><button class="tgl${ap ? ' on' : ''}" id="swAutoPlay"></button></div>
         <div class="switchRow"><div class="meta"><b>Modo espejo de mi cámara</b><span>En las videollamadas, mi vista previa se muestra como en un espejo (desactivado, se ve el bruto de la cámara)</span></div><button class="tgl${callMirrorOn() ? ' on' : ''}" id="swCamEspejo" type="button" aria-pressed="${callMirrorOn()}" aria-label="Modo espejo de mi cámara"></button></div>
@@ -22685,7 +22694,7 @@
         <div class="rxSlots">${rxPrefs.emojis.map((emoji, i) => `<div class="rxSlot"><button class="rxSlotEmoji" data-rx-i="${i}" type="button" aria-label="Reacción ${i + 1}">${escapeHtml(emoji)}</button><span class="rxSlotArrows"><button type="button" data-rx-move="${i},-1" aria-label="Mover la reacción ${i + 1} a la izquierda"${i === 0 ? ' disabled' : ''}><svg viewBox="0 0 24 24"><path d="m14 6-6 6 6 6"/></svg></button><button type="button" data-rx-move="${i},1" aria-label="Mover la reacción ${i + 1} a la derecha"${i === 5 ? ' disabled' : ''}><svg viewBox="0 0 24 24"><path d="m10 6 6 6-6 6"/></svg></button></span></div>`).join('')}</div>
         <div id="rxEpi"><div id="rxEpiHead"><input id="rxEpiSearch" type="text" placeholder="Buscar emojis" autocomplete="off" aria-label="Buscar emojis"><button class="btn" id="rxEpiClose" type="button" title="Cerrar selector" aria-label="Cerrar selector"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div><div id="rxEpiPicker" class="emojiPickerEmbedded"></div></div>
         <div class="rxPreviewNote"><div class="rxPreview" aria-hidden="true">${rxPrefs.emojis.map(emoji => `<span>${escapeHtml(emoji)}</span>`).join('')}</div><span class="chatAppearanceHint">Así se ven en la barra y en el Pop Menu; el orden de la vista previa es el orden real.</span></div>
-        <button class="mBtn" type="button" id="rxReset">Restablecer reacciones</button>
+        <button class="mBtn sec" type="button" id="rxReset">Restablecer reacciones</button>
     </div>`;
                     const chatPreview = document.getElementById('chatAppearancePreview');
                     const updatePreviews = next => {
@@ -22909,9 +22918,9 @@
                 }
                 if (settingsSection === 'media') {
                     main.innerHTML =
-                        `<div class="settingsSectionContent"><div class="testCard"><b style="color:#e9edef">Micrófono</b><div class="meter"><div id="micMeter"></div></div><button class="mBtn" id="tMic">Probar micrófono</button></div>
-      <div class="testCard"><b style="color:#e9edef">Cámara</b><video id="camPrev" autoplay playsinline muted></video><button class="mBtn" id="tCam">Probar cámara</button></div>
-      <div class="testCard"><b style="color:#e9edef">Altavoz / bocina</b><div class="sub">Suena por la salida actual. En llamada puedes cambiar a bocina interna.</div><button class="mBtn" id="tSpk">Probar altavoz</button></div></div>`;
+                        `<div class="settingsSectionContent"><div class="testCard"><b style="color:#e9edef">Micrófono</b><div class="meter"><div id="micMeter"></div></div><button class="mBtn sec" id="tMic">Probar micrófono</button></div>
+      <div class="testCard"><b style="color:#e9edef">Cámara</b><video id="camPrev" autoplay playsinline muted></video><button class="mBtn sec" id="tCam">Probar cámara</button></div>
+      <div class="testCard"><b style="color:#e9edef">Altavoz / bocina</b><div class="sub">Suena por la salida actual. En llamada puedes cambiar a bocina interna.</div><button class="mBtn sec" id="tSpk">Probar altavoz</button></div></div>`;
                     document.getElementById('tMic').onclick = testMic;
                     document.getElementById('tCam').onclick = testCam;
                     document.getElementById('tSpk').onclick = () => { try { beep(); } catch { } toast('¿Lo escuchaste?'); };
@@ -22927,7 +22936,7 @@
       <div class="switchRow"><div class="meta"><b>Sonidos en la app</b><span>Tonos al recibir mensajes</span></div><button class="tgl${snd ? ' on' : ''}" id="swSnd"></button></div>
       <div class="switchRow"><div class="meta"><b>Toasts de depuración</b><span>Mostrar errores y avisos técnicos en pantalla</span></div><button class="tgl${debugToasts ? ' on' : ''}" id="swDebugToasts"></button></div>
       <div class="sub" id="pushState" style="padding:8px 10px">Consultando estado…</div>
-      <button class="mBtn" id="tPush">Probar aviso</button>
+      <button class="mBtn sec" id="tPush">Probar aviso</button>
       <div class="sub" style="padding:8px 10px">Por privacidad nunca se muestra el contenido del mensaje.</div></div>`;
                     pushDiag();
                     document.getElementById('tPush').onclick = async () => {
@@ -23077,7 +23086,7 @@
                 <div class="switchRow"><div class="meta"><b>Service worker <i class="ldSize" id="ldSzSw"></i></b><span>Se desregistra y se reinstala limpio al recargar.</span></div><button class="tgl" id="ldSelSw" role="switch" aria-checked="false" aria-label="Desregistrar el service worker"></button></div>
                 <div id="ldGroups"></div>
             </div>
-            <button class="mBtn" id="ldRefresh">Actualizar medidas</button>
+            <button class="mBtn sec" id="ldRefresh">Actualizar medidas</button>
             <button class="mBtn peligro" id="ldClean">Limpiar lo seleccionado</button>
             <div class="sub" id="ldStatus" style="padding:8px 10px"></div></div>`;
                 /* Interruptores: el mismo gesto que en Notificaciones (un
@@ -23430,7 +23439,7 @@
                     main.querySelectorAll('[data-unblock]').forEach(button => button.onclick = () => unblockFromSettings(button.dataset.unblock));
                 } catch (error) {
                     console.error('No se pudieron cargar los contactos bloqueados:', error);
-                    main.innerHTML = '<div class="settingsSectionContent"><div class="sub" style="padding:12px">No se pudieron cargar los contactos bloqueados. Inténtalo de nuevo.</div><button class="mBtn" onclick="paintBlockedContacts()">Reintentar</button></div>';
+                    main.innerHTML = '<div class="settingsSectionContent"><div class="sub" style="padding:12px">No se pudieron cargar los contactos bloqueados. Inténtalo de nuevo.</div><button class="mBtn sec" onclick="paintBlockedContacts()">Reintentar</button></div>';
                 }
             }
             async function unblockFromSettings(username) {

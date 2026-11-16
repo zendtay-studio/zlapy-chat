@@ -755,15 +755,15 @@
         const actions = [];
 
         if (contact && !isSelf(username)) {
-            actions.push(`<button class="mBtn" type="button" data-sheet-action="message" data-user="${escapeHtml(cuenta)}">Enviar mensaje</button>`);
+            actions.push(`<button class="mBtn sec" type="button" data-sheet-action="message" data-user="${escapeHtml(cuenta)}">Enviar mensaje</button>`);
         }
         if (isAdmin() && !isSelf(username)) {
-            actions.push(`<button class="mBtn" type="button" data-sheet-action="${admin ? 'remove-admin' : 'make-admin'}" data-user="${escapeHtml(username)}">${admin ? 'Quitar administrador' : 'Hacer administrador'}</button>`);
+            actions.push(`<button class="mBtn sec" type="button" data-sheet-action="${admin ? 'remove-admin' : 'make-admin'}" data-user="${escapeHtml(username)}">${admin ? 'Quitar administrador' : 'Hacer administrador'}</button>`);
         }
         if (!isSelf(username)) {
             /* «Agregar» solo cuando no es contacto: al añadirlo, el selector
                de contactos y la ficha se refrescan con el nuevo. */
-            actions.push(`<button class="mBtn" type="button" data-sheet-action="${contact ? 'view-profile' : 'add-contact'}" data-user="${escapeHtml(contact ? cuenta : username)}">${contact ? 'Ver perfil' : 'Agregar contacto'}</button>`);
+            actions.push(`<button class="mBtn sec" type="button" data-sheet-action="${contact ? 'view-profile' : 'add-contact'}" data-user="${escapeHtml(contact ? cuenta : username)}">${contact ? 'Ver perfil' : 'Agregar contacto'}</button>`);
         }
 
         const name = displayName(username);

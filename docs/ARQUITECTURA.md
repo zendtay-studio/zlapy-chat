@@ -1403,7 +1403,30 @@ guardarse: el servidor nunca los ve. Es el mismo modelo que los chats
 
 ---
 
-## 9. Operación
+## 9. Cliente web: jerarquía de botones
+
+El cliente no dibuja los botones con colores sueltos: hay CUATRO categorías y
+todas salen de los mismos tokens, definidos en `public/css/theme.css` y
+recalculados por `public/js/button-theme.js`.
+
+| Categoría | Clase | Token | Origen del color |
+| --- | --- | --- | --- |
+| Primaria | `.ok` | `--ok-fill`, `--ok-ink`, `--ok-edge` | El acento del tema tal cual si es claro; aclarado hacia blanco si es tan oscuro como el fondo |
+| Secundaria | `.sec` | `--sec-fill`, `--sec-line` | Gris de la interfaz (`--surface-raised`): mezclarlo con el acento oscuro lo dejaba a 1.09:1 del fondo |
+| Cancelar | *(sin clase)* | `--line`, `--text` | Borde fino sobre fondo transparente |
+| Eliminar | `.peligro` | `--danger-fill`, `--danger-strong`, `--danger` | Rojo fijo, independiente del tema |
+
+`button-theme.js` se ejecuta al cargar (con el acento que `appearance.js` ya
+dejó cacheado, para no parpadear) y se vuelve a llamar en cada cambio de tema
+desde `applyWall()` (index) y desde el propio `apply()` de `appearance.js`. La
+decisión de aclarar o no es por **luminancia**: por encima de 0.3 el acento se
+usa literal, por debajo se mezcla con blanco hasta ~6-9:1. Los selectores
+locales de página con ID (`#settingsMain .mBtn`) excluyen las variantes con
+`:not(.ok, .sec, .peligro)`: si no, su especificidad aplastaría la jerarquía.
+
+---
+
+## 10. Operación
 
 ### 9.1 Supervisor (`ops/runtime/supervisor.js`)
 
@@ -1524,7 +1547,7 @@ historias y adjuntos cifrados con la llave anterior").
 
 ---
 
-## 10. Anexo: índice de referencias
+## 11. Anexo: índice de referencias
 
 | Tema | Ficheros |
 | --- | --- |

@@ -30,17 +30,18 @@ Todo vive en dos ficheros SQLite: `data/zlapy.db` (datos de la plataforma) y
 4. [Configuración](#configuración)
 5. [HTTPS y el móvil](#https-y-el-móvil)
 6. [Uso](#uso)
-7. [Arquitectura](#arquitectura)
-8. [Cifrado](#cifrado)
-9. [Base de datos](#base-de-datos)
-10. [API](#api)
-11. [Estructura de ficheros](#estructura-de-ficheros)
-12. [Pruebas y CI](#pruebas-y-ci)
-13. [Copias de seguridad](#copias-de-seguridad)
-14. [Operación](#operación)
-15. [Seguridad](#seguridad)
-16. [Resolución de problemas](#resolución-de-problemas)
-17. [Documentación](#documentación)
+7. [Interfaz y accesibilidad](#interfaz-y-accesibilidad)
+8. [Arquitectura](#arquitectura)
+9. [Cifrado](#cifrado)
+10. [Base de datos](#base-de-datos)
+11. [API](#api)
+12. [Estructura de ficheros](#estructura-de-ficheros)
+13. [Pruebas y CI](#pruebas-y-ci)
+14. [Copias de seguridad](#copias-de-seguridad)
+15. [Operación](#operación)
+16. [Seguridad](#seguridad)
+17. [Resolución de problemas](#resolución-de-problemas)
+18. [Documentación](#documentación)
 
 ---
 
@@ -391,6 +392,35 @@ invalida al cerrar sesión, al cambiar la contraseña o al reiniciar el servidor
 
 ---
 
+## Interfaz y accesibilidad
+
+Reglas del cliente web. Se comprueban con medidas de contraste reales (WCAG AA: 4.5:1 para texto, 3:1 para bordes de componentes), no a ojo.
+
+**Jerarquía de botones: cuatro categorías, ni una más** (definidas en `public/css/theme.css`).
+
+| Categoría | Clase | Aspecto | Cuándo |
+| --- | --- | --- | --- |
+| Primaria | `.ok` | Relleno del color del acento, tinta que contraste | La acción que hace avanzar: «Añadir», «Guardar», «Aplicar» |
+| Secundaria | `.sec` | Gris del resto de la interfaz (`--surface-raised`), borde fino | Acciones reales que no son la principal: «Cambiar contraseña», «Reintentar», «Quitar foto» |
+| Cancelar | *(sin clase)* | Borde fino, sin relleno | Cancelar, cerrar, atrás |
+| Eliminar | `.peligro` | Fondo rojo y borde rojo | Destructivo: «Eliminar cuenta», «Borrar para todos» |
+
+**El acento se respeta.** La primaria usa el color del acento TAL CUAL cuando el tema elegido es claro (Coral, `#f4a58c`); solo cuando el acento es tan oscuro como el fondo (el bosque por defecto, `#25483c`, daría 1.9:1: un botón invisible) se aclara hacia blanco y la tinta pasa a oscura. Quien lo decide es `public/js/button-theme.js` por **luminancia** (límite 0.3), que recalcula `--ok-fill`, `--ok-ink` y `--ok-edge` en cada cambio de tema; `theme.css` deja el bosque por defecto para el primer pintado sin parpadeo. La secundaria NO se mezcla con el acento: con uno oscuro quedaba a 1.09:1 del fondo, así que es el gris del resto de la interfacia.
+
+Medidas sobre el fondo de la app (`--page`/`--surface`): primaria 8.8:1 en Coral (5.8:1 con su tinta `#5b2d18`) y 7.5:1 en bosque · secundaria 14.8:1 de texto · eliminar 5.9:1 de texto y 4.7:1 de borde · cancelar 14.8:1 · anillo de foco 11:1.
+
+Reglas que las acompañan:
+
+- **Un botón por pantalla lleva `.ok`.** Dos primarias compiten y ninguna lo es.
+- **El destructivo es el único rojo.** Si todo se marca, nada se marca.
+- **No se distingue una acción solo por el color:** todas llevan texto (o `aria-label` cuando son solo icono).
+- **Objetivo táctil ≥ 44 px.** Los botones de estas familias miden 46 px de alto.
+- **Foco visible siempre:** anillo de 2 px en `--focus` (11:1 contra el fondo). Se pintó con `--accent` hasta ahora, que es casi del mismo tono que el fondo y no se veía.
+- **Desactivado:** opacidad .45, `cursor: default` y sin cambio de color al pasar el ratón, para que no parezca pulsable.
+- **Variedades por página:** si una página necesita botones propios, se parte de estas clases en vez de redefinir colores. Un selector con ID (p. ej. `#settingsMain .mBtn`) tiene más especificidad que `.mBtn.ok` y vuelve a dejar los botones iguales: por eso las reglas locales llevan `:not(.ok, .sec, .peligro)`.
+
+---
+
 ## Arquitectura
 
 ```
@@ -670,7 +700,6 @@ public/                el cliente web (PWA): las páginas sueltas en la raíz
   js/                  la lógica: sw.js (service worker real), transport.js y
                        transport-crypto.js (primitivas), appearance.js, popmenu.js,
                        autogrow.js, avatar-editor.js, group-create.js,
-                       group-details.js, group-details-demo.js, sticker-editor.js,
                        emoji-picker.js, animated-webp.js, local-data.js,
                        interaction-guard.js y vendor/ (caras bbot)
   css/                 theme.css, login.css, popmenu.css, fonts.css, emoji-picker.css,

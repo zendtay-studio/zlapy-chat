@@ -294,20 +294,18 @@
       margin-top: 12px
     }
 
+    /* Categoría por defecto: «cancelar» (borde fino, sin relleno). La
+       primaria lleva .ok (relleno del acento) y la secundaria .sec (gris);
+       los colores vienen de theme.css. */
     .btns button {
       flex: 1;
-      background: #2a3942;
-      color: #e9edef;
-      border: none;
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--line);
       border-radius: 10px;
       padding: 13px;
       font-size: 14.5px;
       cursor: pointer
-    }
-
-    .btns button.ok {
-      background: var(--accent);
-      color: var(--accent-ink)
     }
 
     .quickBar {
@@ -369,6 +367,7 @@
   <script src="/js/transport-crypto.js"></script>
   <script src="/js/transport.js"></script>
   <script src="/js/appearance.js"></script>
+    <script src="/js/button-theme.js"></script>
 </head>
 
 <body class="page-privacy">
@@ -535,7 +534,7 @@
         main.querySelectorAll('[data-unblock]').forEach(button => button.onclick = () => unblock(button.dataset.unblock));
       } catch (error) {
         console.error('No se pudieron cargar los contactos bloqueados:', error);
-        main.innerHTML = '<div class="help">No se pudieron cargar los contactos bloqueados.</div><button onclick="paintBlocked()">Reintentar</button><button onclick="renderRows()">Atrás</button>';
+        main.innerHTML = '<div class="help">No se pudieron cargar los contactos bloqueados.</div><div class="btns"><button class="sec" onclick="paintBlocked()">Reintentar</button><button onclick="renderRows()">Atrás</button></div>';
       }
     }
     async function unblock(username) {

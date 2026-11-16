@@ -32,6 +32,9 @@
         root.setProperty('--accent-secondary', receiver);
         root.setProperty('--accent-hover', 'color-mix(in srgb, ' + (accent || sender) + ' 88%, ' + senderText + ')');
         root.setProperty('--accent-soft', 'color-mix(in srgb, ' + (accent || sender) + ' 18%, transparent)');
+        /* Los tokens de los botones (primaria/secundaria) dependen de si el
+           acento es claro u oscuro: se recalculan con cada cambio de tema. */
+        if (window.ZlapyButtonTheme) window.ZlapyButtonTheme(accent || sender);
         return { sender, senderText, receiver, accent };
     };
 

@@ -22,6 +22,32 @@
   --toolbar-control-size: 40px;
   --toolbar-icon-size: 24px;
   --toolbar-icon-color: var(--text);
+  /* Jerarquía de botones (regla de UI): CUATRO categorías, ni una más.
+     El rediseño dejó todos los botones con el mismo borde fino sobre fondo
+     transparente y la jerarquía desapareció: no se distinguía la acción
+     principal de «Cancelar» ni de «Eliminar».
+       .ok       primaria   → relleno del color del acento, tinta oscura
+       .sec      secundaria → gris con acento (como el botón de cámara activo)
+       (sin clase) cancelar → borde fino, sin relleno (como estaba)
+       .peligro  eliminar   → fondo ROJO + borde rojo
+     Los tokens de .ok y .sec dependen de la CLARIDAD del acento: con un
+     acento oscuro como el bosque por defecto, usarlo tal daría 1.9:1 (botón
+     invisible), así que se aclara hacia blanco; con uno claro (Coral) se usa
+     tal cual. Los recalcula public/js/button-theme.js al elegir tema.
+     Contraste medido sobre --surface (AA: 4.5:1 texto, 3:1 borde):
+       primaria 9.1:1 (bosque) / 5.8:1 (coral) · secundaria 15.8:1 ·
+       eliminar 6.6:1 texto / 3.6:1 borde.
+     El foco usa --focus, no --accent: el acento bosque es casi del mismo tono
+     que el fondo y el anillo no se veía (ahora 11:1). */
+  --ok-fill: color-mix(in srgb, var(--accent) 45%, #ffffff);
+  --ok-ink: #0b141a;
+  --ok-edge: color-mix(in srgb, var(--accent) 45%, var(--ok-fill));
+  --sec-fill: var(--surface-raised);
+  --sec-line: var(--line);
+  --danger: #ff8f8f;
+  --danger-strong: #ff6b6b;
+  --danger-fill: color-mix(in srgb, #ff6b6b 20%, var(--surface));
+  --focus: #8fd6bb;
 }
 
 body,
@@ -371,13 +397,16 @@ body.page-stories a {
   border-left: 3px solid #9ba5b0
 }
 
+/* Categoría por defecto en las páginas públicas: «cancelar» (borde fino,
+   sin relleno), igual que .mBtn sin clase. El gris es la secundaria (.sec)
+   y el acento la primaria (.ok). */
 .page-privacy header button,
 .page-profile button,
 .page-view button,
 .page-stories button:not(.storyFab),
 .page-privacy .btns button,
 .page-privacy .pickerBtns button {
-  background: var(--surface-raised);
+  background: transparent;
   border: 1px solid var(--line);
   border-radius: 14px;
   color: var(--text);
@@ -385,14 +414,22 @@ body.page-stories a {
   transition: background .15s, transform .15s
 }
 
+.page-profile .ghost,
+.page-privacy .btns button.sec,
+.page-privacy .pickerBtns button.sec,
+.page-privacy .row [data-unblock] {
+  background: var(--sec-fill);
+  border-color: var(--sec-line)
+}
+
 .page-privacy header button,
 .page-profile button:not(.danger):not(.ghost),
 .page-view button.green,
 .page-privacy .btns button.ok,
 .page-privacy .pickerBtns button.ok {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-ink)
+  background: var(--ok-fill);
+  border-color: var(--ok-edge);
+  color: var(--ok-ink)
 }
 
 .page-privacy header button:hover,
@@ -410,18 +447,16 @@ body.page-stories a {
 .page-view button.green:hover,
 .page-privacy .btns button.ok:hover,
 .page-privacy .pickerBtns button.ok:hover {
-  background: color-mix(in srgb, var(--accent) 82%, white)
+  background: color-mix(in srgb, var(--ok-fill) 88%, #ffffff)
 }
 
 .page-profile button.danger,
 .page-view button.danger,
 .page-stories button.danger,
-.page-profile .danger,
-.page-view .danger,
-.page-stories .danger {
-  background: #2b1d20;
-  color: #f15c6d;
-  border-color: #493035
+.page-profile button.danger {
+  background: var(--danger-fill);
+  border-color: var(--danger-strong);
+  color: var(--danger)
 }
 
 /* ===== Selector de contactos: un único diseño para toda la app =====
@@ -654,26 +689,104 @@ body.page-stories a {
   transition: background .16s ease, border-color .16s ease
 }
 
+/* ----- Jerarquía de botones: una categoría por intención -----
+   El hover SOLO lleva el borde hacia el acento cuando el botón es neutral;
+   las variantes ya tienen su propio hover más abajo. */
 .mBtn:hover,
 .pickerBtns button:hover,
 .page-privacy .btns button:hover {
   background: color-mix(in srgb, var(--text) 8%, transparent);
-  border-color: var(--accent)
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--line))
 }
 
+/* PRIMARIA: relleno del color del acento. Antes era --accent sobre --surface
+   (1.9:1): por eso «Añadir» y «Cancelar» se leían iguales. */
 .mBtn.ok,
 .pickerBtns button.ok,
-.page-privacy .btns button.ok {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-ink)
+.page-privacy .btns button.ok,
+.page-privacy .pickerBtns button.ok {
+  background: var(--ok-fill);
+  border-color: var(--ok-edge);
+  color: var(--ok-ink)
 }
 
+.mBtn.ok:hover,
+.pickerBtns button.ok:hover,
+.page-privacy .btns button.ok:hover,
+.page-privacy .pickerBtns button.ok:hover {
+  background: color-mix(in srgb, var(--ok-fill) 88%, #ffffff);
+  border-color: color-mix(in srgb, var(--ok-edge) 70%, var(--accent))
+}
+
+/* SECUNDARIA: relleno gris, como el botón de cámara cuando está activo. */
+.mBtn.sec,
+.pickerBtns button.sec,
+.page-privacy .btns button.sec,
+.page-privacy .pickerBtns button.sec {
+  background: var(--sec-fill);
+  border-color: var(--sec-line);
+  color: var(--text)
+}
+
+.mBtn.sec:hover,
+.pickerBtns button.sec:hover,
+.page-privacy .btns button.sec:hover,
+.page-privacy .pickerBtns button.sec:hover {
+  background: color-mix(in srgb, var(--text) 28%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--sec-line))
+}
+
+/* ELIMINAR: fondo rojo y borde rojo. El relleno anterior (#2b1d20) era el
+   mismo negro que el resto y el texto rojo no bastaba para leerlo como
+   peligro. */
 .mBtn.peligro,
-.page-profile .confirmDanger {
-  background: #2b1d20;
-  border-color: #493035;
-  color: #f09b9b
+.pickerBtns button.peligro,
+.page-profile .confirmDanger,
+.page-view button.danger,
+.page-stories button.danger {
+  background: var(--danger-fill);
+  border-color: var(--danger-strong);
+  color: var(--danger)
+}
+
+.mBtn.peligro:hover,
+.pickerBtns button.peligro:hover,
+.page-profile .confirmDanger:hover,
+.page-view button.danger:hover,
+.page-stories button.danger:hover {
+  background: color-mix(in srgb, var(--danger-strong) 30%, var(--surface));
+  border-color: color-mix(in srgb, var(--danger-strong) 78%, #ffffff)
+}
+
+/* Desactivado: sin hover y sin cambios de relleno, para que no parezca
+   pulsable (el único estilo que había era la opacidad de #peopleOk). */
+.mBtn:disabled,
+.pickerBtns button:disabled,
+.page-privacy .btns button:disabled {
+  opacity: .45;
+  cursor: default
+}
+
+.mBtn:disabled:hover,
+.pickerBtns button:disabled:hover,
+.page-privacy .btns button:disabled:hover {
+  background: transparent;
+  border-color: var(--line)
+}
+
+.mBtn.ok:disabled:hover,
+.pickerBtns button.ok:disabled:hover {
+  background: var(--ok-fill)
+}
+
+.mBtn.sec:disabled:hover,
+.pickerBtns button.sec:disabled:hover {
+  background: var(--sec-fill)
+}
+
+.mBtn.peligro:disabled:hover,
+.pickerBtns button.peligro:disabled:hover {
+  background: var(--danger-fill)
 }
 
 #toast {
@@ -689,7 +802,7 @@ a:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus);
   outline-offset: 2px
 }
 

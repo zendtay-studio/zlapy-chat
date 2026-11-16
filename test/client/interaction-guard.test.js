@@ -12,7 +12,6 @@ const pages = [
     'sticker-creator.html',
     'group-create.html',
     'group-details.html',
-    'group-details-demo.html',
     'stories.html',
     'privacy.html',
     'view.html',

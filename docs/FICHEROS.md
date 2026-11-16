@@ -266,7 +266,6 @@ y `public/css/`; en la raíz de `public/` solo quedan las páginas y **dos
 | `public/css/theme.css` | 803 | Hoja de estilos común: tokens CSS, tema oscuro, formularios y controles. La cargan todas las páginas. | — |
 | `public/css/emoji-picker.css` | 199 | Estilos del selector de emojis. | — |
 | `public/css/sticker-editor.css` | 1275 | Estilos del editor de stickers. | — |
-| `public/css/group-details-demo.css` | 1178 | Estilos de la demostración de la ficha de grupo. | — |
 | `public/css/liquid-glass.css` | 0 | **Vacío**: reserva de nombre, sin reglas. Se puede borrar sin efecto. | — |
 | `public/css/fonts.css` | 41 | Tipografía Outfit servida en local: dos `@font-face` variables (`latin` y `latin-ext`), la pila `--font-ui` y el `font-family` base de la interfaz. La cargan todas las páginas antes que el resto de CSS. | — |
 | `public/css/login.css` | 418 | Estilos propios de la pantalla de acceso. | — |
@@ -276,13 +275,13 @@ y `public/css/`; en la raíz de `public/` solo quedan las páginas y **dos
 | `public/css/group-details.css` | 1620 | Estilos propios de la ficha de grupo (integrantes, políticas, solicitudes). | — |
 | `public/js/transport-crypto.js` | 424 | Primitivas criptográficas en JavaScript puro para el canal: SHA-256, HMAC-SHA256, HKDF, X25519, ChaCha20, `aeadSeal`/`aeadOpen`, construcción/descifrado del sobre HTTP y de los frames WebSocket. Se implementa a mano porque `crypto.subtle` no existe en contextos no seguros (`http://` en la LAN); solo usa `crypto.getRandomValues`. Expone `window.ZlapyTransport`. | `ALGO`, `sha256`, `hmacSha256`, `hkdf`, `x25519`, `publicFromPrivate`, `aeadSeal`, `aeadOpen`, `chacha20`, `encrypt`, `decryptResponse`, `deriveSessionKey`, `requestAad`, `responseAad`, `wsKey`, `wsSeal`, `wsOpen`, `toBase64`, `fromBase64`, `randomBytes`, `BASE_POINT` |
 | `public/js/transport.js` | 253 | Integración del canal con la app: envuelve `fetch` (solo `POST` del mismo origen con cuerpo JSON: cifra la petición y descifra la respuesta), cachea la clave pública de `/config` y expone `ZlapyTransportReady()`. Extiende `WebSocket` para enviar el saludo `enc`, encolar los envíos hasta tener sesión y descifrar los frames `z1:` en `onmessage`/`addEventListener`. Si no hay clave, todo sigue en claro. | IIFE; expone `window.ZlapyTransportReady` y reemplaza `window.fetch`/`window.WebSocket`. |
-| `public/js/appearance.js` | 95 | Aplica el acento configurado por el usuario como variables CSS (`--accent`, `--accent-ink`, …) leyendo `localStorage` y luego `GET /account/chat-settings`. | IIFE con `'use strict'`. Lo cargan profile, view, stories y privacy (`index.html` lo tiene inline). |
+| `public/js/appearance.js` | 98 | Aplica el acento configurado por el usuario como variables CSS (`--accent`, `--accent-ink`, …) leyendo `localStorage` y luego `GET /account/chat-settings`. Al pintar recalcula los tokens de botones con `window.ZlapyButtonTheme`. | IIFE con `'use strict'`. Lo cargan group-create, group-details, login, privacy, profile, sticker-creator, stories y view (`index.html` lo tiene inline). |
+| `public/js/button-theme.js` | 59 | Jerarquía de botones derivada del acento: recalcula `--ok-fill`/`--ok-ink`/`--ok-edge` (primaria) y `--sec-fill`/`--sec-line` (secundaria). Un acento claro (Coral) se usa tal cual; uno oscuro como el bosque se aclara hasta 6-9:1 para que el botón no sea invisible. | IIFE; expone `window.ZlapyButtonTheme(accent)` y se autoaplica con el acento ya pintado por `appearance.js`. Lo cargan todas las páginas detrás de `appearance.js`. |
 | `public/js/popmenu.js` | 221 | Pop-menu compartido: `ZlapyPopMenu.open({anchor, items, onSelect})`. Se usa en el chat, la lista de contactos, las historias y los integrantes del grupo. | `window.ZlapyPopMenu` (`open`, `close`, `isOpen`, `icons`) |
 | `public/js/autogrow.js` | 37 | Textarea que crece con su contenido (también al cargar). | `window.ZlapyAutoGrow` (`grow`, `attach`) |
 | `public/js/avatar-editor.js` | 321 | Editor de foto (perfil y grupo): recorte 512×512 con arrastre, zoom y punto de encuadre. | `window.ZlapyAvatarEditor.open({file, onSave})` |
 | `public/js/group-create.js` | 775 | Lógica del formulario de creación de grupo: selección de miembros y subida del avatar. | IIFE de página. |
 | `public/js/emoji-picker.js` | 194 | Selector de emojis por categorías, buscador sin acentos y uso en el compositor y las reacciones. | `window.ZlapyEmoji` |
-| `public/js/group-details-demo.js` | 386 | Página de demostración de la ficha de grupo sin servidor (maqueta de datos). | IIFE de página. |
 | `public/js/interaction-guard.js` | 9 | Desactiva el menú de selección nativa del móvil salvo en campos editables. | IIFE de página. |
 | `public/js/animated-webp.js` | 108 | Multiplexor de WebP animados (leer fotogramas y tiempos) que usan el editor y el visor de stickers. | UMD. |
 | `public/js/sticker-editor.js` | 1941 | Editor de stickers: recorte, vídeo, caras bbot con editor de emociones y coreografía determinista del pack. | IIFE de página. |
@@ -292,7 +291,6 @@ y `public/css/`; en la raíz de `public/` solo quedan las páginas y **dos
 | `public/js/sw.js` | 73 | Service worker: cachea el *shell* (`zlapy-v157`, fuentes Outfit incluidas), sirve offline solo las navegaciones del shell (el resto falla de forma explícita, sin inventar un 504 vacío) y gestiona las notificaciones push y su clic. | — |
 | `public/sw.js` | 1 | **Shim** de compatibilidad: `importScripts('/js/sw.js')`. Los navegadores que ya registraron `/sw.js` siguen recibiendo actualizaciones a través de él. | Sin lógica propia. |
 | `public/transport-crypto.js` | 4 | **Shim** de compatibilidad: comenta que la ruta histórica sigue existiendo y hace `require('./js/transport-crypto.js')` para la suite de Node. | Se borrará cuando ningún test cargue la ruta antigua. |
-| `public/group-details-demo.html` | 247 | Demostración estática de la ficha de grupo (maqueta). | Página suelta. |
 | `public/sticker-creator.html` | 49 | Página del creador de stickers (carga el editor completo). | Carga `/css/{theme,sticker-editor,avatar-editor,popmenu}.css` y `/js/sticker-editor.js`. |
 | `public/manifest.webmanifest` | 14 | Manifiesto PWA: nombre, `display: standalone`, colores e iconos. | — |
 | `public/image/icon-192-border.webp` | binario | Icono 192×192. | — |
