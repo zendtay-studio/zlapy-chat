@@ -1,0 +1,46 @@
+# Plantilla de configuración de cloudflared.
+#
+# Copia este fichero como `zty.yml` y cambia las dos cosas tuyas: el UUID del
+# túnel y el hostname de `ingress`. El token NO va aquí: vive en
+# `CLOUDFLARE_TUNNEL_TOKEN` (`.env`), porque esta plantilla SÍ se versiona.
+#
+#   cp zty.yml.example zty.yml
+#
+# Comprobación rápida antes de usarlo:
+#   cloudflared --config zty.yml ingress validate
+#
+# Documentación: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/configuration/ingress/
+
+tunnel: 00000000-0000-0000-0000-000000000000
+
+# Estas dos estaban antes como flags en el script `tunnel` de package.json
+# (`--edge-ip-version 4 --protocol http2`). Vive aqui mejor: son claves de
+# primer nivel, y tenerlas separadas del comando hacia facil que se pierdan al
+# tocar el script.
+#
+# protocol: http2 -- el valor por defecto es `auto`, que prueba QUIC sobre UDP
+#   y solo cae a http2 si no consigue establecer la conexion UDP. En esta maquina
+#   esa caida era intermitente: Cloudflare resolvia a una IP de borde v6 y el
+#   envio UDP a veces salia con `sendmsg: network is unreachable`. Fijar http2 lo
+#   hace determinista en vez de depender de en que orden fallen los intentos.
+#
+# edge-ip-version: "4" -- con comillas A PROPOSITO. cloudflared lo parsea como
+#   string, y sin ellas el `ingress validate` falla con "expected string found
+#   int". Es el valor por defecto, asi que se deja escrito para documentar que
+#   la conexion al borde es por IPv4; si el default cambiara en una version
+#   futura, aqui sigue diciendo lo que se quiere.
+protocol: http2
+edge-ip-version: "4"
+
+ingress:
+  # Se evaluan de arriba abajo y gana la primera que coincide. Una regla sin
+  # `hostname` captura cualquier dominio, y una sin `path` captura cualquier
+  # ruta.
+  - hostname: tunel.ejemplo.com
+    service: http://localhost:3000
+
+  # Catch-all obligatorio: sin esta ultima regla cloudflared se quejaria, y
+  # ademas deja escrito que este tunel no es un proxy abierto. Cualquier
+  # hostname que no sea el de arriba recibe un 404 desde el borde de Cloudflare,
+  # sin llegar nunca a la aplicacion.
+  - service: http_status:404
