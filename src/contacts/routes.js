@@ -30,11 +30,16 @@ function getContactsRequests(req, res, url, data, actor) {
     // avatar ni la descripción se incluyen en la respuesta.
     const canSeeAvatar = permite(profile, 'foto', req.authUser.username);
     const canSeeDescription = permiteDescripcion(profile, req.authUser.username);
+    /* El @usuario del solicitante se pinta solo si su privacidad lo
+       permite: la bandera viaja solo cuando esta OCULTO (ausente =
+       visible), igual que la presencia. */
+    const hideUsuario = !permite(profile, 'usuario', req.authUser.username);
     requests.push({
     id: sender.id, username: sender.username, sentAt: r.ts,
     name: isBlockedBy(profile, req.authUser.username) ? sender.username : (profile.name || sender.username),
     avatar: canSeeAvatar ? (validAvatar(profile.avatar) ? profile.avatar : '') : '',
-    description: canSeeDescription ? profile.desc || '' : ''
+    description: canSeeDescription ? profile.desc || '' : '',
+    ...(hideUsuario ? { verUsuario: false } : {})
     });
     }
     return json(res, 200, { requests });
@@ -46,10 +51,14 @@ function getContactsRequestsSent(req, res, url, data, actor) {
     const target = users.get(r.to_id);
     if (!target) continue;
     const profile = profiles[target.username] || {};
+    /* Igual que las recibidas: el @usuario del solicitado viaja oculto
+       si su privacidad 'usuario' lo niega a quien envio la solicitud. */
+    const hideUsuario = !permite(profile, 'usuario', req.authUser.username);
     requests.push({
     username: target.username,
     name: isBlockedBy(profile, req.authUser.username) ? target.username : (profile.name || target.username),
-    sentAt: r.ts
+    sentAt: r.ts,
+    ...(hideUsuario ? { verUsuario: false } : {})
     });
     }
     return json(res, 200, { requests });

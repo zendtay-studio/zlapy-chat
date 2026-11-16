@@ -79,7 +79,11 @@ function userList(viewerId) {
         const u = users.get(id);
         if (!u) continue;
         if (isBlockedBy(profiles[u.username], viewer.username)) continue;
-        out.push({ id: u.id, username: u.username, ...presenceEntry(u) });
+        /* El @usuario se pinta solo si su dueno lo permite: la bandera
+           viaja SOLO cuando esta oculto (ausente = visible), igual que
+           los campos de presencia. La decision la toma el servidor. */
+        const hideUsuario = !permite(profiles[u.username], 'usuario', viewer.username);
+        out.push({ id: u.id, username: u.username, ...(hideUsuario ? { verUsuario: false } : {}), ...presenceEntry(u) });
     }
     return sortUserList(out);
 }

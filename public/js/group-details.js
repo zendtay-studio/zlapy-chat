@@ -125,6 +125,15 @@
         return state.profiles[username] || null;
     }
 
+    /* ¿El @usuario de u está oculto para mí? El servidor decide: la lista
+       hideUsuario del grupo manda; el perfil cargado es el respaldo. */
+    function usuarioOculto(username) {
+        if (isSelf(username)) return false;
+        if (state.group && Array.isArray(state.group.hideUsuario) && state.group.hideUsuario.includes(username)) return true;
+        const profile = profileFor(username);
+        return !!(profile && profile.permisos && profile.permisos.verUsuario === false);
+    }
+
     function displayName(username) {
         const profile = profileFor(username);
         return (profile && typeof profile.name === 'string' && profile.name.trim())
@@ -537,7 +546,7 @@
         const admin = (state.group.admins || []).includes(username);
         const contact = contactByUsername(username);
         const presence = contact ? presenceText(contact) : '';
-        const subtitle = ['@' + username, presence].filter(Boolean).join(' · ');
+        const subtitle = [(usuarioOculto(username) ? '' : '@' + username), presence].filter(Boolean).join(' · ');
         return `<button class="contact" type="button" data-profile="${escapeHtml(username)}">
             ${avatarHtml(username, 'person-avatar', true)}
             <span class="person-copy">
@@ -603,7 +612,7 @@
             ${avatarHtml(username, 'person-avatar', false)}
             <span class="person-copy">
                 <span class="person-name"><b>${escapeHtml(displayName(username))}</b></span>
-                <span class="person-sub">@${escapeHtml(username)}</span>
+                <span class="person-sub">${usuarioOculto(username) ? '' : '@' + escapeHtml(username)}</span>
             </span>
             <span class="request-actions">
                 <button class="icon-action accept" type="button" data-request-action="approve" data-user="${escapeHtml(username)}" aria-label="Aceptar solicitud" title="Aceptar solicitud">
@@ -742,7 +751,7 @@
         openSheet(`<div class="profile-hero">
             ${avatar}
             <div class="mTitle">${escapeHtml(name)}</div>
-            <div class="mText">@${escapeHtml(username)}${presence ? ' · ' + escapeHtml(presence) : ''}</div>
+            <div class="mText">${usuarioOculto(username) ? '' : '@' + escapeHtml(username)}${presence ? (usuarioOculto(username) ? escapeHtml(presence) : ' · ' + escapeHtml(presence)) : ''}</div>
             ${admin ? '<span class="tag admin profile-role">Administrador</span>' : ''}
         </div>
         ${descCorta ? `<div class="profile-desc sheetMarkdown">${decorateSafe(descCorta)}</div>` : ''}
@@ -785,7 +794,7 @@
         const name = displayName(username);
         const ok = await confirmAction({
             title: 'Quitar del grupo',
-            text: `¿Quieres quitar a ${name} (@${username}) del grupo?`,
+            text: usuarioOculto(username) ? `¿Quieres quitar a ${name} del grupo?` : `¿Quieres quitar a ${name} (@${username}) del grupo?`,
             confirmLabel: 'Quitar'
         });
         if (!ok) return;
@@ -887,7 +896,7 @@
                     <input type="checkbox" value="${escapeHtml(username)}" ${checked ? 'checked' : ''}>
                     <span class="mSwitch" aria-hidden="true"></span>
                     <span class="av" style="${avatarStyle(username)}">${art}</span>
-                    <span class="meta"><b>${escapeHtml(displayName(username))}</b><span class="sub">@${escapeHtml(username)}</span></span>
+                    <span class="meta"><b>${escapeHtml(displayName(username))}</b>${usuarioOculto(username) ? '' : '<span class="sub">@' + escapeHtml(username) + '</span>'}</span>
                 </label>`;
             }).join('')
             : `<div class="help">${escapeHtml(pickerEmptyText(picker))}</div>`;

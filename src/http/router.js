@@ -440,7 +440,7 @@ const handleRequest = (req, res) => {
                 if (!g) return json(res, 404, { error: 'no existe' });
                 const isAdmin = g.admins.some(name => byName(name)?.id === req.authUser.id);
                 const isMember = g.memberIds.includes(req.authUser.id);
-                const notifyGroup = type => { for (const username of g.members) pushName(username, { type, group: pub(g) }); };
+                const notifyGroup = type => { for (const username of g.members) pushName(username, { type, group: pub(g, byName(username)?.id || '') }); };
 
                 if (data.join === true) {
                     /* Quien ya está dentro puede abrir el enlace de invitación
@@ -478,7 +478,7 @@ const handleRequest = (req, res) => {
                     writeGroupMeta(g);
                     initializeGroupSummary(req.authUser.id, id);
                     notifyGroup('group');
-                    return json(res, 200, pub(g));
+                    return json(res, 200, pub(g, req.authUser.id));
                 }
                 if (data.cancelJoin === true && !isMember) {
                     if (!g.joinRequests.some(r => r.userId === req.authUser.id)) return json(res, 404, { error: 'No disponible.' });
@@ -644,7 +644,7 @@ const handleRequest = (req, res) => {
                         g.joinRequests = g.joinRequests.filter(r => r.userId !== newMember.id);
                         writeGroupMeta(g);
                     }
-                    return json(res, 200, pub(g));
+                    return json(res, 200, pub(g, req.authUser.id));
                 }
                 const removeMember = data.removeMember || data.removed;
                 if (removeMember) {
@@ -667,7 +667,7 @@ const handleRequest = (req, res) => {
                     deleteGroupSummary(removed.id, id);
                     notifyGroup('group');
                     pushName(removeMember, { type: 'group-left', groupId: id });
-                    return json(res, 200, pub(g));
+                    return json(res, 200, pub(g, req.authUser.id));
                 }
                 if (data.leave === true) {
                     g.members = g.members.filter(u => u !== actor);
@@ -694,9 +694,9 @@ const handleRequest = (req, res) => {
                         invalidateGroupPubCache(id);
                     }
                     deleteGroupSummary(req.authUser.id, id);
-                    for (const u of g.members) pushName(u, { type: 'group', group: pub(g) });
+                    for (const u of g.members) pushName(u, { type: 'group', group: pub(g, byName(u)?.id || '') });
                     push(req.authUser, { type: 'group-left', groupId: id });
-                    return json(res, 200, pub(g));
+                    return json(res, 200, pub(g, req.authUser.id));
                 }
                 if (typeof data.seenTs === 'number' && isFinite(data.seenTs) && data.seenTs >= 0) {
                     const account = req.authUser;
@@ -768,8 +768,8 @@ const handleRequest = (req, res) => {
                     writeGroupMeta(g);
                     if (data.approveJoin && !yaMiembro) initializeGroupSummary(requested.id, id);
                     notifyGroup('group');
-                    if (data.approveJoin) pushName(requested.username, { type: 'group', group: pub(g) });
-                    return json(res, 200, pub(g));
+                    if (data.approveJoin) pushName(requested.username, { type: 'group', group: pub(g, byName(requested.username)?.id || '') });
+                    return json(res, 200, pub(g, req.authUser.id));
                 }
                 if (data.deleteMessage) {
                     const row = Stmt.getMessage.get(data.deleteMessage);
@@ -801,7 +801,7 @@ const handleRequest = (req, res) => {
                         g.admins = g.admins.filter(u => u !== target.username);
                     }
                     writeGroupMeta(g); notifyGroup('group');
-                    return json(res, 200, pub(g));
+                    return json(res, 200, pub(g, req.authUser.id));
                 }
                 const settingsKeys = ['rename', 'description', 'avatar', 'customId', 'visibility', 'joinPolicy', 'writePolicy', 'addPolicy', 'editPolicy', 'mentionAllPolicy', 'contentPolicy'];
                 /* Ajustes que deciden QUIÉN entra, QUIÉN edita, QUIÉN escribe
@@ -868,7 +868,7 @@ const handleRequest = (req, res) => {
                     if (previousVisibility === 'public' && g.visibility === 'private')
                         g.inviteCode = crypto.randomBytes(18).toString('base64url');
                     writeGroupMeta(g); notifyGroup('group');
-                    return json(res, 200, pub(g));
+                    return json(res, 200, pub(g, req.authUser.id));
                 }
                 return json(res, 400, { error: 'Acción no reconocida.' });
             }

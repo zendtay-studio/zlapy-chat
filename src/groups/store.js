@@ -18,7 +18,8 @@ const { db } = require('../db/database.js');
 const { pruneBlobHashes } = require('../db/transactions.js');
 const { readImage, storeImage } = require('../profile/images.js');
 const { push } = require('../realtime/notify.js');
-const { groupCache, groupPubCache, users } = require('../state.js');
+const { groupCache, groupPubCache, profiles, users } = require('../state.js');
+const { permite } = require('../users/privacy.js');
 const { byName, parseJsonSafe } = require('../users/helpers.js');
 const { makeCache } = require('../shared/cache.js');
 
@@ -234,7 +235,17 @@ const pub = (g, viewerId = '') => {
     const key = g.id + '\0' + viewerId;
     const cached = groupPubCache.get(key);
     if (cached) return { ...cached }; // Copia: los handlers decoran el objeto sin ensuciar la caché
+    /* El @usuario de cada integrante (y solicitante) se pinta solo si su
+       privacidad 'usuario' lo permite para ESTE visor: la decisión la toma
+       el SERVIDOR y viaja como lista de ocultos; el cliente solo obedece.
+       Sin visor la lista va vacía (los payloads públicos no la usan). */
+    const viewerAcc = viewerId ? users.get(viewerId) : null;
+    const hideUsuario = viewerAcc ? [...new Set([...g.members, ...(g.joinRequests || []).map(jr => jr.username)].filter(Boolean))].filter(name => {
+        const pr = profiles[name];
+        return pr && !permite(pr, 'usuario', viewerAcc.username);
+    }) : [];
     const out = {
+        hideUsuario,
         id: g.id, name: g.name, description: g.description, members: g.members,
         membersTotal: g.members.length,
         admins: g.admins, createdAt: g.createdAt, avatar: g.avatar || '',

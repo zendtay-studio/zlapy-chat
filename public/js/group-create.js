@@ -275,9 +275,13 @@
             const name = displayName(username);
             const src = avatarUrl(profile);
             const selected = state.selected.includes(username);
+            /* El @usuario del contacto se pinta solo si su privacidad lo
+               permite (verUsuario: false = oculto, decisión del servidor). */
+            const ocU = contact.verUsuario === false;
+            const sep = ocU ? '' : '<span class="sub-sep" aria-hidden="true">·</span>';
             const status = contact.online
                 ? '<span class="online-dot" aria-hidden="true"></span><span>en línea</span>'
-                : `<span class="sub-sep" aria-hidden="true">·</span><span>${escapeHtml(presenceText(contact))}</span>`;
+                : `${sep}<span>${escapeHtml(presenceText(contact))}</span>`;
             return `<button class="contact" type="button" data-contact="${escapeHtml(username)}" aria-pressed="${selected}" aria-label="${selected ? 'Quitar' : 'Añadir'} a ${escapeHtml(name)}">
                 <span class="person-avatar" aria-hidden="true">
                     <span>${escapeHtml(initials(name))}</span>
@@ -285,7 +289,7 @@
                 </span>
                 <span class="person-copy">
                     <span class="person-name">${escapeHtml(name)}</span>
-                    <span class="person-sub">@${escapeHtml(username)}${status}</span>
+                    <span class="person-sub">${ocU ? '' : '@' + escapeHtml(username)}${status}</span>
                 </span>
                 <span class="check" aria-hidden="true">
                     <svg class="icon"><use href="#i-check"></use></svg>

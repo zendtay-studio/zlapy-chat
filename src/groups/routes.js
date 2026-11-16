@@ -44,7 +44,7 @@ function getGroups(req, res, url, data, actor) {
     for (const r of myGids) {
     const g = readGroup(r.gid);
     if (!g) continue;
-    const pubG = { ...pub(g) };
+    const pubG = { ...pub(g, req.authUser.id) };
     if (g.admins.some(name => byName(name)?.id === req.authUser.id))
     pubG.joinRequests = g.joinRequests;
     else delete pubG.joinRequests;
@@ -151,8 +151,8 @@ function postGroups(req, res, url, data, actor) {
     });
     writeGroupMeta(g);
     for (const uuid of memberIds) writeGroupSummary(uuid, id, { gid: id, unread: 0, last: null });
-    for (const m of uniqMembers) pushName(m, { type: 'group', group: pub(g) });
-    return json(res, 200, pub(g));
+    for (const m of uniqMembers) pushName(m, { type: 'group', group: pub(g, byName(m)?.id || '') });
+    return json(res, 200, pub(g, req.authUser.id));
 }
 
 

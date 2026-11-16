@@ -13445,7 +13445,7 @@
                         return `<div class="requestCard" data-kind="group" data-group-id="${escapeHtml(request.groupId)}" data-user="${escapeHtml(request.username)}">
       <div class="avatar groupGrid">${groupAvHTML(group || { id: request.groupId, members: [] })}</div>
       <div class="requestInfo"><b>${escapeHtml(groupName)} <span class="sub">grupo</span></b>
-        <p>@${escapeHtml(request.username)} quiere unirse</p></div>
+        <p>${escapeHtml(request.name || displayNameOf(request.username))} quiere unirse</p></div>
       <div class="requestButtons">
         <button type="button" class="accept" data-action="approve-group" title="Aceptar" aria-label="Aceptar a @${escapeHtml(request.username)} en ${escapeHtml(groupName)}">${requestActionIcon('accept')}</button>
         <button type="button" class="reject" data-action="reject-group" title="Rechazar" aria-label="Rechazar a @${escapeHtml(request.username)}">${requestActionIcon('reject')}</button>
@@ -13460,7 +13460,7 @@
     </div>`).join('');
                     const incomingRows = incoming.map(request => `<div class="requestCard" data-user="${escapeHtml(request.username)}">
       <div class="avatar"><img src="${escapeHtml(request.avatar ? request.avatar : avatarUrl(request.username, request.id))}" alt=""></div>
-      <div class="requestInfo"><b>${escapeHtml(request.name || request.username)} <span class="sub">@${escapeHtml(request.username)}</span></b>
+      <div class="requestInfo"><b>${escapeHtml(request.name || request.username)}${request.verUsuario === false ? '' : ' <span class="sub">@' + escapeHtml(request.username) + '</span>'}</b>
         <p>${decorateMarkdownInline(request.description || 'Sin descripción disponible')}</p></div>
       <div class="requestButtons">
         <button type="button" data-action="profile" title="Ver perfil" aria-label="Ver el perfil de @${escapeHtml(request.username)}">${requestActionIcon('profile')}</button>
@@ -13470,7 +13470,7 @@
     </div>`).join('');
                     const sentRows = sent.map(request => `<div class="requestCard" data-user="${escapeHtml(request.username)}">
       <div class="avatar">${escapeHtml((request.name || request.username)[0].toUpperCase())}</div>
-      <div class="requestInfo"><b>${escapeHtml(request.name || request.username)} <span class="sub">@${escapeHtml(request.username)}</span></b>
+      <div class="requestInfo"><b>${escapeHtml(request.name || request.username)}${request.verUsuario === false ? '' : ' <span class="sub">@' + escapeHtml(request.username) + '</span>'}</b>
         <p>Solicitud enviada · esperando respuesta</p></div>
       <div class="requestButtons"><button type="button" class="reject" data-action="cancel-sent" title="Cancelar" aria-label="Cancelar la solicitud a @${escapeHtml(request.username)}">${requestActionIcon('cancel')}</button></div>
     </div>`).join('');
@@ -13642,6 +13642,14 @@
                 const profile = profilesCache[u];
                 const name = profile && profile.name;
                 return name && !isEncryptedProfileName(name) ? name : u;
+            }
+            /* ¿El @usuario de u está OCULTO para mí? La decisión la toma el
+               servidor (verUsuario: false en la lista de contactos); si la
+               bandera no viene, es visible. Yo siempre veo el mío. */
+            function usuarioOcultoDe(u) {
+                if (!u || u === me.username) return false;
+                const c = contacts.find(x => x.username === u);
+                return !!(c && c.verUsuario === false);
             }
             function permiteVer(owner, key, viewer) {
                 const p = (profilesCache[owner] || {}).privacy;
@@ -14635,7 +14643,7 @@
             : key === 'saved'
                 ? savedMessagesIcon()
                 : `<img src="${escapeHtml(avatarUrl(key.startsWith('dm:') ? key.slice(3) : key))}" alt="">`}</div>
-      <div class="meta"><div class="name">${escapeHtml(chatDisplayName(key))}</div><div class="sub">${key === 'saved' ? decorateMarkdownInline(lastPreview(me.username) || 'Envíate notas y archivos') : escapeHtml(key.startsWith('group:') ? 'Grupo' : '@' + key.slice(3))}</div></div>
+      <div class="meta"><div class="name">${escapeHtml(chatDisplayName(key))}</div><div class="sub">${key === 'saved' ? decorateMarkdownInline(lastPreview(me.username) || 'Envíate notas y archivos') : escapeHtml(key.startsWith('group:') ? 'Grupo' : usuarioOcultoDe(key.slice(3)) ? '' : '@' + key.slice(3))}</div></div>
       <button class="archivedUnarchive" type="button" data-archived-unarchive="${escapeHtml(key)}" title="Desarchivar" aria-label="Desarchivar ${escapeHtml(chatDisplayName(key))}">
         <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11h14V8"/><path d="M10 4v9M7 10l3-3 3 3"/></svg>
       </button>
@@ -14837,6 +14845,12 @@
 
             function upsertGroup(g) {
                 if (!g || !g.id) return;
+                /* Los avisos de grupo que llegan sin visor no traen
+                   hideUsuario: se conserva la lista ya conocida. */
+                if (g.hideUsuario === undefined) {
+                    const prev = groups.find(x => x.id === g.id);
+                    if (prev && prev.hideUsuario) g.hideUsuario = prev.hideUsuario;
+                }
                 const i = groups.findIndex(x => x.id === g.id);
                 if (i >= 0) groups[i] = g; else groups.push(g);
             }
@@ -15017,7 +15031,11 @@
                 for (const username of activeGroup.members) {
                     if (username === me.username) continue;
                     if (q && !(username.toLowerCase().includes(q) || displayNameOf(username).toLowerCase().includes(q))) continue;
-                    rows.push(`<div class="menRow" data-men="${escapeHtml(username)}"><div class="avatar sm">${avOrLetter(username)}</div><div class="meta"><div class="name">${escapeHtml(displayNameOf(username))}</div><div class="sub">@${escapeHtml(username)}</div></div></div>`);
+                    /* El @usuario del integrante se pinta solo si su
+                       privacidad lo permite: hideUsuario lo decide el
+                       servidor en el payload del grupo. */
+                    const ocU = activeGroup && Array.isArray(activeGroup.hideUsuario) && activeGroup.hideUsuario.includes(username);
+                    rows.push(`<div class="menRow" data-men="${escapeHtml(username)}"><div class="avatar sm">${avOrLetter(username)}</div><div class="meta"><div class="name">${escapeHtml(displayNameOf(username))}</div><div class="sub">${ocU ? '' : '@' + escapeHtml(username)}</div></div></div>`);
                 }
                 if (!rows.length) { panel.style.display = 'none'; return; }
                 panel.innerHTML = rows.slice(0, 8).join('');
