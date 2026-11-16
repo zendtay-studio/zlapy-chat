@@ -31,6 +31,7 @@
     "start": "node ops/install/ensure-deps.js && node ops/runtime/supervisor.js",
     "deps": "node ops/install/ensure-deps.js",
     "termux": "pkg update && pkg upgrade -y && pkg install python make clang sqlite && npm i --ignore-scripts && npm run rebuild:sqlite && node ops/install/check-native.js && npm start",
+    "update": "mkdir -p ~/tmp && rm -rf ~/tmp/zlapy-chat-update && (git clone https://github.com/zendtay-studio/zlapy-chat.git ~/tmp/zlapy-chat-update || { rm -rf ~/tmp/zlapy-chat-update; exit 1; }) && find . -mindepth 1 -maxdepth 1 ! -name 'data' ! -name 'backups' ! -name '.env' ! -name '.git' ! -name 'zty.yml' ! -name 'node_modules' -exec rm -rf {} + && cp -R ~/tmp/zlapy-chat-update/. . && rm -rf .git .update && rm -rf ~/tmp/zlapy-chat-update",
     "tunnel": "node ops/net/tunnel.js",
     "owner": "node ops/auth/owner-credentials.js",
     "test": "node --test --require ./test/bootstrap.js \"test/**/*.test.js\"",
