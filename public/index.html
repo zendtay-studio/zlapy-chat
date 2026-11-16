@@ -10466,55 +10466,23 @@
                 box-shadow: 0 0 0 7px color-mix(in srgb, var(--accent) 18%, transparent)
             }
 
-            #chat {
-                margin: 10px 12px 10px 0;
-                border: 0;
-                border-radius: 20px;
-                box-shadow: 0 12px 32px #0003
-            }
-
-            #contactPanel.on,
-            #groupPanel.on,
-            #stickerCreatorLayer.on {
-                margin-block: 10px;
-                border: 0;
-                border-radius: 20px;
-                box-shadow: 0 12px 32px #0003
-            }
-
+            /* El chat vuelve a ir a borde a borde (sin margen ni esquinas
+               redondeadas): la tarjeta flotante recortaba el papel tapiz y
+               en cada esquina asomaba el fondo de la pagina como una punta
+               clara que se leia como un borde blanco. */
             #contactPanel,
             #groupPanel,
             #stickerCreatorLayer {
                 background: var(--surface)
             }
 
-            #contactPanel.on {
-                margin-left: 0;
-                margin-right: 12px
-            }
-
             #contactPanel .cpInner {
                 width: var(--info-width, 400px)
             }
 
-            #groupPanel.on {
-                margin-left: 0;
-                margin-right: 12px
-            }
-
-            #stickerCreatorLayer.on {
-                margin-left: 0;
-                margin-right: 12px
-            }
 
             #groupPanel .gpInner {
                 width: min(var(--info-width, 400px), 320px)
-            }
-
-            #chat:has(~ #contactPanel.on),
-            #chat:has(~ #groupPanel.on),
-            #chat:has(~ #stickerCreatorLayer.on) {
-                margin-right: 8px
             }
 
             #chat:has(.sheetPage.on) .sheetPage {
