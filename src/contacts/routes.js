@@ -11,7 +11,7 @@ const { Stmt } = require('../db/statements.js');
 const { json } = require('../http/responses.js');
 const { contactLimiter } = require('../http/rate-limit.js');
 const { rejectRateLimited } = require('../http/helpers.js');
-const { readGroup, writeGroupMeta } = require('../groups/store.js');
+const { readGroup, sharesGroup, writeGroupMeta } = require('../groups/store.js');
 const { notifyUser, avatarPushUrl, pushNameOf } = require('../push/vapid.js');
 const { broadcastUsersAround, connectContacts, push, pushName, pushStories, removeContacts, updateContactRequests } = require('../realtime/notify.js');
 const { validAvatar } = require('../shared/validation.js');
@@ -69,7 +69,13 @@ function postContacts(req, res, url, data, actor) {
        tiene): sin cota era la forma barata de bombardear a alguien con
        notificaciones. El par "solicitud y respuesta" comparte tope. */
     if (rejectRateLimited(res, contactLimiter, req.authUser.id, 20, 'solicitudes de contacto por minuto')) return;
-    const target = byName(typeof data.username === 'string' ? data.username.trim() : '');
+    const requested = typeof data.username === 'string' ? data.username.trim() : '';
+    /* El cliente puede enviar el alias opaco (UUID) de un integrante con el
+       @usuario oculto: se acepta si comparte grupo con quien agrega, para
+       que «Agregar contacto» siga funcionando sin recibir el nombre real. */
+    const alias = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requested)
+        && sharesGroup(requested.toLowerCase(), req.authUser.id) ? users.get(requested.toLowerCase()) : null;
+    const target = byName(requested) || alias;
     if (!target) return json(res, 404, { error: 'No account found.' });
     if (target.id === req.authUser.id) return json(res, 400, { error: 'No puedes agregarte.' });
     if (req.authUser.contacts.has(target.id)) return json(res, 200, { ok: true, status: 'contact' });

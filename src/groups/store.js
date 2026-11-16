@@ -18,8 +18,8 @@ const { db } = require('../db/database.js');
 const { pruneBlobHashes } = require('../db/transactions.js');
 const { readImage, storeImage } = require('../profile/images.js');
 const { push } = require('../realtime/notify.js');
-const { groupCache, groupPubCache, profiles, users } = require('../state.js');
-const { permite } = require('../users/privacy.js');
+const { groupCache, groupPubCache, users } = require('../state.js');
+const { publicName } = require('../users/privacy.js');
 const { byName, parseJsonSafe } = require('../users/helpers.js');
 const { makeCache } = require('../shared/cache.js');
 
@@ -235,24 +235,37 @@ const pub = (g, viewerId = '') => {
     const key = g.id + '\0' + viewerId;
     const cached = groupPubCache.get(key);
     if (cached) return { ...cached }; // Copia: los handlers decoran el objeto sin ensuciar la caché
-    /* El @usuario de cada integrante (y solicitante) se pinta solo si su
-       privacidad 'usuario' lo permite para ESTE visor: la decisión la toma
-       el SERVIDOR y viaja como lista de ocultos; el cliente solo obedece.
-       Sin visor la lista va vacía (los payloads públicos no la usan). */
+    /* El @usuario de cada integrante (y solicitante) se entrega solo si su
+       privacidad 'usuario' lo permite para ESTE visor. Cuando no, el nombre
+       NO viaja: se sustituye por el UUID de la cuenta (alias opaco). La
+       decisión la toma el SERVIDOR; el cliente solo obedece. hideUsuario
+       lleva esos mismos alias, no los nombres ocultos. */
     const viewerAcc = viewerId ? users.get(viewerId) : null;
-    const hideUsuario = viewerAcc ? [...new Set([...g.members, ...(g.joinRequests || []).map(jr => jr.username)].filter(Boolean))].filter(name => {
-        const pr = profiles[name];
-        return pr && !permite(pr, 'usuario', viewerAcc.username);
-    }) : [];
+    const viewerName = viewerAcc ? viewerAcc.username : '';
+    const ocultos = new Set();
+    const alias = name => {
+        if (!viewerName || !name) return name;
+        const pub = publicName(name, viewerName);
+        if (pub !== name) ocultos.add(pub);
+        return pub;
+    };
+    const members = g.members.map(alias);
+    const admins = g.admins.map(alias);
+    const joinRequests = (g.joinRequests || []).map(jr => {
+        const username = alias(jr.username);
+        /* La bandera avisa a los clientes antiguos de que no pinten el @
+           (el valor ya no es un nombre, es el alias opaco). */
+        return username === jr.username ? { ...jr, username } : { ...jr, username, verUsuario: false };
+    });
     const out = {
-        hideUsuario,
-        id: g.id, name: g.name, description: g.description, members: g.members,
+        hideUsuario: [...ocultos],
+        id: g.id, name: g.name, description: g.description, members,
         membersTotal: g.members.length,
-        admins: g.admins, createdAt: g.createdAt, avatar: g.avatar || '',
+        admins, createdAt: g.createdAt, avatar: g.avatar || '',
         visibility: g.visibility, joinPolicy: g.joinPolicy, writePolicy: g.writePolicy,
         addPolicy: g.addPolicy, editPolicy: g.editPolicy, contentPolicy: g.contentPolicy,
         mentionAllPolicy: g.mentionAllPolicy,
-        joinRequests: viewerId && g.admins.some(name => byName(name)?.id === viewerId) ? g.joinRequests : [],
+        joinRequests: viewerId && g.admins.some(name => byName(name)?.id === viewerId) ? joinRequests : [],
         /* El código de invitación se entrega a TODO miembro del grupo: la
            opción «Compartir» de los detalles está disponible para cualquiera
            que esté dentro, no solo para los administradores. Sigue siendo una
@@ -275,23 +288,54 @@ function lastGroupMessage(gid) {
     return m ? decorateForClient(m) : null;
 }
 
-function groupBrief(gid) {
+function groupBrief(gid, viewerId = '') {
     const rows = Stmt.lastMessages.all('group:' + gid, 12);
+    const viewer = viewerId ? users.get(viewerId)?.username : '';
+    const nameOf = id => {
+        const name = resolveName(id);
+        return viewer ? publicName(name, viewer) : name;
+    };
     return rows.map(rowToMessage).filter(Boolean).reverse().map(m => ({
-        id: m.id, kind: m.kind, from: resolveName(m.fromId), fromId: m.fromId || '',
+        id: m.id, kind: m.kind, from: nameOf(m.fromId), fromId: m.fromId || '',
         ts: m.ts, name: m.name || '',
         text: m.kind === 'text' ? String(m.data || '').slice(0, 200) : ''
     }));
 }
 
-function groupLastEntry(m) {
+function groupLastEntry(m, viewerId = '') {
     if (!m) return null;
+    const viewer = viewerId ? users.get(viewerId)?.username : '';
+    const from = resolveName(m.fromId);
     return {
-        id: m.id, from: resolveName(m.fromId), fromId: m.fromId || '',
+        id: m.id, from: viewer ? publicName(from, viewer) : from, fromId: m.fromId || '',
         kind: m.kind,
         text: m.kind === 'text' && !m.once ? String(m.data || '').slice(0, 200) : '',
         name: m.name || '', ts: m.ts
     };
+}
+
+/* Un mensaje de grupo tal como lo ve cada miembro: el remitente, el autor
+   citado y los usuarios mencionados se sustituyen por su alias público si
+   ocultan el @usuario a ese visor. El resto del mensaje no cambia. */
+function groupMessageForViewer(message, viewer) {
+    if (!message || !viewer) return message;
+    const out = { ...message };
+    if (out.from) out.from = publicName(out.from, viewer);
+    if (out.reply && out.reply.from) out.reply = { ...out.reply, from: publicName(out.reply.from, viewer) };
+    if (Array.isArray(out.mentionUsers))
+        out.mentionUsers = out.mentionUsers.map(u => (u && u.username ? { ...u, username: publicName(u.username, viewer) } : u));
+    return out;
+}
+
+/* ¿Dos cuentas comparten algún grupo? Lo usa /profile para aceptar el alias
+   opaco (UUID) de un miembro a quien no se le puede mostrar el @usuario. */
+function sharesGroup(firstId, secondId) {
+    if (!firstId || !secondId) return false;
+    for (const row of Stmt.listUserGroups.all(firstId)) {
+        const g = readGroup(row.gid);
+        if (g && g.memberIds.includes(secondId)) return true;
+    }
+    return false;
 }
 
 // Resúmenes de grupo
@@ -314,7 +358,7 @@ function healGroupSummary(owner, gid) {
     const m = row ? rowToMessage(row) : null;
     if (!m) return null;
     const existing = readGroupSummary(owner, gid);
-    const entry = { gid, unread: (existing && existing.unread) || 0, last: groupLastEntry(m) };
+    const entry = { gid, unread: (existing && existing.unread) || 0, last: groupLastEntry(m, owner) };
     writeGroupSummary(owner, gid, entry);
     return entry;
 }
@@ -322,14 +366,13 @@ function healGroupSummary(owner, gid) {
 function groupSummaryFor(owner, gid) {
     const existing = readGroupSummary(owner, gid);
     if (existing) return existing;
-    const entry = { gid, unread: 0, last: groupLastEntry(lastGroupMessage(gid)) };
+    const entry = { gid, unread: 0, last: groupLastEntry(lastGroupMessage(gid), owner) };
     writeGroupSummary(owner, gid, entry);
     return entry;
 }
 
 function updateGroupMessageSummaries(group, msg, senderId) {
-    const last = groupLastEntry(lastGroupMessage(group.id));
-    const lastData = JSON.stringify(last);
+    const lastMessage = lastGroupMessage(group.id);
     // Require perezoso una vez (evita ciclo con prefs): sin él, cada mensaje
     // de grupo repetía el require dentro del bucle de miembros (PERF-P05).
     const { setUnreadFlag } = require('../chat/prefs.js');
@@ -339,10 +382,15 @@ function updateGroupMessageSummaries(group, msg, senderId) {
     const apply = db.transaction(() => {
         // Un solo upsert por miembro: el resumen de cada uno se actualiza con
         // una única sentencia, en vez de un SELECT seguido de INSERT o UPDATE.
-        for (const uuid of group.memberIds)
+        for (const uuid of group.memberIds) {
+            // El resumen es POR MIEMBRO: el remitente del preview puede tener
+            // el @usuario oculto para unos y no para otros, así que la entrada
+            // se compone con el alias que corresponde a cada visor.
+            const lastData = JSON.stringify(groupLastEntry(lastMessage, uuid));
             // Cifrado con la clave de cada miembro, como writeGroupSummary: el
             // resumen llevaba el preview del último mensaje en claro.
             Stmt.bumpGroupSummary.run(uuid, group.id, uuid === senderId ? 0 : 1, encryptForUser(uuid, lastData));
+        }
         // Un mensaje nuevo vuelve a abrir el grupo ocultado manualmente para la
         // lista (BUG-013), igual que en los DMs con chat_deletions.
         for (const uuid of group.memberIds)
@@ -361,7 +409,7 @@ function updateGroupMessageSummaries(group, msg, senderId) {
 function initializeGroupSummary(uuid, gid) {
     // Require perezoso: evita un ciclo entre módulos.
     const { saveUserToDb } = require('../users/store.js');
-    const last = groupLastEntry(lastGroupMessage(gid));
+    const last = groupLastEntry(lastGroupMessage(gid), uuid);
     const account = users.get(uuid);
     if (account && last) {
         account.groupSeen = account.groupSeen || {};
@@ -385,6 +433,8 @@ module.exports = {
     lastGroupMessage,
     groupBrief,
     groupLastEntry,
+    groupMessageForViewer,
+    sharesGroup,
     readGroupSummary,
     writeGroupSummary,
     healGroupSummary,

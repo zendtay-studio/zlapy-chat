@@ -29,7 +29,7 @@ const { Stmt } = require('../db/statements.js');
 const { pruneBlobHashes, removeBlobAccess, tx } = require('../db/transactions.js');
 const { getGroups, getGroupsDiscover, getGroupsRequests, postGroups } = require('../groups/routes.js');
 const { AuthKeyUnreadableError } = require('../crypto/user-auth-keys.js');
-const { deleteGroupSummary, groupBrief, groupLastEntry, groupPolicies, groupSummaryFor, initializeGroupSummary, invalidateGroupPubCache, lastGroupMessage, pub, readGroup, resolveGroup, updateGroupMessageSummaries, writeGroupMeta, writeGroupSummary } = require('../groups/store.js');
+const { deleteGroupSummary, groupBrief, groupLastEntry, groupMessageForViewer, groupPolicies, groupSummaryFor, initializeGroupSummary, invalidateGroupPubCache, lastGroupMessage, pub, readGroup, resolveGroup, sharesGroup, updateGroupMessageSummaries, writeGroupMeta, writeGroupSummary } = require('../groups/store.js');
 const { mimeMap, rejectRateLimitedMessage, safeDecodeSegment } = require('./helpers.js');
 const { cspFor, json, securityHeaders } = require('./responses.js');
 const { isEncrypted, openRequest, sealResponse } = require('./transport.js');
@@ -44,11 +44,20 @@ const { MESSAGE_LIMITS, characterCount } = require('../shared/limits.js');
 const { resolvePublicFile, PUBLIC_EXTENSIONS } = require('../shared/static-path.js');
 const { normalizeContactData, normalizePollData } = require('../shared/types.js');
 const { clampStr, localStickerHash, validAvatar, validGroupCustomId, validMessageId, validMime, validStickerData } = require('../shared/validation.js');
-const { groupCache, profiles, stories, users } = require('../state.js');
+const { blockedSet, groupCache, profiles, stories, users } = require('../state.js');
 const { getGiphySearch, getLegacyDefaultSticker, getStickerBlob, getStickerDiscover, getStickers, postCreateSticker, postStickers } = require('../stickers/routes.js');
 const { getStories, postStory, postStoryLike } = require('../stories/routes.js');
 const { byName, wantsAlwaysPush } = require('../users/helpers.js');
-const { isBlockedBy, isContact } = require('../users/privacy.js');
+const { isBlockedBy, isContact, privacyFor, publicName } = require('../users/privacy.js');
+
+/* Resuelve una cuenta por @usuario o por su alias opaco (UUID). Los
+   integrantes que ocultan el @usuario llegan al cliente como UUID, así que
+   las acciones de administración (expulsar, ascender, aprobar) aceptan los
+   dos formatos sin que el nombre real tenga que viajar. */
+const accountFromValue = value => {
+    if (typeof value !== 'string' || !value) return null;
+    return byName(value) || users.get(value) || null;
+};
 
 const handleRequest = (req, res) => {
     let url;
@@ -223,12 +232,13 @@ const handleRequest = (req, res) => {
             full.members = full.members.slice(0, Math.min(100, Math.max(1, Number(rawMembersLimit))));
         }
         if (url.searchParams.get('light') === '1') {
-            full.brief = groupBrief(g.id);
+            full.brief = groupBrief(g.id, req.authUser.id);
             full.seenTs = (req.authUser.groupSeen || {})[g.id] || 0;
             full.unread = groupSummaryFor(req.authUser.id, g.id).unread;
         } else {
             const page = readMessagePage('group:' + g.id, { limit: 100 });
-            full.messages = withMessageReactions(filterForViewer(page.messages, req.authUser.id, 'group:' + g.id), req.authUser.id).map(m => withMentions(decorateForClient(m)));
+            full.messages = withMessageReactions(filterForViewer(page.messages, req.authUser.id, 'group:' + g.id), req.authUser.id)
+                .map(m => groupMessageForViewer(withMentions(decorateForClient(m)), req.authUser.username));
             full.more = page.more;
         }
         return json(res, 200, full);
@@ -245,7 +255,11 @@ const handleRequest = (req, res) => {
             limit: Number(url.searchParams.get('limit')) || 30
         });
         const visible = filterForViewer(page.messages, req.authUser.id, 'group:' + g.id);
-        return json(res, 200, { messages: withMessageReactions(visible, req.authUser.id).map(m => withMentions(decorateForClient(m))), more: page.more });
+        return json(res, 200, {
+            messages: withMessageReactions(visible, req.authUser.id)
+                .map(m => groupMessageForViewer(withMentions(decorateForClient(m)), req.authUser.username)),
+            more: page.more
+        });
     }
     /* Miembros del grupo paginados (mismo criterio que /users): la pantalla
        de detalles pide la primera página y el resto al deslizar. */
@@ -262,9 +276,11 @@ const handleRequest = (req, res) => {
         if (rawOffset !== null && !/^\d{1,7}$/.test(rawOffset)) return json(res, 400, { members: [], more: false, total: 0 });
         const limit = Math.min(100, Math.max(1, Number(rawLimit || 20)));
         const offset = Math.max(0, Number(rawOffset || 0));
-        /* Orden estable (usuario) para que las páginas no se descoloquen al
-           entrar o salir gente. */
-        const sorted = [...g.members].sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
+        /* Orden estable sobre el NOMBRE PÚBLICO para que las páginas no se
+           descoloquen al entrar o salir gente. Los @usuario ocultos van con
+           su alias opaco (UUID), así que el orden tampoco revela sus nombres. */
+        const sorted = g.members.map(name => publicName(name, req.authUser.username))
+            .sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
         const members = sorted.slice(offset, offset + limit);
         return json(res, 200, { members, total: sorted.length, offset, more: offset + members.length < sorted.length });
     }
@@ -599,12 +615,31 @@ const handleRequest = (req, res) => {
                     Stmt.deleteChatDeletion.run('group:' + id, req.authUser.id);
                     updateGroupMessageSummaries(g, msg, req.authUser.id);
                     const decorated = withMentions(decorateForClient(msg));
-                    // Serializar UNA vez; el push web solo se envía a
-                    // miembros desconectados (los conectados ya lo recibieron
-                    // por WebSocket y no necesitan doble notificación).
-                    const rawGroupMessage = JSON.stringify({ type: 'group-message', groupId: id, message: decorated });
+                    /* El @usuario oculto tampoco viaja en el mensaje: si el
+                       remitente, el autor citado o algún mencionado lo oculta
+                       para alguien, el payload se personaliza con su alias
+                       opaco. Sin nadie oculto se serializa UNA vez, como
+                       antes; el push web solo se envía a los desconectados. */
+                    const nombres = [
+                        decorated.from,
+                        decorated.reply && decorated.reply.from,
+                        ...(decorated.mentionUsers || []).map(u => u && u.username)
+                    ].filter(Boolean);
+                    const personalizar = nombres.some(name => {
+                        const owner = profiles[name];
+                        if (!owner) return true;
+                        if (privacyFor(owner).usuario.mode !== 'server') return true;
+                        /* Quien bloqueó a alguien tampoco le muestra su @. */
+                        const bloqueados = blockedSet.get(name);
+                        return !!(bloqueados && bloqueados.size);
+                    });
+                    const rawGroupMessage = personalizar ? '' :
+                        JSON.stringify({ type: 'group-message', groupId: id, message: decorated });
+                    const payloadFor = name => personalizar
+                        ? JSON.stringify({ type: 'group-message', groupId: id, message: groupMessageForViewer(decorated, name) })
+                        : rawGroupMessage;
                     for (const m of g.members) {
-                        pushRawName(m, rawGroupMessage);
+                        pushRawName(m, payloadFor(m));
                         if (m !== actor) {
                             const memberAcc = byName(m);
                             // Mensaje nuevo = el chat vuelve a la lista, salvo
@@ -623,11 +658,11 @@ const handleRequest = (req, res) => {
                                 });
                         }
                     }
-                    return json(res, 200, { ok: true, message: decorated });
+                    return json(res, 200, { ok: true, message: groupMessageForViewer(decorated, actor) });
                 }
                 if (data.addMember) {
                     if (g.addPolicy !== 'all' && !isAdmin) return json(res, 403, { error: 'Solo admins.' });
-                    const newMember = byName(data.addMember);
+                    const newMember = accountFromValue(data.addMember);
                     if (!newMember) return json(res, 404, { error: 'No existe.' });
                     if (!isContact(profiles[req.authUser.username], newMember.username)) return json(res, 403, { error: 'Solo contactos.' });
                     if (g.members.length >= CONFIG.maxGroupMembers) return json(res, 403, { error: 'El grupo está lleno.' });
@@ -649,16 +684,17 @@ const handleRequest = (req, res) => {
                 const removeMember = data.removeMember || data.removed;
                 if (removeMember) {
                     if (!isAdmin) return json(res, 403, { error: 'Solo admins.' });
-                    const removed = byName(removeMember);
-                    if (!removed || removed.id === req.authUser.id) return json(res, 400, { error: 'Usa salir.' });
+                    const removed = accountFromValue(removeMember);
+                    if (!removed || !g.memberIds.includes(removed.id) || removed.id === req.authUser.id)
+                        return json(res, 400, { error: 'Usa salir.' });
                     /* El propietario no es expulsable por otro admin: si lo
                        fuera, cualquier admin robaba el grupo completo
                        (SECOA-A-003, comprobado empíricamente en la auditoría).
                        El dueño conserva TODA la autoridad; si quiere irse, usa
                        "salir él mismo" (/leave), que transfiere sin robo. */
                     if (removed.id === g.ownerId) return json(res, 403, { error: 'No se puede expulsar al propietario del grupo.' });
-                    g.members = g.members.filter(x => x !== removeMember);
-                    g.admins = g.admins.filter(x => x !== removeMember);
+                    g.members = g.members.filter(x => x !== removed.username);
+                    g.admins = g.admins.filter(x => x !== removed.username);
                     g.memberIds = g.memberIds.filter(id2 => id2 !== removed.id);
                     // El expulsado nunca es el propietario (guard de arriba),
                     // así que la propiedad no se mueve aquí: el dueño solo se
@@ -666,7 +702,7 @@ const handleRequest = (req, res) => {
                     writeGroupMeta(g);
                     deleteGroupSummary(removed.id, id);
                     notifyGroup('group');
-                    pushName(removeMember, { type: 'group-left', groupId: id });
+                    pushName(removed.username, { type: 'group-left', groupId: id });
                     return json(res, 200, pub(g, req.authUser.id));
                 }
                 if (data.leave === true) {
@@ -737,7 +773,7 @@ const handleRequest = (req, res) => {
                 }
                 if (data.approveJoin || data.rejectJoin) {
                     if (!isAdmin) return json(res, 403, { error: 'Solo admins.' });
-                    const requested = byName(data.approveJoin || data.rejectJoin);
+                    const requested = accountFromValue(data.approveJoin || data.rejectJoin);
                     if (!requested || !g.joinRequests.some(r => r.userId === requested.id)) return json(res, 404, { error: 'No disponible.' });
                     // El tope de miembros vale también aquí (BUG-003): aprobar
                     // era una vía de bypass de maxGroupMembers frente a join y
@@ -778,10 +814,14 @@ const handleRequest = (req, res) => {
                     if (!m) return json(res, 404, { error: 'No existe.' });
                     if (m.fromId !== req.authUser.id && !isAdmin) return json(res, 403, { error: 'Sin permiso.' });
                     deleteMessageById(data.deleteMessage);
-                    const last = groupLastEntry(lastGroupMessage(id));
+                    const ultimo = lastGroupMessage(id);
                     for (const uuid of g.memberIds) {
                         const summary = groupSummaryFor(uuid, id);
-                        if (summary.last && summary.last.id === data.deleteMessage) summary.last = last;
+                        /* El preview es por miembro: el remitente del último
+                           mensaje puede tener el @usuario oculto para unos y
+                           no para otros. */
+                        if (summary.last && summary.last.id === data.deleteMessage)
+                            summary.last = groupLastEntry(ultimo, uuid);
                         writeGroupSummary(uuid, id, summary);
                     }
                     for (const u of g.members) pushName(u, { type: 'group-message-delete', groupId: id, messageId: data.deleteMessage });
@@ -789,8 +829,8 @@ const handleRequest = (req, res) => {
                 }
                 if (data.approveAdmin || data.removeAdmin) {
                     if (!isAdmin) return json(res, 403, { error: 'Solo admins.' });
-                    const target = byName(data.approveAdmin || data.removeAdmin);
-                    if (!target || !g.members.includes(target.username)) return json(res, 404, { error: 'No está en el grupo.' });
+                    const target = accountFromValue(data.approveAdmin || data.removeAdmin);
+                    if (!target || !g.memberIds.includes(target.id)) return json(res, 404, { error: 'No está en el grupo.' });
                     if (data.approveAdmin && !g.admins.includes(target.username)) g.admins.push(target.username);
                     if (data.removeAdmin) {
                         if (target.id === req.authUser.id) return json(res, 400, { error: 'No puedes quitarte tu propio rol.' });

@@ -14,7 +14,7 @@ const { propagateUsernameChange } = require('../chat/mentions.js');
 const { decryptForUser, messageCrypto } = require('../crypto/setup.js');
 const { Stmt } = require('../db/statements.js');
 const { pruneBlobHashes, tx } = require('../db/transactions.js');
-const { groupLastEntry, invalidateGroupPubCache, lastGroupMessage, pub, readGroup, readGroupSummary, writeGroupSummary } = require('../groups/store.js');
+const { groupLastEntry, invalidateGroupPubCache, lastGroupMessage, pub, readGroup, readGroupSummary, sharesGroup, writeGroupSummary } = require('../groups/store.js');
 const { rejectRateLimited } = require('../http/helpers.js');
 const { passwordCheckLimiter, keyRegenLimiter, profileLimiter } = require('../http/rate-limit.js');
 const { json } = require('../http/responses.js');
@@ -37,17 +37,30 @@ function getAccountChatSettings(req, res, url, data, actor) {
 
 function getProfile(req, res, url, data, actor) {
     const requested = url.searchParams.get('username') || '';
+    const meQ = req.authUser.username;
     // Resolver por nombre sin distinguir capitalización (igual que el resto de
     // las rutas) y caer al índice directo para los perfiles sin cuenta.
-    const acc = byName(requested);
+    let acc = byName(requested);
+    /* Alias opaco (UUID) de un integrante con el @usuario oculto: en los
+       payloads de grupo el nombre se sustituye por ese UUID. Solo se resuelve
+       si comparte grupo con quien pregunta; sin esa comprobación la ruta sería
+       un oráculo de cuentas por identificador interno. */
+    const viaAlias = !acc && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requested);
+    if (viaAlias) {
+        const candidate = users.get(requested.toLowerCase());
+        if (candidate && sharesGroup(candidate.id, req.authUser.id)) acc = candidate;
+    }
     const p = (acc ? profiles[acc.username] : undefined) || profiles[requested];
     if (!p) return json(res, 200, { username: requested });
-    const meQ = req.authUser.username;
     const owner = profiles[p.username];
     const blockedByOwner = isBlockedBy(owner, meQ);
     const profileId = accountId(p.username);
+    /* Sin permiso para ver el @usuario, la respuesta usa el alias opaco: así
+       el cliente puede cachear el perfil (nombre visible, foto, permisos) sin
+       recibir jamás el nombre de cuenta. */
+    const oculto = !!acc && (viaAlias || !permite(owner, 'usuario', meQ));
     const out = {
-    username: p.username,
+    username: oculto ? profileId : p.username,
     signingPublicKey: messageCrypto.getSigningPublicKey(profileId)
     };
     // Identificador de la clave de cifrado del usuario (key_id, SHA-256
@@ -69,7 +82,7 @@ function getProfile(req, res, url, data, actor) {
     llamar: !!permite(owner, 'llamadas', meQ),
     escribir: !!permite(owner, 'mensajes', meQ),
     compartir: !!permite(owner, 'compartir', meQ),
-    verUsuario: !!permite(owner, 'usuario', meQ)
+    verUsuario: !oculto && !!permite(owner, 'usuario', meQ)
     };
     out.permisos = perms;
     /* La presencia («en línea» / última vez visto) respeta SU propia regla
@@ -288,12 +301,12 @@ async function postAccountDelete(req, res, url, data, actor) {
     for (const gid of removed.groupsTouched || []) {
         const g = readGroup(gid);
         if (!g) continue;
-        const last = groupLastEntry(lastGroupMessage(gid));
+        const ultimo = lastGroupMessage(gid);
         for (const id2 of g.memberIds || []) {
             const summary = readGroupSummary(id2, gid);
-            if (summary) writeGroupSummary(id2, gid, { gid, unread: summary.unread, last: last || summary.last });
+            if (summary) writeGroupSummary(id2, gid, { gid, unread: summary.unread, last: groupLastEntry(ultimo, id2) || summary.last });
         }
-        for (const member of g.members || []) pushName(member, { type: 'group', group: pub(g) });
+        for (const member of g.members || []) pushName(member, { type: 'group', group: pub(g, byName(member)?.id || '') });
     }
     // 6) Los demás ven desaparecer la conversación y los contactos.
     for (const u of users.values()) {
@@ -379,6 +392,10 @@ function postProfile(req, res, url, data, actor) {
     if (data.privacy) {
         profiles[data.username].privacy = normPriv(data.privacy);
         privacyCacheBust(profiles[data.username]);
+        /* El payload de cada grupo cachea los alias públicos por visor: al
+           cambiar quién ve el @usuario, esa copia queda obsoleta y seguiría
+           mostrando (o sustituyendo) el nombre anterior. */
+        for (const row of Stmt.listUserGroups.all(req.authUser.id)) invalidateGroupPubCache(row.gid);
     }
     if (typeof patch.note === 'string') {
         if (patch.note.trim() === '') profiles[data.username].noteTs = 0;

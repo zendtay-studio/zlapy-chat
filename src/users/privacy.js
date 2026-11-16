@@ -8,7 +8,7 @@
  */
 'use strict';
 
-const { blockedSet, users } = require('../state.js');
+const { blockedSet, profiles, users } = require('../state.js');
 const { byName } = require('./helpers.js');
 
 // Permisos
@@ -109,6 +109,19 @@ const permite = (owner, key, viewer) => {
     return isContact(owner, v) && !p.users.includes(v);
 };
 const permiteDescripcion = (owner, viewer) => permite(owner, 'descripcion', viewer);
+/* Nombre público de una cuenta para este visor.
+   Si la privacidad 'usuario' niega el @usuario, en los payloads de grupo
+   viaja el UUID de la cuenta en lugar del nombre: es opaco (no se puede
+   revertir a un @usuario), estable entre peticiones y ya se usa en `fromId`
+   y en las URLs de avatar. El nombre visible y la foto siguen accesibles
+   por /profile?username=<uuid> para quien comparte el grupo, así que el
+   ocultamiento no rompe la ficha ni los avatares. */
+const publicName = (username, viewer) => {
+    if (!username || !viewer) return username;
+    const owner = profiles[username];
+    if (!owner) return username;
+    return permite(owner, 'usuario', viewer) ? username : (byName(username)?.id || username);
+};
 
 const isBlockedBy = (owner, viewer) => {
     if (!owner || !viewer) return false;
@@ -127,5 +140,6 @@ module.exports = {
     privacyCacheBust,
     permite,
     permiteDescripcion,
+    publicName,
     isBlockedBy,
 };

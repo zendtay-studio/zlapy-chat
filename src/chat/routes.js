@@ -42,7 +42,7 @@ const { normalizeContactData, normalizePollData, togglePollVote } = require('../
 const { clampStr, localStickerHash, validMessageId, validMime, validStickerData } = require('../shared/validation.js');
 const { profiles, users } = require('../state.js');
 const { byName, isChatMuted, mutedChatPeers, pairKeyFromIds, wantsAlwaysPush } = require('../users/helpers.js');
-const { accountsBlocked, isBlockedBy, permite } = require('../users/privacy.js');
+const { accountsBlocked, isBlockedBy, permite, publicName } = require('../users/privacy.js');
 
 const REACTION_EMOJI_RE = /[\p{Extended_Pictographic}\p{Regional_Indicator}\u20e3]/u;
 const emojiSegmenter = new Intl.Segmenter('es', { granularity: 'grapheme' });
@@ -429,7 +429,10 @@ function postSend(req, res, url, data, actor) {
             groupId: g.id, code: g.inviteCode, name: g.name,
             description: g.description || '', visibility: g.visibility,
             joinPolicy: g.joinPolicy, memberCount: g.members.length,
-            members: g.members.slice(0, 4), avatar: g.avatar || ''
+            /* Quien recibe la invitación aún no es miembro: los integrantes
+               con el @usuario oculto viajan con su alias opaco. */
+            members: g.members.slice(0, 4).map(name => publicName(name, recipient.username)),
+            avatar: g.avatar || ''
         };
     }
     const pk = pairKeyFromIds(sender.id, recipient.id);
@@ -676,11 +679,12 @@ function postMsgEdit(req, res, url, data, actor) {
        mensaje, y podía usarse para "espiar" el texto editado en la lista).
        Patrón idéntico al reescrito al borrar (router.js, data.deleteMessage). */
     if (isGroup) {
-        const ultimo = groupLastEntry(m);
         for (const uuid of group.memberIds) {
             const groupEntry = readGroupSummary(uuid, group.id);
             if (groupEntry && groupEntry.last && groupEntry.last.id === m.id) {
-                groupEntry.last = ultimo;
+                /* Por miembro: el @usuario del autor puede estar oculto solo
+                   para algunos de los que ven el preview. */
+                groupEntry.last = groupLastEntry(m, uuid);
                 writeGroupSummary(uuid, group.id, groupEntry);
             }
         }

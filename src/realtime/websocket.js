@@ -28,7 +28,7 @@ const { catchUpReceipts } = require('../chat/routes.js');
 const { NOTE_TTL, validAvatar } = require('../shared/validation.js');
 const { callFiles, notesMap, pendingOffers, profiles, stories, users, setStories } = require('../state.js');
 const { byId, byName } = require('../users/helpers.js');
-const { isBlockedBy, normPriv, permite, privacyCacheBust } = require('../users/privacy.js');
+const { isBlockedBy, normPriv, permite, privacyCacheBust, publicName } = require('../users/privacy.js');
 const { loadUserFromRow, saveUserToDb } = require('../users/store.js');
 
 
@@ -223,7 +223,12 @@ const wsUpgradeInner = (req, socket) => {
                 const g = readGroup(m.groupId);
                 if (!g || !g.memberIds.includes(u.id)) return;
                 const evt = m.type === 'group-typing' ? 'typing' : 'recording';
-                for (const mem of g.members) if (mem !== from) pushName(mem, { type: evt, from, on: !!m.on, group: true, groupId: g.id });
+                for (const mem of g.members) {
+                    if (mem === from) continue;
+                    /* Si el remitente oculta su @usuario, el aviso efímero
+                       lleva el mismo alias opaco que los payloads del grupo. */
+                    pushName(mem, { type: evt, from: publicName(from, mem), on: !!m.on, group: true, groupId: g.id });
+                }
                 return;
             }
             /* "enviando foto/audio/archivo…" (estilo Telegram): aviso efímero
@@ -241,7 +246,10 @@ const wsUpgradeInner = (req, socket) => {
                 const g = readGroup(m.groupId);
                 if (!g || !g.memberIds.includes(u.id)) return;
                 const sendKind = typeof m.sendKind === 'string' ? m.sendKind.slice(0, 24) : '';
-                for (const mem of g.members) if (mem !== from) pushName(mem, { type: 'sending', from, on: !!m.on, sendKind, group: true, groupId: g.id });
+                for (const mem of g.members) {
+                    if (mem === from) continue;
+                    pushName(mem, { type: 'sending', from: publicName(from, mem), on: !!m.on, sendKind, group: true, groupId: g.id });
+                }
                 return;
             }
             if (m.type === 'privacy') {

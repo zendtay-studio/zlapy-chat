@@ -44,10 +44,9 @@ function getGroups(req, res, url, data, actor) {
     for (const r of myGids) {
     const g = readGroup(r.gid);
     if (!g) continue;
+    /* pub() ya entrega las solicitudes solo a los admins y con el alias
+       opaco de quien oculta su @usuario: no se sobrescriben aquí. */
     const pubG = { ...pub(g, req.authUser.id) };
-    if (g.admins.some(name => byName(name)?.id === req.authUser.id))
-    pubG.joinRequests = g.joinRequests;
-    else delete pubG.joinRequests;
     delete pubG.inviteCode;
     const summary = groupSummaryFor(req.authUser.id, g.id);
     pubG.last = summary.last;

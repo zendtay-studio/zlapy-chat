@@ -125,10 +125,18 @@
         return state.profiles[username] || null;
     }
 
-    /* ¿El @usuario de u está oculto para mí? El servidor decide: la lista
-       hideUsuario del grupo manda; el perfil cargado es el respaldo. */
+    /* El servidor sustituye el @usuario oculto por un alias opaco (el UUID
+       de la cuenta): un nombre de usuario válido nunca tiene esa forma. */
+    const ALIAS_OCULTO = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    function esAliasOculto(username) {
+        return ALIAS_OCULTO.test(String(username || ''));
+    }
+
+    /* ¿El @usuario de u está oculto para mí? El servidor decide: los alias
+       opacos y la lista hideUsuario del grupo mandan; el perfil es respaldo. */
     function usuarioOculto(username) {
         if (isSelf(username)) return false;
+        if (esAliasOculto(username)) return true;
         if (state.group && Array.isArray(state.group.hideUsuario) && state.group.hideUsuario.includes(username)) return true;
         const profile = profileFor(username);
         return !!(profile && profile.permisos && profile.permisos.verUsuario === false);
@@ -136,9 +144,10 @@
 
     function displayName(username) {
         const profile = profileFor(username);
-        return (profile && typeof profile.name === 'string' && profile.name.trim())
-            ? profile.name.trim()
-            : String(username || '');
+        if (profile && typeof profile.name === 'string' && profile.name.trim()) return profile.name.trim();
+        /* Sin perfil (p. ej. un oculto que aún no cargó): nunca pintar el
+           UUID del alias como si fuera un nombre. */
+        return esAliasOculto(username) ? 'Usuario' : String(username || '');
     }
 
     function avatarSrc(username) {
@@ -149,7 +158,14 @@
     }
 
     function contactByUsername(username) {
-        return state.contacts.find(contact => contact && contact.username === username) || null;
+        const directo = state.contacts.find(contact => contact && contact.username === username);
+        if (directo) return directo;
+        /* Un oculto suele seguir en mi lista de contactos con su @usuario
+           real: el perfil cargado por alias trae su id y permite resolverlo
+           sin que el nombre viaje en el payload del grupo. */
+        const perfil = profileFor(username);
+        const id = perfil && perfil.id;
+        return id ? state.contacts.find(contact => contact && contact.id === id) || null : null;
     }
 
     function isSelf(username) {
@@ -724,6 +740,10 @@
     function openProfile(username) {
         if (!username || !state.group) return;
         const contact = contactByUsername(username);
+        /* Dirección real para las acciones que el chat necesita (mensaje,
+           ver perfil). Solo se conoce si sigue siendo contacto; para los
+           demás, el servidor resuelve el alias opaco. */
+        const cuenta = contact ? contact.username : username;
         const admin = (state.group.admins || []).includes(username);
         const presence = contact ? presenceText(contact) : '';
         const profile = profileFor(username);
@@ -735,7 +755,7 @@
         const actions = [];
 
         if (contact && !isSelf(username)) {
-            actions.push(`<button class="mBtn" type="button" data-sheet-action="message" data-user="${escapeHtml(username)}">Enviar mensaje</button>`);
+            actions.push(`<button class="mBtn" type="button" data-sheet-action="message" data-user="${escapeHtml(cuenta)}">Enviar mensaje</button>`);
         }
         if (isAdmin() && !isSelf(username)) {
             actions.push(`<button class="mBtn" type="button" data-sheet-action="${admin ? 'remove-admin' : 'make-admin'}" data-user="${escapeHtml(username)}">${admin ? 'Quitar administrador' : 'Hacer administrador'}</button>`);
@@ -743,7 +763,7 @@
         if (!isSelf(username)) {
             /* «Agregar» solo cuando no es contacto: al añadirlo, el selector
                de contactos y la ficha se refrescan con el nuevo. */
-            actions.push(`<button class="mBtn" type="button" data-sheet-action="${contact ? 'view-profile' : 'add-contact'}" data-user="${escapeHtml(username)}">${contact ? 'Ver perfil' : 'Agregar contacto'}</button>`);
+            actions.push(`<button class="mBtn" type="button" data-sheet-action="${contact ? 'view-profile' : 'add-contact'}" data-user="${escapeHtml(contact ? cuenta : username)}">${contact ? 'Ver perfil' : 'Agregar contacto'}</button>`);
         }
 
         const name = displayName(username);
@@ -879,9 +899,13 @@
         const picker = state.picker;
         if (!picker) return;
         const members = new Set(state.membersPages);
+        /* Los integrantes con el @usuario oculto llegan como alias (UUID):
+           para no ofrecer «añadir» a quien ya está dentro se compara también
+           por el id del perfil cargado. */
+        const memberIds = new Set(state.membersPages.map(name => (profileFor(name) || {}).id).filter(Boolean));
         const query = normalize(picker.query);
         const candidates = state.contacts.filter(contact => {
-            if (picker.mode === 'add' && members.has(contact.username)) return false;
+            if (picker.mode === 'add' && (members.has(contact.username) || (contact.id && memberIds.has(contact.id)))) return false;
             return !query || normalize(`${displayName(contact.username)} ${contact.username}`).includes(query);
         });
         refs.peopleList.innerHTML = candidates.length

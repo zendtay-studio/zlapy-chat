@@ -13606,16 +13606,24 @@
                 if (p && isEncryptedProfileName(p.name)) p.name = u;
                 profilesCache[u] = p; return p;
             }
+            /* Alias opaco con el que el servidor sustituye un @usuario
+               oculto en los payloads de grupo (el UUID de la cuenta): ningún
+               nombre de usuario válido tiene esa forma. */
+            const ALIAS_OCULTO = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+            function esAliasOculto(u) { return ALIAS_OCULTO.test(String(u || '')); }
             function displayNameOf(u) {
                 const profile = profilesCache[u];
                 const name = profile && profile.name;
-                return name && !isEncryptedProfileName(name) ? name : u;
+                if (name && !isEncryptedProfileName(name)) return name;
+                return esAliasOculto(u) ? 'Usuario' : u;
             }
             /* ¿El @usuario de u está OCULTO para mí? La decisión la toma el
-               servidor (verUsuario: false en la lista de contactos); si la
-               bandera no viene, es visible. Yo siempre veo el mío. */
+               servidor (verUsuario: false en la lista de contactos y alias
+               opacos en los grupos); si no, es visible. Yo siempre veo el mío. */
             function usuarioOcultoDe(u) {
                 if (!u || u === me.username) return false;
+                if (esAliasOculto(u)) return true;
+                if (activeGroup && Array.isArray(activeGroup.hideUsuario) && activeGroup.hideUsuario.includes(u)) return true;
                 const c = contacts.find(x => x.username === u);
                 return !!(c && c.verUsuario === false);
             }
@@ -14976,7 +14984,9 @@
                 const list = document.getElementById('groupMentionSuggestions');
                 if (!list) return;
                 list.innerHTML = activeKind !== 'group' || !activeGroup ? '' :
-                    ['@all', '@todos', ...activeGroup.members.filter(member => member !== me.username).map(member => '@' + member)]
+                    ['@all', '@todos', ...activeGroup.members
+                        .filter(member => member !== me.username && !usuarioOcultoDe(member))
+                        .map(member => '@' + member)]
                         .map(value => `<option value="${escapeHtml(value)}"></option>`).join('');
             }
             function hideMentionPanel() { const p = document.getElementById('mentionPanel'); if (p) p.style.display = 'none'; }
@@ -14998,6 +15008,9 @@
                     rows.push(`<div class="menRow" data-men="todos"><div class="avatar sm" style="background:#374045"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><circle cx="16.5" cy="9" r="2.6"/><path d="M15.5 14.2a4.5 4.5 0 0 1 5 4.3"/></svg></div><div class="meta"><div class="name">todos</div><div class="sub">Menciona a todos los miembros en este chat.</div></div></div>`);
                 for (const username of activeGroup.members) {
                     if (username === me.username) continue;
+                    /* Al @usuario oculto no se le puede mencionar por nombre:
+                       el servidor solo le entrega al cliente un alias opaco. */
+                    if (usuarioOcultoDe(username)) continue;
                     if (q && !(username.toLowerCase().includes(q) || displayNameOf(username).toLowerCase().includes(q))) continue;
                     /* El @usuario del integrante se pinta solo si su
                        privacidad lo permite: hideUsuario lo decide el
