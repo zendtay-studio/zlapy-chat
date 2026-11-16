@@ -9829,22 +9829,11 @@
             border-top-left-radius: 4px
         }
 
-        .chatAppearanceGroup>.mBtn {
-            align-self: flex-start;
-            min-height: 38px;
-            padding: 8px 13px;
-            border: 1px solid var(--line);
-            border-radius: 12px;
-            background: var(--surface);
-            color: var(--muted);
-            font-size: 13px
-        }
-
-        .chatAppearanceGroup>.mBtn:hover {
-            border-color: var(--accent);
-            color: var(--text)
-        }
-
+        /* Tallas únicas para los botones de esta sección: 46px de alto, radio 15 y
+       relleno gris de `.sec`, igual que el resto de la app. Antes había un
+       tamaño de chip (38px, radio 12, letra 13) y otro grande, y los colores
+       se redefinían aquí en vez de usar la clase. Las acciones de una fila se
+       reparten el ancho con flex; las que van solas ocupan toda la columna. */
         .chatAppearanceActions {
             display: flex;
             gap: 8px;
@@ -9852,15 +9841,7 @@
         }
 
         .chatAppearanceActions .mBtn {
-            flex: 1;
-            border-color: var(--line);
-            background: var(--surface);
-            color: var(--text)
-        }
-
-        .chatAppearanceActions .mBtn:hover {
-            border-color: var(--accent);
-            background: var(--surface-hover)
+            flex: 1
         }
 
         .chatAppearanceActions .mBtn:disabled {
@@ -10481,11 +10462,10 @@
                 background: var(--surface)
             }
 
-            #contactPanel .cpInner {
-                width: var(--info-width, 400px)
-            }
-
-
+            /* Sin regla propia para .cpInner: el ancho lo deciden la regla
+               base (400px) y el recorte de ≤1024px (320px). Aquí había una
+               que reimpotía 400px sobre el recorte y el contenido se salía
+               80px del panel entre 769 y 1024 px. */
             #groupPanel .gpInner {
                 width: min(var(--info-width, 400px), 320px)
             }

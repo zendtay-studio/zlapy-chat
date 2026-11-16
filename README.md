@@ -412,6 +412,8 @@ Medidas sobre el fondo de la app (`--page`/`--surface`): primaria 8.8:1 en Coral
 Reglas que las acompañan:
 
 - **Un botón por pantalla lleva `.ok`.** Dos primarias compiten y ninguna lo es.
+- **Todos los botones de una misma familia miden lo mismo** (46 px de alto, radio 15 px, relleno según la categoría). Los que comparten fila se reparten el ancho con `flex`; los que van solos ocupan la columna. Un "chip" de 38 px al lado de uno de 46 px rompe la lectura de la fila.
+- **El contenido de un panel nunca mide más que su panel.** `#contactPanel` y `#groupPanel` recortan panel e interior (`.cpInner` / `.gpInner`) en la **misma** banda de ancho: si una regla de un medio `min-width` devuelve el ancho completo al interior, entre 769 y 1024 px el panel mide 320 px y su contenido 400 px, y se desborda 80 px. Lo cubre `test/client/info-panel-width.test.js`.
 - **El destructivo es el único rojo.** Si todo se marca, nada se marca.
 - **No se distingue una acción solo por el color:** todas llevan texto (o `aria-label` cuando son solo icono).
 - **Objetivo táctil ≥ 44 px.** Los botones de estas familias miden 46 px de alto.

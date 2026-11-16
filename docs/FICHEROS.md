@@ -313,6 +313,7 @@ Se ejecuta con `npm test` → `node --test --require ./test/bootstrap.js "test/*
 |---|---:|---|
 | `test/stickers/sticker-creator.test.js` | 563 | Creador de stickers: recorte, emociones bbot y coreografía determinista del pack. |
 | `test/stickers/emoji-data.test.js` | 32 | Índices de emojis completos y coherentes con el emoji-test. |
+| `test/stickers/group-sticker-sharing.test.js` | 122 | Un sticker creado SIN publicar se ve en el grupo por los demás integrantes (el acceso al blob se reparte con el mensaje), no lo ve un no integrante, y en un chat 1:1 depende de la privacidad «mensajes» del destinatario. |
 | `test/crypto/signing-key-model.test.js` | 67 | Modelo de firma: la clave de firma se deriva de la `auth_key` y rota con ella. |
 | `test/shared/rate-limit.test.js` | 94 | La IP de los límites sale del socket, no de una cabecera del cliente. |
 | `test/runtime/tls-force.test.js` | 60 | FORCE_TLS: redirección y degradado sin certificados. |
@@ -328,6 +329,7 @@ Se ejecuta con `npm test` → `node --test --require ./test/bootstrap.js "test/*
 | `test/db/db-viewer.test.js` | 26 | Recursos del visor presentes y servidos (js/css/html de `ops/db/db-viewer/`). |
 | `test/db/blob-orphan.test.js` | 155 | Barrido de blobs sin referencia: no borra lo que todavía ven usuarios legítimos. |
 | `test/client/interaction-guard.test.js` | 59 | Todas las páginas cargan la guarda de selección nativa y el menú solo aparece donde toca. |
+| `test/client/info-panel-width.test.js` | 70 | Ancho de los paneles de información: el contenido (`.cpInner` / `.gpInner`) no puede medir más que su panel, los dos paneles se recortan igual en pantallas estrechas y en móvil ocupan el panel completo. Escanea el CSS de `index.html` sin navegador. |
 | `test/chat/upload-progress.test.js` | 32 | Señal de progreso de subida de adjuntos en las burbujas. |
 | `test/chat/summary-heal.test.js` | 107 | Resumen ilegible reconstruido desde los mensajes y supervivencia a la rotación de clave. |
 | `test/chat/reactions.test.js` | 125 | Reacciones persistentes por usuario (v8) y su difusión. |
