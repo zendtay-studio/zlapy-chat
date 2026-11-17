@@ -304,6 +304,13 @@ const dispatcher = net.createServer({ allowHalfOpen: false }, sock => {
 - `dispatcher.listen({ port: PORT, host: '0.0.0.0', exclusive: false })`
   reengancha el puerto sin esperar al `TIME_WAIT` (equivalente a
   `SO_REUSEADDR`), necesario para reinicios del supervisor.
+- **Redirección a HTTPS con Host propio** (`src/http/router.js`): con
+  `FORCE_TLS` activo y una petición en claro, el 301 solo se arma si la
+  cabecera `Host` está en la allowlist (`src/shared/hosts.js`: loopback,
+  literales IP o los hosts de `TLS_HOSTS`). Un `Host` manipulado ya no
+  convierte la redirección en un rebote a un dominio ajeno, y la respuesta
+  lleva `Cache-Control: no-store` para que no se cache en navegador ni
+  proxy.
 - Si el puerto está ocupado: log explícito (`"Usa PORT=3001 npm start"`) y
   `process.exit(1)`.
 
@@ -353,6 +360,7 @@ const dispatcher = net.createServer({ allowHalfOpen: false }, sock => {
    ┌──────────────────────────────────────────────────────────────────┐
    │ 9. Límite de cuerpo por ruta                                     │
    │      SMALL_BODY_ROUTES (auth) → 8 KiB                            │
+   │      POST /key → 64 KiB (solo lleva una clave pública)           │
    │      resto → CONFIG.maxHttpBodyBytes (32 MiB)                    │
    │      content-length > límite → 413 (req.resume())                │
    │      si se excede durante la lectura → 413                       │
@@ -442,7 +450,7 @@ Definidas en `src/http/responses.js:17-39` y aplicadas a **toda** respuesta:
 | `server.js` | Entrypoint: versión de cifrado → hidratación → arranque. | `server.js` |
 | `src/` (raíz) | Configuración y estado compartido. | `config.js`, `state.js` |
 | `src/db/` | Apertura de las dos bases, esquema v12, sentencias preparadas, transacciones y purga de blobs. | `database.js`, `schema.js`, `statements.js`, `transactions.js` |
-| `src/crypto/` | Llave maestra, cifrado en reposo (AES-256-GCM), cifrado por usuario (MTProto 2.0), firmas Ed25519. | `master-key.js`, `message-crypto.js`, `mtproto.js`, `user-auth-keys.js`, `setup.js` |
+| `src/crypto/` | Llave maestra, cifrado en reposo (AES-256-GCM), cifrado por usuario (MTProto 2.0), firmas Ed25519 y contextos (AAD) por pieza. | `master-key.js`, `message-crypto.js`, `mtproto.js`, `user-auth-keys.js`, `setup.js`, `aad.js`, `field-crypto.js`, `owner-key.js`, `kdf.js` |
 | `src/http/` | Router, respuestas con cabeceras, limitadores de frecuencia, arranque y cierre de servidores. | `router.js`, `servers.js`, `responses.js`, `helpers.js`, `rate-limit.js` |
 | `src/realtime/` | Framing RFC 6455, servidor WebSocket, envío de eventos a clientes. | `frames.js`, `websocket.js`, `notify.js` |
 | `src/auth/` | Sesiones, cookies, hashing de contraseñas y rutas de autenticación. | `sessions.js`, `rid.js`, `routes.js` |
@@ -456,7 +464,7 @@ Definidas en `src/http/responses.js:17-39` y aplicadas a **toda** respuesta:
 | `src/stickers/` | Proxy de búsqueda en GIPHY y stickers favoritos. | `routes.js` |
 | `src/push/` | Suscripciones push, VAPID y envío de notificaciones. | `routes.js`, `vapid.js` |
 | `src/meta/` | `/healthz` y volcado de configuración. | `routes.js` |
-| `src/shared/` | Utilidades puras sin estado: validación, límites, tipos, galería, apariencia, ruta estática, avatar. | `validation.js`, `limits.js`, `types.js`, `gallery.js`, `appearance.js`, `message-data.js`, `static-path.js`, `avatar.js` |
+| `src/shared/` | Utilidades puras sin estado: validación, límites, tipos, galería, apariencia, ruta estática, avatar, allowlist de Host. | `validation.js`, `limits.js`, `types.js`, `gallery.js`, `appearance.js`, `message-data.js`, `static-path.js`, `avatar.js`, `hosts.js`, `cache.js` |
 | `ops/` | Scripts de operación (no forman parte del servidor). | `install/` (ensure-deps, check-native, build-sqlite), `runtime/supervisor.js`, `net/tunnel.js`, `backup/backup.js`, `auth/owner-credentials.js`, `crypto/reencrypt-master.js`, `crypto/repair-unreadable-auth-keys.js` |
 
 ### 4.2 Ficheros clave
@@ -822,6 +830,7 @@ guarda el `seenTs` en `user_group_seen` (`src/http/router.js:486-500`).
 | `chatPrefsLimiter` | 20 | 60 000 ms | preferencias y borrado de chats (`src/chat/routes.js:147`) |
 | `passwordCheckLimiter` | 5 | 60 000 ms | operaciones que verifican contraseña (`src/profile/routes.js:103,222`) |
 | `receiptLimiter` | 120 | 60 000 ms | `POST /receipt` (acuses de lectura) |
+| `keyUploadLimiter` | 30 | 60 000 ms | `POST /key` (guardar la clave del dispositivo) |
 
 Implementación: `createMessageRateLimiter(limit, windowMs)`
 (`src/shared/limits.js:32-69`) es una **ventana deslizante** por cuenta:
@@ -833,6 +842,10 @@ respuesta incluye la cabecera `Retry-After` en segundos
 - La cuota de mensajes se consume **después** de validar el contenido, para
   que una petición inválida no gaste cuota
   (`src/chat/routes.js:153`, `src/http/router.js:363`).
+- La cuota de almacenamiento incluye el medio **en línea** de las historias
+  (`stories.data` sin hash), que no tiene blob propio: se suma con
+  `Stmt.storyInlineBytes` dentro de `blobBytesOfUser` y la caché de cuota se
+  invalida al publicar o borrar una historia.
 - Purga: `messageRateLimiter.prune()` cada ventana; el resto de
   limitadores cada 60 s (`src/http/rate-limit.js:45-46`).
 
@@ -841,12 +854,18 @@ respuesta incluye la cabecera `Retry-After` en segundos
 | Contador | Clave | Umbral | Ventana |
 | --- | --- | --- | --- |
 | `loginAttempts` | `acct:<nombre>@<ip>` | 8 | 10 min |
-| `loginAttempts` | `ip:<ip>` | 30 | 10 min |
+| `loginAttempts` | `acct:<nombre>` (sin IP) | 8 | 10 min |
+| `loginAttempts` | `brk:<ip>` | 120 | 10 min (enfriamiento de 60 s al pasarse) |
 | `registerAttempts` | `<ip>` | 15 | 1 hora |
 
-- El bloqueo por cuenta se guarda **por cuenta e IP**: con la IP en la
-  clave, el bloqueo alcanza a quien falla desde esa IP y no a la víctima
-  (`src/auth/routes.js:111-127`).
+- El retardo por cuenta existe en DOS niveles: por cuenta **e IP** y por
+  cuenta a secas. El de IP se reinicia cuando el atacante cambia de
+  dirección, así que sin el contador por cuenta una fuerza bruta contra una
+  víctima concreta no tendría freno girando IPs (`src/auth/routes.js`).
+  Los dos son RETARDO progresivo (nunca bloqueo): quien falla desde la IP
+  de la víctima no deja a esta sin poder entrar.
+- El 429 del circuito por IP se devuelve **antes** de comprobar la
+  contraseña: con el contador agotado ni un acierto pasa.
 - El 429 se devuelve **antes** de comprobar la contraseña: con el contador
   agotado ni un acierto pasa.
 - `clientIp()` (`src/shared/validation.js:71-77`) solo confía en la
@@ -858,7 +877,7 @@ respuesta incluye la cabecera `Retry-After` en segundos
 
 | Límite | Valor | Dónde |
 | --- | --- | --- |
-| Cuerpo HTTP máximo | 32 MiB (8 KiB en rutas de auth) | `src/http/router.js:175-181` |
+| Cuerpo HTTP máximo | 32 MiB (8 KiB en rutas de auth, 64 KiB en `POST /key`) | `src/http/router.js:175-181` |
 | Datos de mensaje | 24 000 000 caracteres | `CONFIG.maxMessageDataChars` |
 | Medio en línea en `/send` (sin hash) | 262 144 caracteres (256 KiB) | `CONFIG.maxInlineMediaChars` |
 | Medio en línea en una historia (sin hash) | 4 000 000 caracteres | `CONFIG.storyInlineCharLimit` |
@@ -885,6 +904,7 @@ Por qué la cuota de adjuntos cuenta **siempre** los `data` de los mensajes:
 | Suscripciones push por cuenta | 5 | `Stmt.trimPushSubs` |
 | Socket WebSocket por cuenta | 8 | `WS_MAX_PER_USER` |
 | Frames WebSocket | 200/s sostenidos, ráfaga 600 | `WS_FRAME_RATE` / `WS_FRAME_BURST` |
+| Clave pública en `POST /key` | 64 KiB (`keyUploadLimiter`, 30/min) | `src/auth/routes.js:100-116` |
 
 ### 6.5 Borrados con alcance por usuario
 
@@ -1068,13 +1088,23 @@ admins aprueban (`approveJoin`) o rechazan (`rejectJoin`, que empuja
 | Publicación | Se valida (texto ≤ 140, medio como data-URL o hash, fondo `#rrggbb`) con **tope en línea de 4 000 000 caracteres** si el medio va sin `hash` (413 `"Contenido demasiado grande."`; subirlo por blob ya no paga ese límite), se guarda en `stories` **cifrada con la `auth_key` del autor** y se copia a `stories` en RAM. | `src/stories/routes.js:31-72` |
 | Reparto | `pushStories()` envía a cada usuario **conectado** solo las historias que su privacidad le permite ver, ya transformadas para ese visor (`storyForViewer`). | `src/realtime/notify.js:126-134` |
 | Consulta | `GET /stories` → mismas reglas de privacidad. | `src/stories/routes.js:25-29` |
-| Like / vista | Se anota en `viewers`/`likes` y se re-cifra la fila. | `src/stories/routes.js:98-130` |
-| Edición | Solo texto, con las mismas validaciones; marca `edited`. | `src/stories/routes.js:131-146` |
+| Like / vista | Se anota en `viewers`/`likes`, se re-cifra la fila **con su contexto** (`PCE3A`, `src/crypto/aad.js`) y se avisa con un `story-meta` (metadato de UNA historia, sin el medio). | `src/stories/routes.js:120-170` |
+| Edición | Solo texto, con las mismas validaciones; marca `edited` (también al persistir). | `src/stories/routes.js:171-186` |
 | Borrado | Borra de RAM y de la base, y purga el blob. | `src/stories/routes.js:84-96` |
 | Caducidad | Cada 60 s se filtran las RAM y se borran las filas `ts <= cutoff`, junto con sus permisos de blob. | `src/realtime/websocket.js:277-292` |
 
 `STORY_TTL_MS` = 86 400 000 ms (24 h) por defecto
 (`src/config.js:27`). `liveStories()` filtra por `now - s.ts < TTL`.
+
+**Metadato en vez de lista completa** (`pushStoryMeta`, `src/realtime/notify.js`):
+un like, una vista o una edición reenviaban antes **todas** las historias a
+**todos** los conectados (con el medio dentro: O(usuarios × historias ×
+bytes)). Ahora viaja solo lo que cambia, sin el medio: el autor recibe
+`viewers`/`likes` completos y el estado de edición; el resto,
+`likeCount`, `liked`, `text`, `bg` y `edited`. El cliente parchea su copia
+local de esa historia (`story-meta` en `public/index.html`). Publicar y
+borrar una historia sí reenvían la lista completa: la historia es nueva (o
+desaparece).
 
 **Fan-out limitado**:
 
@@ -1103,32 +1133,36 @@ Dos niveles de cifrado:
 | Nivel | Clave | Formato | Uso |
 | --- | --- | --- | --- |
 | **En reposo, global** | Llave maestra (derivada de la credencial del propietario: `DB_USER` + `DB_PASSWORD` del `.env`) | `PCE1:`/`PCE1v2:` | Datos de infraestructura que no pertenecen a un usuario concreto. `PCE1v2` usa subclave HKDF + AAD de dominio; `PCE1` (AES directo) sigue legible como heredado. Los campos sueltos (nombres de grupos, invitaciones, silenciados, colores…) usan AAD `field:<tabla>.<columna>` y las fotos van al almacén de blobs (la fila guarda solo su hash). |
-| **Por usuario** | `auth_key` del usuario (2048 bits, MTProto 2.0) | `PCE3:` | Todo el contenido sensible de una cuenta. |
+| **Por usuario** | `auth_key` del usuario (2048 bits, MTProto 2.0) | `PCE3:` (mensajes) / `PCE3A:` (resto) | Todo el contenido sensible de una cuenta: el sobre `PCE3A:` añade al PCE3 el **contexto de la pieza** que se cifra. |
 
 #### Contenido cifrado **con la `auth_key` del usuario**
 
 | Dato | Tabla / columna | Cifrado en |
 | --- | --- | --- |
 | Mensajes | `messages.data` | `PCE3:` MTProto 2.0 (`msg_key` derivado del plaintext completo por mensaje, AES-256-IGE) |
-| Nombre visible | `user_profiles.display_name` | `encryptForUser` |
-| Biografía | `user_profiles.bio` | `encryptForUser` |
-| Nota del perfil | `user_profiles.note` | `encryptForUser` |
-| Nota personal (estado) | `user_notes.data` | `encryptForUser` |
-| Último mensaje del resumen 1:1 | `summaries.last_data` | `encryptForUser` |
-| Último mensaje del resumen de grupo | `group_summaries.last_data` | `encryptForUser` |
-| Historial de llamadas | `calls.data` | `encryptForUser` |
-| Suscripción push (endpoint + claves) | `push_subs.data` | `encryptForUser` |
-| Historia (contenido) | `stories.data` | `encryptForUser` |
-| Clave pública del dispositivo | `user_keys.key_cipher` | `encryptForUser` |
-| `auth_key` itself | `user_auth_keys.auth_key` | `encryptAtRest` (llave maestra) |
+| Nombre visible | `user_profiles.display_name` | `PCE3A` con `ctxProfile(id,'name')` |
+| Biografía | `user_profiles.bio` | `PCE3A` con `ctxProfile(id,'desc')` |
+| Nota del perfil | `user_profiles.note` | `PCE3A` con `ctxProfile(id,'note')` |
+| Nota personal (estado) | `user_notes.data` | `PCE3A` con `ctxUserNote(id)` |
+| Último mensaje del resumen 1:1 | `summaries.last_data` | `PCE3A` con `ctxSummary(owner,peer)` |
+| Último mensaje del resumen de grupo | `group_summaries.last_data` | `PCE3A` con `ctxGroupSummary(owner,gid)` |
+| Historial de llamadas | `calls.data` | `PCE3A` con `ctxCall(owner,callId)` |
+| Suscripción push (endpoint + claves) | `push_subs.data` | `PCE3A` con `ctxPushSub(id)` |
+| Historia (contenido) | `stories.data` | `PCE3A` con `ctxStory(id,ts)` |
+| Clave pública del dispositivo | `user_keys.key_cipher` | `PCE3A` con `ctxUserKey(id)` |
+| `auth_key` itself | `user_auth_keys.auth_key` | `encryptAtRest` con el AAD del usuario (`aadAuthKey`) |
+
+Los contextos son los de [`src/crypto/aad.js`](../src/crypto/aad.js): un
+`PCE3A:` no se abre sin SU contexto (y un `PCE3:` heredado, sin contexto,
+sigue siendo legible).
 
 #### Contenido cifrado **con la llave maestra** (`PCE1:`)
 
 | Dato | Dónde |
 | --- | --- |
-| Clave VAPID (privada y JWK) | `meta.vapid` (`src/push/vapid.js:26-35`) |
-| Blobs (adjuntos) | `blobs.data` (`src/chat/media.js:28`) |
-| Material E2E de los grupos (`crypto_id` + keyboxes) | `groups.keys_cipher` (`src/groups/store.js:112-115`) |
+| Clave VAPID (privada y JWK) | `meta.vapid` (`src/push/vapid.js`), atada a su fila con `aadMeta('vapid')` |
+| Blobs (adjuntos) | `blobs.data` (`src/chat/media.js`), atados a su hash con `aadBlob(hash)` |
+| Material E2E de los grupos (`crypto_id` + keyboxes) | `groups.keys_cipher` (`src/groups/store.js`), atado a su `gid` con `aadGroupKeys(gid)` |
 
 #### Lo que queda **en claro**
 
@@ -1309,7 +1343,7 @@ se destruye la conexión (`src/realtime/notify.js:31-37`, `40-50`).
 | Mensajería | `message`, `msgEdit`, `msgDelete`, `receipt`, `seen`, `chatDelete`, `poll-update` |
 | Grupos | `group`, `group-message`, `group-message-seen`, `group-message-delete`, `group-request`, `group-request-rejected`, `group-left` |
 | Llamadas | `call-incoming`, `call-log`, `call-accepted`, `call-rejected`, `call-cancelled`, `call-ended`, `call-busy`, `call-missed`, `call-blocked`, `call-denied` |
-| Presencia / social | `users`, `profile`, `contact-requests`, `contact-request-accepted`, `blocked-change`, `stories` |
+| Presencia / social | `users`, `profile`, `contact-requests`, `contact-request-accepted`, `blocked-change`, `stories`, `story-meta` |
 | Control | `pong` |
 
 Cada frame de texto es un JSON. El servidor **valida los identificadores
@@ -1525,16 +1559,17 @@ Organizados por dominios, igual que `src/`. Rutas relativas a `ops/`:
 
 | Script | Qué hace | Notas |
 | --- | --- | --- |
-| `install/ensure-deps.js` | Preflight de dependencias: verifica las librerías de `package.json`, Node `>=22` y el binario nativo de `better-sqlite3`; instala **solo lo que falte**. Camino feliz en milisegundos (comprobación por ficheros); si algo falta, carga real en proceso hijo para enumerar lo roto. | `npm run deps`; lo ejecuta `npm start` antes del supervisor. |
+| `install/ensure-deps.js` | Preflight de dependencias: verifica las librerías de `package.json`, Node `>=22` y el binario nativo de `better-sqlite3`; instala **solo lo que falte**. Camino feliz en milisegundos (comprobación por ficheros); si algo falta, carga real en proceso hijo para enumerar lo roto. La instalación usa `npm ci` cuando hay `package-lock.json` (instala exactamente lo fijado) y `npm install` solo si no existe. | `npm run deps`; lo ejecuta `npm start` antes del supervisor. |
 | `install/check-native.js` / `install/build-sqlite.js` | Comprueba / compila el binario nativo de `better-sqlite3` (el caso sin prebuilds, p. ej. Termux). | `postinstall` / `npm run rebuild:sqlite`. |
-| `runtime/supervisor.js` | Vigila y relanza el servidor (ver §9.1). | `npm start`. |
+| `runtime/supervisor.js` | Vigila y relanza el servidor (ver §9.1). Escribe el PID del hijo de forma **atómica** (temporal 0600 + rename: nadie lee un PID vacío o truncado) y usa la misma comprobación de "servidor vivo" que las operaciones de mantenimiento. | `npm start`. |
 | `backup/backup.js` | Copia las dos bases con la **API de backup de SQLite** (`db.backup()`, segura con el servidor corriendo y WAL activo) y el `.env` como `credencial.env`: sin la credencial, el respaldo es inservible. | `npm run backup [dir]`. El destino se crea con 0700 y los ficheros con 0600. |
-| `auth/owner-credentials.js` | CLI de la credencial del propietario (`npm run owner`): `init` (base nueva), `credential` (cambia la credencial y re-cifra TODO), `rotate` (sal nueva), `check` (auditoría de solo lectura), `show`, `unlock-check`, `export-kit` (kit de recuperación con credencial + bases) y `reset`. No muestra la contraseña por pantalla. | `npm run owner -- <comando>`. |
-| `crypto/reencrypt-master.js` | Motor de re-cifrado del dominio de la llave maestra: verifica TODOS los sobres dependientes con la llave vigente, re-cifra `user_auth_keys`, `groups.keys_cipher`, `meta` (VAPID), los campos sueltos por columna (`FIELD_TABLES`) y `blobs.data` en transacciones con reversión compensada. **Aborta si hay un servidor vivo de esa instalación** (seguiría escribiendo con la llave vieja). No toca el `.env`: lo escribe el CLI, al final. `auditMasterKey()` hace la auditoría de solo lectura. | Lo invoca `npm run owner -- credential/rotate`. |
+| `auth/owner-credentials.js` | CLI de la credencial del propietario (`npm run owner`): `init` (base nueva), `credential` (cambia la credencial y re-cifra TODO), `rotate` (sal nueva), `check` (auditoría de solo lectura), `show`, `unlock-check`, `export-kit` (kit de recuperación con credencial + bases) y `reset`. No muestra la contraseña por pantalla. | `npm run owner -- <comando>`. Las operaciones que tocan las bases exigen servidor parado y toman el candado de `runtime/server-gate.js`. |
+| `runtime/server-gate.js` | Puerta común de mantenimiento: ¿hay un servidor vivo? (mismo criterio para todos los scripts), comprobación de "parado", candado exclusivo (O_EXCL) contra operaciones solapadas y escritura atómica del fichero de PID. | Lo usan supervisor, `owner-credentials`, `reencrypt-master` y las reparaciones. |
+| `crypto/reencrypt-master.js` | Motor de re-cifrado del dominio de la llave maestra: verifica TODOS los sobres dependientes con la llave vigente, re-cifra `user_auth_keys`, `groups.keys_cipher`, `meta` (VAPID), los campos sueltos por columna (`FIELD_TABLES`) y `blobs.data` en transacciones con reversión compensada. **Aborta si hay un servidor vivo de esa instalación** (seguiría escribiendo con la llave vieja) y además toma un **candado exclusivo** (`O_EXCL`) para que no corran dos operaciones a la vez; es reentrante, así que `npm run owner -- credential` puede llamarlo sin chocar consigo mismo. Respeta los contextos (AAD) por pieza de `src/crypto/aad.js`. No toca el `.env`: lo escribe el CLI, al final. `auditMasterKey()` hace la auditoría de solo lectura. | Lo invoca `npm run owner -- credential/rotate`. Comparte la puerta de mantenimiento con `runtime/server-gate.js`. |
 | `crypto/repair-unreadable-auth-keys.js` / `crypto/repair-double-encrypted.js` | Reparan las `auth_key` ilegibles con la llave actual y los perfiles que quedaron cifrados dos veces. | `npm run repair` / `npm run repair:double-encrypted [-- --apply]`. |
 | `config/env-writer.js` | Escritura atómica de secretos (temporal 0600 + fsync + rename), `setEnvValue` y lectura directa del `.env`. | Compartido por el generador y el motor de re-cifrado. |
 | `net/tunnel.js` | Levanta `cloudflared` con la configuración `zty.yml` y el token de `CLOUDFLARE_TUNNEL_TOKEN`. | `npm run tunnel`. El token **no viaja en `argv`** (se entrega por `--token-file` en un fichero 0600 dentro de un directorio 0700, o por `TUNNEL_TOKEN` en el entorno si el binario es antiguo), y la salida del proceso se **redacta** para que no pueda aparecer en los logs. |
-| `db/db-viewer.js` + `db/db-viewer/` y `db/sqliteview.js` + `db/sqliteview/` | Visores HTTP **de solo lectura** de la base (grafo 2D/3D y tablas). Se sirven en `127.0.0.1:3001` y `:3002`. | `npm run dbview` / `npm run sqliteview`. Ver §2.4 de `docs/API.md`. |
+| `db/db-viewer.js` + `db/db-viewer/` y `db/sqliteview.js` + `db/sqliteview/` | Visores HTTP **de solo lectura** de la base (grafo 2D/3D y tablas). Se sirven en `127.0.0.1:3001` y `:3002`. Cada ruta `/api/*` exige el token que se imprime al arrancar en el **fragmento** de la URL (`#token=…`, no viaja al servidor ni queda en logs); los estáticos (HTML/CSS/JS) siguen abiertos. `Host` restringido a loopback, literales IP o `VIEWER_ALLOWED_HOSTS`/`SQLITEVIEW_ALLOWED_HOSTS` (anti DNS rebinding). | `npm run dbview` / `npm run sqliteview`. Token fijo con `VIEWER_TOKEN`/`SQLITEVIEW_TOKEN`. |
 | `data/generate-emoji-data.js` / `data/generate-animated-bbot-pack.js` | Generadores de datos del cliente: índices JSON de emojis y el paquete animado bbot (procedural, con semilla por expresión). | `npm run generate:emojis`; el segundo lo invoca el servidor si falta el paquete. |
 
 ### 9.4 Copias de seguridad y llave maestra

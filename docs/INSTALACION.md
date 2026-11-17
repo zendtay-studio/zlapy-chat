@@ -98,7 +98,10 @@ python3 --version && make --version && g++ --version
 
 1. **Clonar** el repositorio.
 2. **Instalar dependencias** con `npm ci` (usa `package-lock.json`, versionado, y
-   por tanto es reproducible) o `npm install`.
+   por tanto es reproducible). `npm install` solo hace falta si el repo vino
+   **sin** lockfile. El arranque (`npm start`) no instala nada en silencio: si
+   falta alguna dependencia, el preflight la instala con `npm ci` y lo dice por
+   consola.
 3. **Crear la configuración y el directorio de datos**: `cp .env.example .env` y
    `mkdir -p data`.
 

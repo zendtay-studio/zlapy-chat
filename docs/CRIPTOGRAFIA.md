@@ -63,7 +63,8 @@ Y **tres formatos de sobre** conviven en la base:
 | --- | --- | --- | --- | --- |
 | `PCE1:` | AES-256-GCM | llave maestra | ninguno | legado, aún se lee |
 | `PCE2:` | AES-256-GCM | llave maestra | AAD con id/chat/remitente/destinatario/tipo/grupo | legado, aún se lee |
-| `PCE3:` | AES-256-GCM con derivación MTProto 2.0 | `auth_key` del autor | AAD con dominio + contexto del mensaje | **actual** |
+| `PCE3:` | AES-256-IGE con derivación MTProto 2.0 | `auth_key` del autor | contexto del mensaje dentro de `message_data`, cubierto por `msg_key` | mensajes |
+| `PCE3A:` | el mismo PCE3 **más** el contexto de la pieza (AAD) | `auth_key` del autor | dominio + contexto de la pieza (perfil, historia, resumen, llamada…) | **actual** para el contenido por usuario |
 
 Mapa de ficheros:
 
@@ -75,6 +76,7 @@ src/crypto/message-crypto.js → PCE1 / PCE2, firmas Ed25519
 src/crypto/mtproto.js        → PCE3: auth_key, msg_key, aes_key/aes_iv, cabecera, relleno
 src/crypto/user-auth-keys.js → auth_key por usuario, cifrado/descifrado por usuario, sal
 src/crypto/field-crypto.js   → cifrado por columna (AAD field:<tabla>.<columna>) + mapa del dominio de la maestra
+src/crypto/aad.js            → contextos (AAD) por pieza: auth_key, grupo, blob, meta y contenido por usuario
 src/crypto/setup.js          → instancia única y re-exportaciones
 ```
 
@@ -174,11 +176,41 @@ es lo único que hay que guardar**.
 | `calls.peer` | nombre del par en el historial de llamadas |
 | `calls.peer_hash` | HMAC-SHA256 del nombre normalizado (subclave HKDF de la llave maestra, dominio `zlapy/calls-peer-index/v1`): sirve para LOCALIZAR por nombre sin descifrar |
 | `push_subs.endpoint` | URL del push (lleva un token dentro) |
+| `message_reactions.emoji` | la reacción de cada cuenta a un mensaje |
 | `blob.db → blobs.data` | contenido de los adjuntos |
 
 Los campos sueltos van cifrados con **AAD propio de la columna**
 (`field:<tabla>.<columna>`, [`src/crypto/field-crypto.js`](../src/crypto/field-crypto.js)):
 un texto cifrado de `groups.name` no descifra como `groups.description`.
+
+### 2.3.1 Contextos por pieza (AAD de dominio)
+
+El AAD de columna no cubre las piezas cuya identidad **no es una columna**:
+la `auth_key` de un usuario, el material E2E de un grupo, el contenido de un
+adjunto o la fila de `meta` que guarda la clave VAPID. Con el AAD de dominio
+a secas, todos esos sobres eran intercambiables: cualquier `auth_key` cifrada
+valía sobre cualquier otra fila de la tabla (y copiarla habría secuestrado el
+contenido de esa cuenta).
+
+Ahora cada pieza lleva su contexto, definido en
+[`src/crypto/aad.js`](../src/crypto/aad.js) con el espacio de nombres
+`zlapy-rest-v1`:
+
+| Pieza | Contexto | Qué cierra |
+| --- | --- | --- |
+| `user_auth_keys.auth_key` | `auth_key|<userId>` | copiar la fila de otra cuenta |
+| `groups.keys_cipher` | `group_keys|<gid>` | mover el canal E2E de un grupo a otro |
+| `blobs.data` | `blob|<hash>` | intercambiar dos adjuntos en `blob.db` |
+| `meta.value` (VAPID, keycheck…) | `meta|<clave>` | usar el sobre de una fila de meta en otra |
+| contenido por usuario (PCE3A) | `perfil|<campo>|<userId>`, `historia|<userId>|<ts>`, `resumen|<owner>|<peer>`, `resumen-grupo|…`, `llamada|<userId>|<callId>`, `suscripcion-push|<userId>`, `clave|<userId>`, `nota-usuario|<userId>`, `clave-dispositivo|<userId>` | abrir el contenido de una pieza como si fuera otra (el nombre del perfil como descripción, el resumen de un chat en el de al lado…) |
+
+**Compatibilidad**: la lectura prueba primero CON el contexto y, si el sobre
+no descifra, lo reintenta SIN él (los valores escritos antes de atarlo
+siguen siendo legibles). La escritura siempre incluye el contexto: un campo
+que se toca queda atado en el acto. El motor de re-cifrado
+(`ops/crypto/reencrypt-master.js`) conoce los mismos contextos, así que una
+rotación de la llave maestra no pierde ni el AAD ni la capacidad de leer lo
+heredado.
 
 ### Subclaves derivadas de la llave maestra (HKDF-SHA256)
 
@@ -519,6 +551,24 @@ La columna `messages.crypto_version` es `INTEGER NOT NULL DEFAULT 2`
 (`src/db/schema.js:222`), y los mensajes nuevos se escriben con
 `cryptoVersion: 3` (`src/chat/messages.js:57`).
 
+### 3.4 `PCE3A:` — el PCE3 con contexto de pieza
+
+El contenido de una cuenta que NO es un mensaje (perfil, nota personal,
+resúmenes, historias, llamadas, suscripciones push, clave del dispositivo) se
+cifra con la misma `auth_key`, pero añadiendo al sobre el **contexto de la
+pieza** (`src/crypto/aad.js`). El prefijo `PCE3A:` marca ese sobre: al
+descifrar se exige el contexto, y sin él el sobre no se abre.
+
+```
+  encryptForUser(userId, texto)                          →  PCE3:…   (sin contexto, como antes)
+  encryptForUser(userId, texto, ctxProfile(id,'name'))   →  PCE3A:…  (contexto autenticado)
+```
+
+Un `PCE3:` escrito antes de esta distinción **sigue siendo legible**
+(`decryptForUser` lo abre sin contexto). La regeneración de la `auth_key`
+(`src/users/store.js`) conserva los contextos: re-cifra cada fila con el suyo,
+así que ninguna pieza se vuelve ilegible al girar la clave.
+
 ---
 
 ## 4. Derivación MTProto 2.0 (PCE3)
@@ -702,9 +752,9 @@ const plaintext = Buffer.concat([header, payload, padding]);
 Por tanto, dentro del cifrado, el orden es:
 
 ```
-  ┌───────────────┬───────────────┬───────────────┐
-  │ cabecera (32) │ cuerpo (N)    │ relleno (12-27)│
-  └───────────────┴───────────────┴───────────────┘
+  ┌───────────────┬───────────────┬────────────────┐
+  │ cabecera (32) │ cuerpo (N)    │ relleno (12-1024)│
+  └───────────────┴───────────────┴────────────────┘
   ▲
   └── el msg_key se calcula sobre TODO este bloque (cabecera incluida)
 ```
@@ -716,31 +766,17 @@ con su propia clave.
 
 ### 4.6 Relleno aleatorio
 
-`mtproto.js:94-99`:
-
-```js
-function buildPadding(bodyLength) {
-    const base = INTERNAL_HEADER_BYTES + bodyLength;
-    let size = PADDING_MIN + ((16 - ((base + PADDING_MIN) % 16)) % 16);
-    if (size > PADDING_MAX) size = PADDING_MAX;
-    return crypto.randomBytes(size);
-}
-```
+`mtproto.js` (`buildPadding`): parte de 12 bytes, ENDEREZA el total a
+múltiplo de 16 y añade un número aleatorio de bloques extra (hasta 1024).
 
 Propiedades:
 
-- Longitud entre **12 y 27 bytes** (inclusivos).
-- `INTERNAL_HEADER_BYTES + bodyLength + padding.length` es **múltiplo de 16**
-  (salvo cuando el recorte a `PADDING_MAX` rompe la alineación: con
-  `PADDING_MAX = 27` y cabecera de 32 bytes, el máximo alcanzable es 27; el
-  test `test/crypto/mtproto.test.js:83-93` comprueba la alineación para longitudes
-  de cuerpo de 1, 15, 16, 100 y 1000 bytes).
+- Longitud entre **12 y 1024 bytes** (inclusivos), como la especificación.
+- `INTERNAL_HEADER_BYTES (32) + cuerpo + relleno` es **múltiplo de 16**
+  siempre: el relleno se calcula para enderezarlo.
 - Los bytes son **aleatorios** (`crypto.randomBytes`), no un patrón fijo.
-- El relleno **entra en el cálculo del `msg_key`**, igual que en MTProto.
-
-MTProto real exige un relleno de **12 a 1024 bytes**; Zlapy usa un
-subconjunto 12..27 para "que mantenga el total en 16" (comentario en
-`mtproto.js:45-46`). Véase [§10](#10-discrepancias-con-mtproto-20-real), **D-3**.
+- El relleno **entra en el cálculo del `msg_key`**, igual que en MTProto: dos
+  escrituras del mismo texto no producen el mismo cifrado.
 
 ### 4.7 El `msg_id` monotónico
 
@@ -801,38 +837,32 @@ Es la ventana de MTProto 2.0. Test en `test/crypto/mtproto.test.js:116-122`.
 > el AES-GCM con clave por mensaje (un mismo mensaje reenviado se descifra
 > igual, porque la clave es determinista para ese `msg_key`).
 
-### 4.9 Desviación deliberada: AES-IGE → AES-GCM
+### 4.9 Modo de cifrado: AES-256-IGE, como la especificación
 
-`src/crypto/mtproto.js:34-39` lo dice explícitamente:
-
-```
- * DESVIACION DOCUMENTADA (y por que)
- *   MTProto cifra con AES-256 en modo IGE, que NO tiene etiqueta de
- *   autenticacion: un atacante que modifique el cifrado no lo detecta (solo
- *   hay un CRC interno). Aqui se usa la MISMA derivacion de claves de
- *   MTProto pero con AES-256-GCM, que si es autenticada. Es estrictamente mas
- *   fuerte y no cambia el modelo (la clave sigue siendo por mensaje).
-```
+El sobre usa **AES-256-IGE** (el modo histórico de MTProto 2.0), montado
+sobre `AES-256-ECB` de `node:crypto` con los dos registros en cadena
+(`src/crypto/mtproto.js:88-146`). IGE no lleva etiqueta de autenticación: la
+integridad la da el **recálculo del `msg_key`** sobre el texto claro
+descifrado, igual que en la especificación. Cualquier alteración del cifrado,
+de la cabecera interna o del contexto cambia el `msg_key` esperado y el sobre
+se descarta.
 
 | | MTProto 2.0 real | Zlapy |
 | --- | --- | --- |
-| Modo | AES-256-**IGE** | AES-256-**GCM** |
-| Autenticación | ninguna (sólo CRC interno) | **etiqueta de 16 bytes** + AAD |
-| Alteración del cifrado | **indetectable** (salvo colisiones de CRC) | **rechazada** |
-| Alteración de la cabecera | no detectada | detectada (va dentro del AAD y del texto cifrado) |
-| Clave por mensaje | sí | sí (igual) |
-| Interoperabilidad | — | **no**: un sobre Zlapy no lo entiende un cliente MTProto |
+| Modo | AES-256-**IGE** | AES-256-**IGE** (idéntico) |
+| Autenticación | `msg_key` recalculada sobre el plaintext | igual |
+| Derivación `aes_key`/`aes_iv` | `sha256_a/b`, `x = 8` servidor→cliente | igual (`X = 8`) |
+| Interoperabilidad | — | **no**: no hay TL ni intercambio de llaves por DH (el material viaja por HTTPS) |
 
-**Consecuencia práctica**: el modelo de claves es el de MTProto (clave de
-mensaje derivada, `msg_key` central, cabecera interna), pero el sobre tiene
-**una propiedad que MTProto no tiene**: es *authenticated*. Un atacante con
-acceso de escritura a la base no puede alterar un mensaje (cambiar su texto,
-su chat, su autor o su cabecera) sin que el descifrado falle y el mensaje sea
-descartado (`src/chat/messages.js:91-95`). Es **estrictamente más fuerte**
-que el esquema original.
+**Desviaciones que SÍ existen** (todas fuera del modo de cifrado):
 
-El coste: un sobre de Zlapy **no es interoperable** con MTProto 2.0 real
-(ni con Telegram ni con otro cliente MTProto).
+* `server_salt` y `session_id` se derivan por **HKDF** de la `auth_key`
+  (valores estables por llave) en vez de negociarse por sesión.
+* El **contexto** del mensaje (id, chat, ts, autor, tipo, grupo) viaja DENTRO
+  de `message_data` (`[len4][contexto][len4][cuerpo][relleno4]`), no como AAD:
+  en IGE no hay AAD, así que lo cubre el `msg_key`, que hashea el plaintext
+  completo con la cabecera incluida.
+* No hay transporte TL: los sobres no los habla un cliente MTProto.
 
 ### 4.10 Diagrama completo de una escritura PCE3
 
@@ -850,7 +880,7 @@ El coste: un sobre de Zlapy **no es interoperable** con MTProto 2.0 real
 
   4.  header = cabecera_interna(sal, session, msg_id, seq_no=0, len)
                                                 [mtproto.js:102]
-  5.  padding = randomBytes(12..27)           [mtproto.js:94]
+  5.  padding = randomBytes(12..1024)         [mtproto.js]
   6.  plaintext = header || cuerpo || padding  [mtproto.js:139]
   7.  msg_key = SHA256(auth_key[88:120] || plaintext)[8:24]
                                                 [mtproto.js:85]
@@ -1456,25 +1486,26 @@ Zlapy**; se listan aquí para que nadie asuma interoperabilidad.
 
 | # | Aspecto | MTProto 2.0 real | Zlapy (código) | Dónde |
 | --- | --- | --- | --- | --- |
-| **D-1** | Modo de cifrado | AES-256-**IGE** (sin autenticación) | AES-256-**GCM** (autenticado) | `src/crypto/mtproto.js:146,173` |
+| **D-1** | Modo de cifrado | AES-256-**IGE** | AES-256-**IGE**: el código implementa IGE sobre AES-ECB; no es una desviación | `src/crypto/mtproto.js:88-146` |
 | **D-2** | Entrada del hash del `msg_key` | `SHA256(substr(auth_key,88+x,32) + plaintext + random_padding)`; el `plaintext` es el cuerpo | `SHA256(auth_key[88:120] + cabecera_interna(32) + cuerpo + relleno)`; **la cabecera interna también entra** | `src/crypto/mtproto.js:85-91,139-140` |
-| **D-3** | Longitud del relleno | 12 a **1024** bytes | 12 a **27** bytes | `src/crypto/mtproto.js:45-46,94-99` |
+| **D-3** | Longitud del relleno | 12 a **1024** bytes | 12 a **1024** bytes, con el total múltiplo de 16 | `src/crypto/mtproto.js:203-232` |
 | **D-4** | Sentido `x` de la derivación | `x = 0` cliente→servidor, `x = 8` servidor→cliente | siempre `x = 0` | `src/crypto/mtproto.js:140-141,171,181` |
-| **D-5** | Uso del `aes_iv` completo | IV de 32 bytes usado por IGE | sólo 12 bytes como IV; 4 bytes van al AAD; **los 16 restantes no se usan** | `src/crypto/mtproto.js:142-145` |
+| **D-5** | Uso del `aes_iv` completo | IV de 32 bytes, ambos mitades como registros IGE | igual: los 32 bytes entran en los registros de IGE | `src/crypto/mtproto.js:88-146` |
 | **D-6** | `msg_id` | 64 bits = `(unix_time << 32) + contador` | idéntico, pero **se devuelve y se lee como `Number`** → pérdida de precisión por encima de 2^53 (sólo afecta al objeto `header` que se devuelve, no a la autenticación) | `src/crypto/mtproto.js:102-124,199-203` |
 | **D-7** | `seq_no` | contador de secuencia por sesión | siempre `0` | `src/crypto/mtproto.js:136`, `src/chat/messages.js:53` |
 | **D-8** | Regenerar la `auth_key` | El servidor olvida la clave vieja: los mensajes antiguos dejan de descifrarse | Se **re-cifra** todo el contenido del usuario con la clave nueva | `src/users/store.js:186-297` |
 | **D-9** | `auth_key` | La genera el cliente y la negocia con el servidor | La genera el **servidor** (`crypto.randomBytes(256)`) y se la entrega al usuario implícitamente | `src/crypto/mtproto.js:59-61`, `src/crypto/user-auth-keys.js:46-59` |
-| **D-10** | Ventana anti-repetición | Parte del protocolo | La función existe y está cubierta por tests, pero **no se aplica en tiempo de ejecución**: no puede aplicarse al historial almacenado (un mensaje de hace una hora quedaría fuera de la ventana y sería ilegible). En la práctica, la protección contra repetir un mensaje antiguo la dan el **recálculo del `msg_key`** y el **contexto autenticado (AAD)**, que impiden mover una fila a otra conversación | `src/crypto/mtproto.js:207-213` |
-| **D-11** | Dominio / separación | MTProto no usa un dominio explícito en el AAD (no hay AAD) | AAD = `aes_iv[12:16] || "zlapy/mtproto2/v3" || contexto` | `src/crypto/mtproto.js:48,145` |
+| **D-10** | Ventana anti-repetición | Parte del protocolo | La función existe y está cubierta por tests, pero **no se aplica en tiempo de ejecución**: no puede aplicarse al historial almacenado (un mensaje de hace una hora quedaría fuera de la ventana y sería ilegible). En la práctica, mover o repetir una fila cambia el `msg_key` esperado y el **contexto** que va dentro de `message_data`, así que el sobre se descarta | `src/crypto/mtproto.js` |
+| **D-11** | Dominio / separación | MTProto no usa un dominio explícito (no hay AAD) | El contexto se serializa dentro de `message_data` con dominio propio (`zlapy/message-context/v4`); lo cubre el `msg_key`, no un AAD | `src/crypto/user-auth-keys.js` |
 | **D-12** | `session_id` | 64 bits, por sesión de autorización | 63 bits aleatorios, **nunca rota** mientras viva la `auth_key` | `src/crypto/user-auth-keys.js:24,52` |
 | **D-13** | Sal | Parte de la derivación de la clave en IGE / sirve para anti-replay | Viaja en la cabecera interna, que forma parte del texto claro hasheado: **sí entra en el `msg_key`** y, por tanto, en `aes_key`/`aes_iv`; rotarla cambia el `msg_key` y el ciphertext de los mensajes nuevos (verificado) | `src/crypto/mtproto.js:102-114` vs `:71-82` |
 
 **Nota adicional sobre la versión de MTProto de referencia**: el propio
 código declara que replica la *estructura* de MTProto 2.0
 (`src/crypto/mtproto.js:16-17`), y su derivación de claves es **byte a byte
-idéntica** a la fórmula oficial (`test/crypto/mtproto.test.js:36-51`). Lo que cambia
-es el modo de cifrado y el tratamiento del relleno, la cabecera y el `x`.
+idéntica** a la fórmula oficial (`test/crypto/mtproto.test.js:36-51`). El modo de cifrado, la derivación y el tratamiento del
+relleno son los de la especificación; lo que cambia es el transporte (sin TL
+ni DH) y el origen de `server_salt`/`session_id`.
 
 ---
 
@@ -1846,7 +1877,7 @@ Otras notas:
 | `src/crypto/mtproto.js:59` | `generateAuthKey()` | 2048 bits aleatorios |
 | `src/crypto/mtproto.js:71` | `deriveKeys()` | `aes_key` / `aes_iv` (fórmula MTProto) |
 | `src/crypto/mtproto.js:85` | `computeMsgKey()` | 128 bits centrales |
-| `src/crypto/mtproto.js:94` | `buildPadding()` | Relleno 12..27 |
+| `src/crypto/mtproto.js` | `buildPadding()` | Relleno 12..1024 (total múltiplo de 16) |
 | `src/crypto/mtproto.js:102` | `buildInternalHeader()` | Cabecera de 32 bytes |
 | `src/crypto/mtproto.js:128` | `encrypt()` | Construye el sobre `PCE3:` |
 | `src/crypto/mtproto.js:159` | `decrypt()` | Abre el sobre `PCE3:` (devuelve `null` si falla) |

@@ -208,6 +208,13 @@ Reglas y errores:
 - Cuerpo descifrado que no es JSON o no es un objeto → `400 { error: "Cuerpo JSON inválido." }` o
   `400 { error: "El cuerpo debe ser un objeto JSON." }`.
 
+**Degradación NUNCA silenciosa**: si `/config` no ofrece clave de transporte, la
+petición sale en claro y la aplicación muestra un aviso PERSISTENTE en pantalla
+(`#tlsWarn`). Si la clave existe pero el sobre no se puede construir (CSPRNG no
+disponible, fallo de cifrado), la petición se **aborta** en vez de mandar el
+contenido en claro; lo mismo para el WebSocket, que cierra la conexión. El
+cliente solo habla en claro cuando el servidor responde sin clave.
+
 Si el sobre es válido, el enrutador procesa el JSON como si hubiera llegado en claro: no hay
 rutas distintas para clientes cifrados.
 
@@ -283,7 +290,7 @@ puede suplantar a otro usuario.
 | `/auth/switch` | Cookie de cuenta | Cambia a una cuenta vinculada (rota el rid de la abandonada y re-emite su cookie) | `{ accountId }` (UUID) | `200 { ok: true, user: { id, username } }`. `400 { error: "Cuenta inválida." }`, `401 { error: "Sesión no disponible.", relogin: true }` (la cookie de la cuenta caducó o se perdió, pero la cuenta **sigue existiendo**: hay que volver a iniciar sesión) o `401 { error: "Cuenta no disponible.", gone: true }` (la cuenta ya no está en la base: se quita de la lista de cuentas conectadas). **Sin sesión vigente** la respuesta es `401 { error: "Sesión no disponible." }` sin marcas: la ruta es pública y distinguirlas la convertiría en un oráculo de existencia de cuentas |
 | `/auth/account/remove` | Sesión | Elimina una cuenta vinculada de este navegador | `{ accountId }` (UUID) | `200 { ok: true }`. `400` si es la cuenta en uso |
 | `/auth/logout` | Pública | Cierra la sesión de **este navegador**: borra las cookies de las cuentas abiertas aquí y corta sus sockets. NO rota el rid: las sesiones de otros dispositivos siguen vivas (la revocación global es el cambio de contraseña) | — (sin cuerpo) | `200 { ok: true }` + cookies de sesión borradas |
-| `/key` | Sesión | Guarda la clave pública de cifrado de la cuenta | `{ pubKey }` (objeto) | `200 { ok: true }`. `400 { error: "clave inválida" }` |
+| `/key` | Sesión | Guarda la clave pública de cifrado de la cuenta | `{ pubKey }` (objeto, ≤64 KiB; el cuerpo total está topeado en 64 KiB) | `200 { ok: true }`. `400 { error: "clave inválida" }`, `413` si la clave es demasiado grande, `429` a partir de 30 subidas por minuto (`keyUploadLimiter`) |
 | `/groups/:id/groupkey` | Sesión | Publica los *keyboxes* cifrados del grupo para los destinatarios indicados | `{ recipients: [ { recipient, iv, ct } ] }` | `200 { ok: true }`. `400 { error: "id inválido" }`, `404 { error: "no existe" }`, `403 { error: "no eres miembro" }` |
 | `/stickers` | Sesión | Guarda los stickers favoritos (máx. 30) | `{ stickers: [ "<url https de giphy>" ] }` | `200 { ok: true, stickers: [ … ] }`. `400 { error: "stickers must be an array" }` |
 | `/stickers/create` | Sesión | Publica un sticker en la biblioteca pública (WebP/GIF cuadrado ≤512×512, ≤8 MB; el hash debe coincidir con el contenido) | `{ data: "<data-URL>", hash, tags: [ … ] }` | `201 { ok: true, hash, sticker, stickers, published }`. `400 { error: "El stricker debe ser WebP o GIF…" }`, `400 { error: "El hash del stricker no coincide con su contenido." }`, `400 { error: "Añade al menos una etiqueta para publicar en Zlapy." }`, `413 { error: "Has alcanzado el límite de almacenamiento de adjuntos." }` |
@@ -369,12 +376,23 @@ se arrancan a mano y nunca mientras el servicio principal usa las mismas bases.
 
 | Servidor | Arranque | Escucha | Rutas |
 |---|---|---|---|
-| `ops/db/db-viewer.js` | `npm run dbview` | `127.0.0.1:3001` (`VIEWER_HOST`/`VIEWER_PORT`) | `/`, `/index.html`, `/viewer.css`, `/viewer.js`, `GET/HEAD /api/schema`, `/api/graph`, `/api/table`, `/api/table?name=&offset=&limit=&reveal=1`, `/api/row/<tabla>/<rowid>` |
-| `ops/db/sqliteview.js` | `npm run sqliteview` | `127.0.0.1:3002` (`SQLITEVIEW_HOST`/`SQLITEVIEW_PORT`) | `/`, `/index.html`, `/sqliteview.css`, `/sqliteview.js`, `GET/HEAD /api/overview`, `/api/table/<nombre>?offset=&limit=&reveal=1` |
+| `ops/db/db-viewer.js` | `npm run dbview` | `127.0.0.1:3001` (`VIEWER_HOST`/`VIEWER_PORT`/`VIEWER_TOKEN`/`VIEWER_ALLOWED_HOSTS`) | `/`, `/index.html`, `/viewer.css`, `/viewer.js`, `GET/HEAD /api/schema`, `/api/graph`, `/api/table`, `/api/table?name=&offset=&limit=&reveal=1`, `/api/row/<tabla>/<rowid>` |
+| `ops/db/sqliteview.js` | `npm run sqliteview` | `127.0.0.1:3002` (`SQLITEVIEW_HOST`/`SQLITEVIEW_PORT`/`SQLITEVIEW_TOKEN`/`SQLITEVIEW_ALLOWED_HOSTS`) | `/`, `/index.html`, `/sqliteview.css`, `/sqliteview.js`, `GET/HEAD /api/overview`, `/api/table/<nombre>?offset=&limit=&reveal=1` |
 
 `?reveal=1` muestra valores descifrados (lo que ve el operador en su propia
 máquina). Cualquier otro método responde `405`, una ruta desconocida `404` y un
 error interno `500`.
+
+**Autenticación de los visores**: cada ruta `/api/*` exige la cabecera
+`X-Viewer-Token`. El token se genera al arrancar (o se toma de `VIEWER_TOKEN` /
+`SQLITEVIEW_TOKEN`) y se imprime en la URL con **fragmento**
+(`http://127.0.0.1:3001/#token=…`), que el navegador no envía al servidor: no
+queda en logs de red ni de proxy. Sin token → `401`. Los estáticos (HTML, CSS,
+JS) siguen abiertos porque no contienen datos.
+
+**Allowlist de `Host`**: solo loopback, literales IP o los hosts declarados en
+`VIEWER_ALLOWED_HOSTS`/`SQLITEVIEW_ALLOWED_HOSTS`; cualquier otro `Host` recibe
+`403`. Cierra el DNS rebinding (un dominio ajeno que resuelva a la IP local).
 
 ## 3. Objetos JSON principales
 ### 3.1 Mensaje
