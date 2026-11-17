@@ -14,6 +14,7 @@ const { originAllowed, requestEncrypted, sessionCookie, sessionFromToken } = req
 const { addCall, endUserCalls, hasCall, hasPendingCall, updateCall } = require('../calls/store.js');
 const { CONFIG, tlsState } = require('../config.js');
 const { decryptForUser } = require('../crypto/setup.js');
+const { ctxProfile } = require('../crypto/aad.js');
 const { db } = require('../db/database.js');
 const { Stmt } = require('../db/statements.js');
 const { pruneBlobHashes, removeBlobAccess } = require('../db/transactions.js');
@@ -27,7 +28,7 @@ const { MESSAGE_LIMITS, characterCount } = require('../shared/limits.js');
 const { catchUpReceipts } = require('../chat/routes.js');
 const { NOTE_TTL, validAvatar } = require('../shared/validation.js');
 const { callFiles, notesMap, pendingOffers, profiles, stories, users, setStories } = require('../state.js');
-const { byId, byName } = require('../users/helpers.js');
+const { byId, byName, resolveAccount } = require('../users/helpers.js');
 const { isBlockedBy, normPriv, permite, privacyCacheBust, publicName } = require('../users/privacy.js');
 const { loadUserFromRow, saveUserToDb } = require('../users/store.js');
 
@@ -86,7 +87,7 @@ const wsUpgradeInner = (req, socket) => {
     updateContactRequests(u);
     push(u, { type: 'stories', stories: liveStories().filter(x => permite(profiles[x.from], 'historias', u.username)).map(x => storyForViewer(x, u.username)) });
     for (const [k, o] of [...pendingOffers]) {
-        if (o.to === u.username && Date.now() - o.ts < 30000) { pendingOffers.delete(k); push(u, { type: 'call-incoming', from: o.from, video: o.video, callId: o.callId }); }
+        if (o.to === u.username && Date.now() - o.ts < 30000) { pendingOffers.delete(k); push(u, { type: 'call-incoming', from: publicName(o.from, u.username), video: o.video, callId: o.callId }); }
         else if (o.to === u.username) pendingOffers.delete(k);
     }
 
@@ -152,12 +153,20 @@ const wsUpgradeInner = (req, socket) => {
             }
             if (!m || !m.type) return;
             const from = u.username;
-            // Los identificadores que llegan del cliente se usan como claves de
-            // consultas y de mensajes: si no son cadenas se descartan aquí,
-            // antes de que lleguen a la base de datos.
+            /* Los identificadores que llegan del cliente se usan como claves de
+            consultas y de mensajes: si no son cadenas se descartan aquí,
+            antes de que lleguen a la base de datos. */
             if (m.to !== undefined && typeof m.to !== 'string') return;
             if (m.callId !== undefined && typeof m.callId !== 'string') return;
             if (m.groupId !== undefined && typeof m.groupId !== 'string') return;
+            /* El cliente puede dirigirse a un integrante oculto por su alias
+            opaco (UUID). Se resuelve a la cuenta canónica solo si la relación
+            autoriza el alias; el resto de sitios siguen trabajando con el
+            nombre interno y los payloads de salida se aliasan por visor. */
+            if (typeof m.to === 'string') {
+                const target = resolveAccount(m.to, u);
+                if (target) m.to = target.username;
+            }
             // Todo el manejo del frame va dentro de un try/catch: un mensaje
             // malformado (un campo con el tipo equivocado, por ejemplo) solo
             // puede cerrar ESTA conexión, nunca el proceso compartido con el
@@ -178,27 +187,27 @@ const wsUpgradeInner = (req, socket) => {
                    descarta sin escribir nada. */
                 if (hasPendingCall(from, m.to) || hasPendingCall(m.to, from)) return;
                 const targetP = profiles[m.to];
-                if (isBlockedBy(targetP, from)) { updateCall(from, m.callId, { state: 'blocked' }); pushName(from, { type: 'call-blocked', from: m.to, callId: m.callId }); return; }
-                if (isBlockedBy(profiles[from], m.to)) { push(from, { type: 'call-blocked', from: m.to, callId: m.callId }); return; }
-                if (!permite(targetP, 'llamadas', from)) { updateCall(from, m.callId, { state: 'denied' }); push(from, { type: 'call-denied', from: m.to, callId: m.callId }); return; }
+                if (isBlockedBy(targetP, from)) { updateCall(from, m.callId, { state: 'blocked' }); pushName(from, { type: 'call-blocked', from: publicName(m.to, from), callId: m.callId }); return; }
+                if (isBlockedBy(profiles[from], m.to)) { push(from, { type: 'call-blocked', from: publicName(m.to, from), callId: m.callId }); return; }
+                if (!permite(targetP, 'llamadas', from)) { updateCall(from, m.callId, { state: 'denied' }); push(from, { type: 'call-denied', from: publicName(m.to, from), callId: m.callId }); return; }
                 // Techo de ofertas pendientes: son evanescentes (30 s) pero la
                 // tabla no debe poder crecer sin límite ni siquiera por poco tiempo.
                 if (pendingOffers.size < 1000)
                     pendingOffers.set(m.to + ':' + m.callId, { to: m.to, from, video: !!m.video, callId: m.callId, ts: Date.now() });
                 const rec = addCall(from, { id: m.callId, peer: m.to, dir: 'out', video: !!m.video, state: 'calling' });
                 addCall(m.to, { id: m.callId, peer: from, dir: 'in', video: !!m.video, state: 'calling' });
-                pushName(m.to, { type: 'call-incoming', from, video: !!m.video, callId: m.callId });
-                push(from, { type: 'call-log', call: rec });
+                pushName(m.to, { type: 'call-incoming', from: publicName(from, m.to), video: !!m.video, callId: m.callId });
+                push(from, { type: 'call-log', call: { ...rec, peer: publicName(rec.peer, from) } });
                 if (!target.online)
-                    notifyUser(m.to, { title: (m.video ? 'Videollamada de ' : 'Llamada de ') + pushNameOf(from), body: m.video ? 'Videollamada' : 'Llamada', tag: 'call-' + m.callId, renotify: true, requireInteraction: true, icon: avatarPushUrl(from), url: '/?open=' + encodeURIComponent(from) });
+                    notifyUser(m.to, { title: (m.video ? 'Videollamada de ' : 'Llamada de ') + pushNameOf(from), body: m.video ? 'Videollamada' : 'Llamada', tag: 'call-' + m.callId, renotify: true, requireInteraction: true, icon: avatarPushUrl(from), url: '/?open=' + encodeURIComponent(publicName(from, m.to)) });
                 setTimeout(() => {
                     pendingOffers.delete(m.to + ':' + m.callId);
                     const list = callFiles.get(from) || [];
                     if (list.some(c => c.id === m.callId && c.state === 'calling')) {
                         updateCall(from, m.callId, { state: 'missed' });
                         updateCall(m.to, m.callId, { state: 'missed' });
-                        pushName(m.to, { type: 'call-missed', from, callId: m.callId });
-                        push(from, { type: 'call-missed', from: m.to, callId: m.callId });
+                        pushName(m.to, { type: 'call-missed', from: publicName(from, m.to), callId: m.callId });
+                        push(from, { type: 'call-missed', from: publicName(m.to, from), callId: m.callId });
                     }
                 }, 30000);
                 return;
@@ -206,13 +215,13 @@ const wsUpgradeInner = (req, socket) => {
             if (m.type === 'call-busy') {
                 if (!hasCall(from, m.to, m.callId)) return;
                 updateCall(from, m.callId, { state: 'busy' });
-                pushName(m.to, { type: 'call-busy', from, callId: m.callId });
+                pushName(m.to, { type: 'call-busy', from: publicName(from, m.to), callId: m.callId });
                 return;
             }
             if (m.type === 'typing' || m.type === 'recording') {
                 if (typeof m.to !== 'string' || !byName(m.to) || !permite(profiles[m.to], 'mensajes', from) ||
                     isBlockedBy(profiles[m.to], from) || isBlockedBy(profiles[from], m.to)) return;
-                pushName(m.to, { type: m.type, from, on: !!m.on });
+                pushName(m.to, { type: m.type, from: publicName(from, m.to), on: !!m.on });
                 return;
             }
             if (m.type === 'group-typing' || m.type === 'group-recording') {
@@ -238,7 +247,7 @@ const wsUpgradeInner = (req, socket) => {
             if (m.type === 'sending') {
                 if (typeof m.to !== 'string' || !byName(m.to) || !permite(profiles[m.to], 'mensajes', from) ||
                     isBlockedBy(profiles[m.to], from) || isBlockedBy(profiles[from], m.to)) return;
-                pushName(m.to, { type: 'sending', from, on: !!m.on, sendKind: typeof m.sendKind === 'string' ? m.sendKind.slice(0, 24) : '' });
+                pushName(m.to, { type: 'sending', from: publicName(from, m.to), on: !!m.on, sendKind: typeof m.sendKind === 'string' ? m.sendKind.slice(0, 24) : '' });
                 return;
             }
             if (m.type === 'group-sending') {
@@ -287,15 +296,18 @@ const wsUpgradeInner = (req, socket) => {
                     se conserva el valor real del perfil. Sin esta comprobación
                     el texto cifrado se volvería a cifrar y el original
                     quedaría destruido para siempre. */
-                const cifradoDeVuelta = value => {
+                const cifradoDeVuelta = (value, campo) => {
                     if (typeof value !== 'string' || !value.startsWith('PCE')) return false;
                     try {
-                        const plain = decryptForUser(u.id, value);
+                        // M1: name/note/desc llevan el contexto de su columna
+                        // (PCE3A). Sin él, un valor ya cifrado se habría
+                        // vuelto a cifrar y el original quedaría destruido.
+                        const plain = decryptForUser(u.id, value, campo ? ctxProfile(u.id, campo) : null);
                         return typeof plain === 'string' && plain.length > 0;
                     } catch (error) { return false; }
                 };
-                if (typeof m.name === 'string' && !cifradoDeVuelta(m.name) && m.name.length <= 64 && m.name !== p.name) { p.name = m.name; dirty = true; }
-                if (typeof m.note === 'string' && !cifradoDeVuelta(m.note) && m.note.length <= 500 && m.note !== p.note) {
+                if (typeof m.name === 'string' && !cifradoDeVuelta(m.name, 'name') && m.name.length <= 64 && m.name !== p.name) { p.name = m.name; dirty = true; }
+                if (typeof m.note === 'string' && !cifradoDeVuelta(m.note, 'note') && m.note.length <= 500 && m.note !== p.note) {
                     p.note = m.note;
                     p.noteTs = m.note ? Date.now() : 0;
                     // Una sola fuente de verdad: la nota también vive en
@@ -304,7 +316,7 @@ const wsUpgradeInner = (req, socket) => {
                     else delete notesMap[from];
                     dirty = true;
                 }
-                if (typeof m.desc === 'string' && !cifradoDeVuelta(m.desc) &&
+                if (typeof m.desc === 'string' && !cifradoDeVuelta(m.desc, 'desc') &&
                     characterCount(m.desc, MESSAGE_LIMITS.profileDescriptionCharacters) <= MESSAGE_LIMITS.profileDescriptionCharacters &&
                     m.desc !== p.desc) { p.desc = m.desc; dirty = true; }
                 if (validAvatar(m.avatar) && m.avatar !== p.avatar) { p.avatar = m.avatar; dirty = true; }
@@ -320,7 +332,7 @@ const wsUpgradeInner = (req, socket) => {
                        era una tormenta de consultas O(N) sin contenido nuevo. */
                     for (const userId of u.contacts || []) {
                         const user = users.get(userId);
-                        if (user) push(user, { type: 'profile', username: from });
+                        if (user) push(user, { type: 'profile', username: publicName(from, user.username) });
                     }
                 }
                 return;
@@ -330,7 +342,7 @@ const wsUpgradeInner = (req, socket) => {
                 pendingOffers.delete(m.to + ':' + m.callId);
                 updateCall(from, m.callId, { state: 'active' });
                 updateCall(m.to, m.callId, { state: 'active' });
-                pushName(m.to, { type: 'call-accepted', from, callId: m.callId });
+                pushName(m.to, { type: 'call-accepted', from: publicName(from, m.to), callId: m.callId });
                 return;
             }
             if (m.type === 'call-reject' || m.type === 'call-cancel' || m.type === 'call-end') {
@@ -340,7 +352,7 @@ const wsUpgradeInner = (req, socket) => {
                 const relay = m.type === 'call-reject' ? 'call-rejected' : m.type === 'call-cancel' ? 'call-cancelled' : 'call-ended';
                 updateCall(from, m.callId, { state });
                 updateCall(m.to, m.callId, { state: m.type === 'call-reject' ? 'missed' : state });
-                pushName(m.to, { type: relay, from, callId: m.callId });
+                pushName(m.to, { type: relay, from: publicName(from, m.to), callId: m.callId });
                 return;
             }
             if (m.type === 'call-sdp' || m.type === 'call-ice' || m.type === 'call-mute' || m.type === 'call-video') {
@@ -349,7 +361,7 @@ const wsUpgradeInner = (req, socket) => {
                 if (m.type === 'call-video' && typeof m.videoEnabled !== 'boolean') return;
                 pushName(m.to, {
                     type: m.type,
-                    from,
+                    from: publicName(from, m.to),
                     callId: m.callId,
                     sdp: m.sdp,
                     candidate: m.candidate,

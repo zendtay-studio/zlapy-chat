@@ -128,7 +128,11 @@ test('credential cambia la credencial, re-cifra todo y deja la base legible con 
     db2.close();
     const material2 = readKdfMaterial({ dbPath });
     const llaveNueva = deriveFromCredential({ user: 'beto', password: 'clave-nueva-2026' }, material2);
-    assert.equal(createMessageCrypto(llaveNueva).decryptAtRest(fila.auth_key), 'a'.repeat(512));
+    // M7: la auth_key queda atada a su usuario (AAD) tras el re-cifrado.
+    const { aadAuthKey } = require('../../src/crypto/aad.js');
+    assert.equal(createMessageCrypto(llaveNueva).decryptAtRest(fila.auth_key, aadAuthKey('u1')), 'a'.repeat(512));
+    assert.equal(createMessageCrypto(llaveNueva).decryptAtRest(fila.auth_key), null,
+        'sin su AAD, tampoco la llave nueva la abre');
     assert.equal(createMessageCrypto(llaveVieja).decryptAtRest(fila.auth_key), null);
 });
 

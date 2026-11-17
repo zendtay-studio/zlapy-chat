@@ -3,15 +3,20 @@
  * por usuario.
  *
  * La auth_key son 2048 bits aleatorios, se guarda CIFRADA con la llave
- * maestra (PCE1) y cifra todo el contenido del usuario. El armazón MTProto
- * (sal rotada, session_id, msg_id monotono) se eliminó: no se verificaba en
- * el descifrado y no aportaba nada sobre AES-256-GCM.
+ * maestra (PCE1) y cifra todo el contenido del usuario con el esquema
+ * MTProto 2.0 (PCE3 / PCE3A, AES-256-IGE con el armazón completo).
  */
 'use strict';
 
 const mtproto = require('./mtproto');
+const { aadAuthKey } = require('./aad.js');
 
 const AUTH_KEY_CACHE_MAX = 500;
+
+/* Sobres de contenido por usuario: `PCE3A:` es el PCE3 con contexto (AAD),
+   `PCE3:` el de siempre (sin contexto, legado y aún legible). */
+const PCE3 = mtproto.ENVELOPE_PCE3;
+const PCE3A = 'PCE3A:';
 
 /* Error de dominio: la fila de `user_auth_keys` existe pero NO se descifra
  * con la llave maestra actual. Suele significar dos cosas muy distintas:
@@ -46,6 +51,18 @@ function createUserAuthKeys({ db, Stmt, encryptAtRest, decryptAtRest, onAuthKeyC
 
     const authKeyCache = new Map();
 
+    /* M7: la auth_key viaja cifrada con la llave maestra ATADA a su usuario
+     * (AAD). Un sobre copiado de otra fila no descifra: antes cualquier
+     * `auth_key` cifrada valía en cualquier otra fila de la tabla, así que
+     * copiar una fila ajena bastaba para secuestrar el contenido de esa
+     * cuenta. Los valores heredados (sin AAD) se siguen leyendo y se re-atan
+     * al volver a escribir la fila. */
+    const encAuthKey = (userId, plain) => encryptAtRest(plain, aadAuthKey(userId));
+    const decAuthKey = (userId, blob) => {
+        const conAad = decryptAtRest(blob, aadAuthKey(userId));
+        return typeof conAad === 'string' ? conAad : decryptAtRest(blob);
+    };
+
     /* Clave cargada de la base (la auth_key viaja cifrada con la llave
      * maestra del servidor). */
     function authKeyRecord(userId) {
@@ -54,7 +71,7 @@ function createUserAuthKeys({ db, Stmt, encryptAtRest, decryptAtRest, onAuthKeyC
         const row = Stmt.getAuthKey.get(userId);
         if (!row) return null;
         let key = null;
-        try { key = Buffer.from(decryptAtRest(row.auth_key), 'hex'); } catch { }
+        try { key = Buffer.from(decAuthKey(userId, row.auth_key), 'hex'); } catch { }
         if (!key || key.length !== mtproto.AUTH_KEY_BYTES) return null;
         const rec = { key, keyId: row.key_id };
         if (authKeyCache.size >= AUTH_KEY_CACHE_MAX) authKeyCache.delete(authKeyCache.keys().next().value);
@@ -74,7 +91,7 @@ function createUserAuthKeys({ db, Stmt, encryptAtRest, decryptAtRest, onAuthKeyC
         const row = Stmt.getAuthKey.get(userId);
         if (!row) return { state: 'ausente', record: null };
         let key = null;
-        try { key = Buffer.from(decryptAtRest(row.auth_key), 'hex'); } catch { }
+        try { key = Buffer.from(decAuthKey(userId, row.auth_key), 'hex'); } catch { }
         if (!key || key.length !== mtproto.AUTH_KEY_BYTES)
             return { state: 'ilegible', record: null };
         const rec = { key, keyId: row.key_id };
@@ -96,7 +113,7 @@ function createUserAuthKeys({ db, Stmt, encryptAtRest, decryptAtRest, onAuthKeyC
         const key = mtproto.generateAuthKey();
         const keyId = mtproto.authKeyId(key);
         const now = Date.now();
-        Stmt.insertAuthKey.run(userId, encryptAtRest(key.toString('hex')), keyId, now, now);
+        Stmt.insertAuthKey.run(userId, encAuthKey(userId, key.toString('hex')), keyId, now, now);
         const rec = { key, keyId };
         if (authKeyCache.size >= AUTH_KEY_CACHE_MAX) authKeyCache.delete(authKeyCache.keys().next().value);
         authKeyCache.set(userId, rec);
@@ -110,23 +127,44 @@ function createUserAuthKeys({ db, Stmt, encryptAtRest, decryptAtRest, onAuthKeyC
         return rec;
     }
 
-    /* Cifra un contenido con la auth_key del usuario (AES-256-GCM). */
-    function encryptForUser(userId, plain) {
+    /* Cifra un contenido con la auth_key del usuario (PCE3, MTProto 2.0).
+     *
+     * M1: con `context`, el sobre se marca `PCE3A:` y el contexto viaja como
+     * AAD autenticado: el texto cifrado solo se puede abrir en SU pieza (el
+     * nombre de ESTE perfil, la historia de ESTA cuenta y ESTE instante, el
+     * resumen de ESTE chat…). Sin contexto se emite el `PCE3:` de siempre,
+     * que se sigue leyendo igual. */
+    function encryptForUser(userId, plain, context = null) {
         if (typeof plain !== 'string' || plain === '') return plain;
         const rec = ensureAuthKey(userId);
-        return mtproto.encrypt(rec.key, plain).blob;
+        const blob = mtproto.encrypt(rec.key, plain, context).blob;
+        return context ? PCE3A + blob.slice(PCE3.length) : blob;
     }
 
-    /* Descifra un contenido: PCE3 con la auth_key del usuario; cualquier otra
-     * cadena pasa por el descifrado en reposo (PCE1/llano) tal cual. Devuelve
-     * null si no se puede descifrar. */
-    function decryptForUser(userId, blob) {
+    /* Descifra un contenido: PCE3A (con contexto) o PCE3 (legado, sin AAD);
+     * cualquier otra cadena pasa por el descifrado en reposo (PCE1/llano)
+     * tal cual. Devuelve null si no se puede descifrar.
+     *
+     * Compatibilidad: lo escrito antes de atar el contexto sigue abriéndose.
+     * Para un `PCE3:` se prueba primero SIN contexto (así era como se cifró)
+     * y, si fallara, con el que se pase; un `PCE3A:` exige el contexto. */
+    function decryptForUser(userId, blob, context = null) {
         if (typeof blob !== 'string' || blob === '') return blob;
-        if (blob.startsWith('PCE3:')) {
+        if (blob.startsWith(PCE3A)) {
+            if (!context) return null;
             const rec = authKeyRecord(userId);
             if (!rec) return null;
-            const out = mtproto.decrypt(rec.key, blob);
+            const out = mtproto.decrypt(rec.key, PCE3 + blob.slice(PCE3A.length), context);
             return out ? out.body.toString('utf8') : null;
+        }
+        if (blob.startsWith(PCE3)) {
+            const rec = authKeyRecord(userId);
+            if (!rec) return null;
+            const sinContexto = mtproto.decrypt(rec.key, blob);
+            if (sinContexto) return sinContexto.body.toString('utf8');
+            if (!context) return null;
+            const conContexto = mtproto.decrypt(rec.key, blob, context);
+            return conContexto ? conContexto.body.toString('utf8') : null;
         }
         return decryptAtRest(blob);
     }

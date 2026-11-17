@@ -25,8 +25,12 @@ const { push } = require('../realtime/notify.js');
 const { blockedSet, callFiles, chatPageCache, groupCache, notesMap, pendingOffers, profiles, pushSubs, stories, usernameIndex, users, setStories } = require('../state.js');
 const { generateRid } = require('../auth/rid.js');
 const { byId, byName, mutedChatPeers, parseJsonSafe } = require('./helpers.js');
+const { aadAuthKey, ctxCall, ctxGroupSummary, ctxProfile, ctxPushSub, ctxStory, ctxSummary, ctxUserKey, ctxUserNote } = require('../crypto/aad.js');
 
 const LOCAL_STICKER_RE = /^\/stickers\/blob\/([a-f0-9]{64})$/i;
+/* Prefijo del sobre de contenido con contexto (PCE3 + AAD): lo emite
+   encryptForUser cuando se pasa contexto y lo exige al descifrar. */
+const PCE3A_PREFIX = 'PCE3A:';
 
 function persistStickers(user) {
     const stickers = (Array.isArray(user.stickers) ? user.stickers : []).slice(-30);
@@ -74,24 +78,26 @@ function hydrateUserFromDb(acc) {
     // reposo) un PCE3 se devolvía TAL CUAL, así que al reiniciar el
     // servidor el perfil se pintaba con el texto cifrado en crudo
     // ("PCE3:...") en lugar del nombre real.
-    const dec = value => {
+    // M1: cada columna de texto lleva SU contexto: el nombre del perfil no se
+    // puede abrir como descripción ni la nota del perfil como la de estado.
+    const dec = (value, field) => {
         if (typeof value !== 'string' || value === '') return '';
-        const out = decryptForUser(acc.id, value);
+        const out = decryptForUser(acc.id, value, field ? ctxProfile(acc.id, field) : null);
         return typeof out === 'string' ? out : '';
     };
     const profile = profiles[acc.username] || {
         username: acc.username,
-        name: (row && dec(row.display_name)) || acc.username,
+        name: (row && dec(row.display_name, 'name')) || acc.username,
         avatar: (row && readImage(row.avatar_ref)) || '',
-        desc: (row && dec(row.bio)) || '',
-        note: (row && dec(row.note)) || '',
+        desc: (row && dec(row.bio, 'desc')) || '',
+        note: (row && dec(row.note, 'note')) || '',
         noteTs: (row && row.note_ts) || 0
     };
     if (row) {
-        profile.name = dec(row.display_name) || profile.name;
+        profile.name = dec(row.display_name, 'name') || profile.name;
         profile.avatar = readImage(row.avatar_ref) || '';
-        profile.desc = dec(row.bio) || '';
-        profile.note = dec(row.note) || '';
+        profile.desc = dec(row.bio, 'desc') || '';
+        profile.note = dec(row.note, 'note') || '';
         profile.noteTs = row.note_ts || 0;
     }
     profiles[acc.username] = profile;
@@ -112,19 +118,19 @@ function hydrateUserFromDb(acc) {
     for (const r of Stmt.listGroupSeen.all(acc.id)) seen[r.gid] = r.ts;
     acc.groupSeen = seen;
 
-    // Clave del dispositivo (cifrada en reposo)
+    // Clave del dispositivo (cifrada en reposo, atada a su cuenta)
     try {
         const keyRow = Stmt.getKey.get(acc.id);
         if (keyRow && keyRow.key_cipher) {
-            const key = JSON.parse(decryptForUser(acc.id, keyRow.key_cipher) || 'null');
+            const key = JSON.parse(decryptForUser(acc.id, keyRow.key_cipher, ctxUserKey(acc.id)) || 'null');
             if (key && typeof key === 'object') acc.publicKey = key;
         }
     } catch { }
 
-    // Nota personal (la de "estados": texto + fondo)
+    // Nota personal (la de "estados": texto + fondo), con su contexto
     const noteRow = Stmt.getUserNote.get(acc.id);
     if (noteRow && noteRow.data) {
-        const data = parseJsonSafe(decryptForUser(acc.id, noteRow.data) || '');
+        const data = parseJsonSafe(decryptForUser(acc.id, noteRow.data, ctxUserNote(acc.id)) || '');
         if (data && typeof data === 'object') {
             const note = { ...data, ts: noteRow.ts || data.ts || 0 };
             notesMap[acc.username] = note;
@@ -214,13 +220,13 @@ function loadFromDb() {
     // Push
     for (const row of Stmt.listPushSubs.all()) {
         if (!pushSubs.has(row.user_id)) pushSubs.set(row.user_id, []);
-        try { const sub = parseJsonSafe(decryptForUser(row.user_id, row.data) || ''); if (sub) pushSubs.get(row.user_id).push(sub); } catch { }
+        try { const sub = parseJsonSafe(decryptForUser(row.user_id, row.data, ctxPushSub(row.user_id)) || ''); if (sub) pushSubs.get(row.user_id).push(sub); } catch { }
     }
     // Llamadas (en RAM, son pocas)
     for (const acc of users.values()) {
         const list = [];
         for (const row of Stmt.listCalls.all(acc.id, 100)) {
-            try { const call = parseJsonSafe(decryptForUser(acc.id, row.data) || ''); if (call) list.push(call); } catch { }
+            try { const call = parseJsonSafe(decryptForUser(acc.id, row.data, ctxCall(acc.id, row.id)) || ''); if (call) list.push(call); } catch { }
         }
         callFiles.set(acc.username, list.reverse());
     }
@@ -228,7 +234,7 @@ function loadFromDb() {
     const cutoff = now - CONFIG.storyTtlMs;
     for (const row of Stmt.listLiveStories.all(cutoff)) {
         try {
-            const s = JSON.parse(decryptForUser(row.from_id, row.data) || 'null');
+            const s = JSON.parse(decryptForUser(row.from_id, row.data, ctxStory(row.from_id, row.ts)) || 'null');
             const owner = users.get(row.from_id);
             if (s && owner) { s.ts = row.ts; s.from = owner.username; s.hash = row.hash || ''; stories.push(s); }
         } catch { }
@@ -265,13 +271,17 @@ function regenerateAuthKeyInner(userId) {
     // La clave nueva se instala ANTES de re-cifrar: asi las firmas se rehacen
     // con la clave nueva (si se re-cifrara antes, los mensajes quedarian
     // firmados con la clave vieja y dejarian de verificarse).
-    Stmt.replaceAuthKey.run(encryptAtRest(newKey.toString('hex')), newKeyId, now, userId);
+    Stmt.replaceAuthKey.run(encryptAtRest(newKey.toString('hex'), aadAuthKey(userId)), newKeyId, now, userId);
     authKeys.authKeyCache.delete(userId);
     messageCrypto.forgetSigningKey(userId);
 
-    const encryptWithNew = plain => {
+    /* M1: el re-cifrado conserva (y añade) el contexto de cada pieza, así que
+       `encryptWithNew` emite PCE3A y `decryptWithOld` abre los dos formatos.
+       Una tabla sin contexto seguiría funcionando igual (compatibilidad). */
+    const encryptWithNew = (plain, context = null) => {
         if (typeof plain !== 'string' || plain === '') return plain;
-        return mtproto.encrypt(newKey, plain).blob;
+        const blob = mtproto.encrypt(newKey, plain, context).blob;
+        return context ? PCE3A_PREFIX + blob.slice('PCE3:'.length) : blob;
     };
     /* Descifra con la clave ANTERIOR. La replaceAuthKey ya instaló la nueva,
        así que `decryptForUser` solo conocería la nueva: las tablas que la
@@ -280,12 +290,20 @@ function regenerateAuthKeyInner(userId) {
        historias) ilegibles tras regenerar la clave: sin vista previa en la
        lista y el chat al fondo. Los mensajes ya se descifraban con `oldRec`
        a mano. */
-    const decryptWithOld = blob => {
+    const decryptWithOld = (blob, context = null) => {
         if (typeof blob !== 'string' || blob === '') return blob === '' ? '' : blob;
+        if (blob.startsWith(PCE3A_PREFIX)) {
+            if (!oldRec || !context) return null;
+            const out = mtproto.decrypt(oldRec.key, 'PCE3:' + blob.slice(PCE3A_PREFIX.length), context);
+            return out ? out.body.toString('utf8') : null;
+        }
         if (blob.startsWith('PCE3:')) {
             if (!oldRec) return null;
-            const out = mtproto.decrypt(oldRec.key, blob);
-            return out ? out.body.toString('utf8') : null;
+            const sinContexto = mtproto.decrypt(oldRec.key, blob);
+            if (sinContexto) return sinContexto.body.toString('utf8');
+            if (!context) return null;
+            const conContexto = mtproto.decrypt(oldRec.key, blob, context);
+            return conContexto ? conContexto.body.toString('utf8') : null;
         }
         return decryptAtRest(blob);
     };
@@ -320,50 +338,65 @@ function regenerateAuthKeyInner(userId) {
         reencrypted++;
     }
 
-    // 2) El resto de contenido del usuario.
+    // 2) El resto de contenido del usuario (cada fila con SU contexto, M1).
     for (const row of db.prepare('SELECT owner, peer, unread, last_data FROM summaries WHERE owner = ?').all(userId)) {
-        const plain = decryptWithOld( row.last_data);
+        const contexto = ctxSummary(row.owner, row.peer);
+        const plain = decryptWithOld(row.last_data, contexto);
         if (plain === null) continue;
-        Stmt.upsertSummary.run(row.owner, row.peer, row.unread, encryptWithNew(plain));
+        Stmt.upsertSummary.run(row.owner, row.peer, row.unread, encryptWithNew(plain, contexto));
         reencrypted++;
     }
     for (const row of db.prepare('SELECT owner, gid, unread, last_data FROM group_summaries WHERE owner = ?').all(userId)) {
-        const plain = decryptWithOld( row.last_data);
+        const contexto = ctxGroupSummary(row.owner, row.gid);
+        const plain = decryptWithOld(row.last_data, contexto);
         if (plain === null) continue;
-        Stmt.upsertGroupSummary.run(row.owner, row.gid, row.unread, encryptWithNew(plain));
+        Stmt.upsertGroupSummary.run(row.owner, row.gid, row.unread, encryptWithNew(plain, contexto));
         reencrypted++;
     }
     for (const row of db.prepare('SELECT user_id, data FROM user_notes WHERE user_id = ?').all(userId)) {
-        const plain = decryptWithOld( row.data);
+        const contexto = ctxUserNote(row.user_id);
+        const plain = decryptWithOld(row.data, contexto);
         if (plain === null) continue;
-        db.prepare('UPDATE user_notes SET data = ? WHERE user_id = ?').run(encryptWithNew(plain), userId);
+        db.prepare('UPDATE user_notes SET data = ? WHERE user_id = ?').run(encryptWithNew(plain, contexto), userId);
         reencrypted++;
     }
     for (const row of db.prepare('SELECT user_id, display_name, bio, note FROM user_profiles WHERE user_id = ?').all(userId)) {
-        const name = decryptWithOld(row.display_name);
-        const bio = decryptWithOld(row.bio);
-        const note = decryptWithOld(row.note);
+        const ctxName = ctxProfile(row.user_id, 'name'), ctxBio = ctxProfile(row.user_id, 'desc'), ctxNote = ctxProfile(row.user_id, 'note');
+        const name = decryptWithOld(row.display_name, ctxName);
+        const bio = decryptWithOld(row.bio, ctxBio);
+        const note = decryptWithOld(row.note, ctxNote);
         if (name === null || bio === null || note === null) continue;
         db.prepare('UPDATE user_profiles SET display_name = ?, bio = ?, note = ? WHERE user_id = ?')
-            .run(encryptWithNew(name), encryptWithNew(bio), encryptWithNew(note), userId);
+            .run(encryptWithNew(name, ctxName), encryptWithNew(bio, ctxBio), encryptWithNew(note, ctxNote), userId);
         reencrypted++;
     }
     for (const row of db.prepare('SELECT id, owner, peer, ts, data FROM calls WHERE owner = ?').all(userId)) {
-        const plain = decryptWithOld( row.data);
+        const contexto = ctxCall(row.owner, row.id);
+        const plain = decryptWithOld(row.data, contexto);
         if (plain === null) continue;
-        db.prepare('UPDATE calls SET data = ? WHERE id = ? AND owner = ?').run(encryptWithNew(plain), row.id, userId);
+        db.prepare('UPDATE calls SET data = ? WHERE id = ? AND owner = ?').run(encryptWithNew(plain, contexto), row.id, userId);
         reencrypted++;
     }
     for (const row of db.prepare('SELECT user_id, endpoint, data FROM push_subs WHERE user_id = ?').all(userId)) {
-        const plain = decryptWithOld( row.data);
+        const contexto = ctxPushSub(row.user_id);
+        const plain = decryptWithOld(row.data, contexto);
         if (plain === null) continue;
-        db.prepare('UPDATE push_subs SET data = ? WHERE user_id = ? AND endpoint = ?').run(encryptWithNew(plain), userId, row.endpoint);
+        db.prepare('UPDATE push_subs SET data = ? WHERE user_id = ? AND endpoint = ?').run(encryptWithNew(plain, contexto), userId, row.endpoint);
         reencrypted++;
     }
     for (const row of db.prepare('SELECT from_id, ts, data FROM stories WHERE from_id = ?').all(userId)) {
-        const plain = decryptWithOld( row.data);
+        const contexto = ctxStory(row.from_id, row.ts);
+        const plain = decryptWithOld(row.data, contexto);
         if (plain === null) continue;
-        db.prepare('UPDATE stories SET data = ? WHERE from_id = ? AND ts = ?').run(encryptWithNew(plain), userId, row.ts);
+        db.prepare('UPDATE stories SET data = ? WHERE from_id = ? AND ts = ?').run(encryptWithNew(plain, contexto), userId, row.ts);
+        reencrypted++;
+    }
+    /* La clave del dispositivo (user_keys) con su propio contexto. */
+    for (const row of db.prepare('SELECT user_id, key_cipher FROM user_keys WHERE user_id = ?').all(userId)) {
+        const contexto = ctxUserKey(row.user_id);
+        const plain = decryptWithOld(row.key_cipher, contexto);
+        if (plain === null) continue;
+        db.prepare('UPDATE user_keys SET key_cipher = ? WHERE user_id = ?').run(encryptWithNew(plain, contexto), userId);
         reencrypted++;
     }
 
@@ -519,17 +552,17 @@ function writeUserRows(user) {
             || (prevChat ? prevChat.wallpaper_ref : '');
     Stmt.upsertProfile.run(
         user.id,
-        // Nombre, bio y nota se cifran en reposo (PCE3, con la clave del
-        // usuario). El avatar va cifrado también, pero en el almacén de blobs.
-        encryptForUser(user.id, typeof profile.name === 'string' && profile.name ? profile.name : user.username),
+        // M1: nombre, bio y nota cifrados en reposo (PCE3A: PCE3 con el
+        // contexto de cada columna). El avatar va en el almacén de blobs.
+        encryptForUser(user.id, typeof profile.name === 'string' && profile.name ? profile.name : user.username, ctxProfile(user.id, 'name')),
         avatarRef,
-        encryptForUser(user.id, typeof profile.desc === 'string' ? profile.desc : ''),
-        encryptForUser(user.id, typeof profile.note === 'string' ? profile.note : ''),
+        encryptForUser(user.id, typeof profile.desc === 'string' ? profile.desc : '', ctxProfile(user.id, 'desc')),
+        encryptForUser(user.id, typeof profile.note === 'string' ? profile.note : '', ctxProfile(user.id, 'note')),
         Number.isFinite(profile.noteTs) ? profile.noteTs : 0,
         now
     );
     if (user.publicKey && typeof user.publicKey === 'object')
-        Stmt.upsertKey.run(user.id, encryptForUser(user.id, JSON.stringify(user.publicKey)), now);
+        Stmt.upsertKey.run(user.id, encryptForUser(user.id, JSON.stringify(user.publicKey), ctxUserKey(user.id)), now);
     // Privacidad: se reemplaza el conjunto completo de reglas.
     Stmt.deletePrivacy.run(user.id);
     Stmt.deletePrivacyUsers.run(user.id);
@@ -575,7 +608,7 @@ function writeUserRows(user) {
     }
     // Nota personal (estado)
     // La nota personal se cifra en reposo.
-    if (note && typeof note === 'object') Stmt.upsertUserNote.run(user.id, encryptForUser(user.id, JSON.stringify(note)), note.ts || 0);
+    if (note && typeof note === 'object') Stmt.upsertUserNote.run(user.id, encryptForUser(user.id, JSON.stringify(note), ctxUserNote(user.id)), note.ts || 0);
     else Stmt.deleteUserNote.run(user.id);
     persistStickers(user);
     // Grupos vistos

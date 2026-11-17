@@ -11,13 +11,13 @@ const { Stmt } = require('../db/statements.js');
 const { json } = require('../http/responses.js');
 const { contactLimiter } = require('../http/rate-limit.js');
 const { rejectRateLimited } = require('../http/helpers.js');
-const { readGroup, sharesGroup, writeGroupMeta } = require('../groups/store.js');
+const { readGroup, writeGroupMeta } = require('../groups/store.js');
 const { notifyUser, avatarPushUrl, pushNameOf } = require('../push/vapid.js');
 const { broadcastUsersAround, connectContacts, push, pushName, pushStories, removeContacts, updateContactRequests } = require('../realtime/notify.js');
 const { validAvatar } = require('../shared/validation.js');
 const { blockedSet, pendingOffers, profiles, users } = require('../state.js');
-const { byName } = require('../users/helpers.js');
-const { isBlockedBy, permite, permiteDescripcion } = require('../users/privacy.js');
+const { resolveAccount } = require('../users/helpers.js');
+const { isBlockedBy, permite, permiteDescripcion, publicName } = require('../users/privacy.js');
 const { saveUserToDb } = require('../users/store.js');
 
 function getContactsRequests(req, res, url, data, actor) {
@@ -31,12 +31,13 @@ function getContactsRequests(req, res, url, data, actor) {
     const canSeeAvatar = permite(profile, 'foto', req.authUser.username);
     const canSeeDescription = permiteDescripcion(profile, req.authUser.username);
     /* El @usuario del solicitante se pinta solo si su privacidad lo
-       permite: la bandera viaja solo cuando esta OCULTO (ausente =
-       visible), igual que la presencia. */
-    const hideUsuario = !permite(profile, 'usuario', req.authUser.username);
+       permite: cuando está oculto viaja su alias opaco (UUID), que es lo
+       que el cliente ya conoce y con lo que puede aceptar la solicitud. */
+    const visibleName = publicName(sender.username, req.authUser.username);
+    const hideUsuario = visibleName !== sender.username;
     requests.push({
-    id: sender.id, username: sender.username, sentAt: r.ts,
-    name: isBlockedBy(profile, req.authUser.username) ? sender.username : (profile.name || sender.username),
+    id: sender.id, username: visibleName, sentAt: r.ts,
+    name: isBlockedBy(profile, req.authUser.username) ? visibleName : (profile.name || visibleName),
     avatar: canSeeAvatar ? (validAvatar(profile.avatar) ? profile.avatar : '') : '',
     description: canSeeDescription ? profile.desc || '' : '',
     ...(hideUsuario ? { verUsuario: false } : {})
@@ -52,11 +53,13 @@ function getContactsRequestsSent(req, res, url, data, actor) {
     if (!target) continue;
     const profile = profiles[target.username] || {};
     /* Igual que las recibidas: el @usuario del solicitado viaja oculto
-       si su privacidad 'usuario' lo niega a quien envio la solicitud. */
-    const hideUsuario = !permite(profile, 'usuario', req.authUser.username);
+       (con su alias opaco) si su privacidad 'usuario' lo niega a quien
+       envió la solicitud. */
+    const visibleName = publicName(target.username, req.authUser.username);
+    const hideUsuario = visibleName !== target.username;
     requests.push({
-    username: target.username,
-    name: isBlockedBy(profile, req.authUser.username) ? target.username : (profile.name || target.username),
+    username: visibleName,
+    name: isBlockedBy(profile, req.authUser.username) ? visibleName : (profile.name || visibleName),
     sentAt: r.ts,
     ...(hideUsuario ? { verUsuario: false } : {})
     });
@@ -71,11 +74,9 @@ function postContacts(req, res, url, data, actor) {
     if (rejectRateLimited(res, contactLimiter, req.authUser.id, 20, 'solicitudes de contacto por minuto')) return;
     const requested = typeof data.username === 'string' ? data.username.trim() : '';
     /* El cliente puede enviar el alias opaco (UUID) de un integrante con el
-       @usuario oculto: se acepta si comparte grupo con quien agrega, para
-       que «Agregar contacto» siga funcionando sin recibir el nombre real. */
-    const alias = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requested)
-        && sharesGroup(requested.toLowerCase(), req.authUser.id) ? users.get(requested.toLowerCase()) : null;
-    const target = byName(requested) || alias;
+       @usuario oculto: resolveAccount lo acepta solo si comparte grupo,
+       es contacto o hay una solicitud pendiente. */
+    const target = resolveAccount(requested, req.authUser);
     if (!target) return json(res, 404, { error: 'No account found.' });
     if (target.id === req.authUser.id) return json(res, 400, { error: 'No puedes agregarte.' });
     if (req.authUser.contacts.has(target.id)) return json(res, 200, { ok: true, status: 'contact' });
@@ -101,7 +102,7 @@ function postContacts(req, res, url, data, actor) {
 }
 
 function postContactsRemove(req, res, url, data, actor) {
-    const target = byName(typeof data.username === 'string' ? data.username.trim() : '');
+    const target = resolveAccount(typeof data.username === 'string' ? data.username.trim() : '', req.authUser);
     if (!target || target.id === req.authUser.id || !req.authUser.contacts.has(target.id))
         return json(res, 404, { error: 'No disponible.' });
     removeContacts(req.authUser, target);
@@ -110,7 +111,7 @@ function postContactsRemove(req, res, url, data, actor) {
 }
 
 function postContactsCancel(req, res, url, data, actor) {
-    const target = byName(typeof data.username === 'string' ? data.username.trim() : '');
+    const target = resolveAccount(typeof data.username === 'string' ? data.username.trim() : '', req.authUser);
     if (!target || target.id === req.authUser.id) return json(res, 404, { error: 'No disponible.' });
     Stmt.deleteContactRequest.run(req.authUser.id, target.id);
     updateContactRequests(req.authUser);
@@ -120,7 +121,7 @@ function postContactsCancel(req, res, url, data, actor) {
 
 function postContactsRespond(req, res, url, data, actor) {
     if (rejectRateLimited(res, contactLimiter, req.authUser.id, 20, 'solicitudes de contacto por minuto')) return;
-    const requester = byName(typeof data.username === 'string' ? data.username : '');
+    const requester = resolveAccount(typeof data.username === 'string' ? data.username : '', req.authUser);
     if (!requester || requester.id === req.authUser.id) return json(res, 404, { error: 'No disponible.' });
     const row = Stmt.listContactRequestsTo.all(req.authUser.id).find(r => r.from_id === requester.id);
     if (!row) return json(res, 404, { error: 'No disponible.' });
@@ -135,12 +136,12 @@ function postContactsRespond(req, res, url, data, actor) {
         updateContactRequests(req.authUser);
         updateContactRequests(requester);
     }
-    if (data.accept) push(requester, { type: 'contact-request-accepted', username: req.authUser.username });
-    return json(res, 200, { ok: true, accepted: data.accept, username: requester.username });
+    if (data.accept) push(requester, { type: 'contact-request-accepted', username: publicName(req.authUser.username, requester.username) });
+    return json(res, 200, { ok: true, accepted: data.accept, username: publicName(requester.username, req.authUser.username) });
 }
 
 function postBlock(req, res, url, data, actor) {
-    const target = byName(typeof data.target === 'string' ? data.target.trim() : '');
+    const target = resolveAccount(typeof data.target === 'string' ? data.target.trim() : '', req.authUser);
     if (!target || target.id === req.authUser.id) return json(res, 404, { error: 'No disponible.' });
     const set = blockedSet.get(actor) || new Set();
     const wasBlocked = set.has(target.username);
@@ -177,7 +178,7 @@ function postBlock(req, res, url, data, actor) {
     push(req.authUser, { type: 'profile', username: actor });
     broadcastUsersAround(req.authUser.id);
     pushStories();
-    pushName(target.username, { type: 'blocked-change', by: actor, blocked: !wasBlocked });
+    pushName(target.username, { type: 'blocked-change', by: publicName(actor, target.username), blocked: !wasBlocked });
     return json(res, 200, { ok: true, blocked: !wasBlocked });
 }
 

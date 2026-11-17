@@ -9,6 +9,7 @@
 const crypto = require('crypto');
 
 const { ensureOwnerCredential } = require('./owner-key.js');
+const { aadAuthKey } = require('./aad.js');
 const { createMessageCrypto } = require('./message-crypto.js');
 const { createUserAuthKeys, AuthKeyUnreadableError } = require('./user-auth-keys.js');
 const { db } = require('../db/database.js');
@@ -36,7 +37,7 @@ const messageCrypto = createMessageCrypto(masterKey.export(), {
 
 const { encryptAtRest, decryptAtRest } = messageCrypto;
 
-// Clave de cifrado de contenido por usuario (auth_key, AES-256-GCM)
+// Clave de cifrado de contenido por usuario (auth_key, PCE3 MTProto 2.0)
 // y helpers de cifrado por usuario.
 const authKeys = createUserAuthKeys({ db, Stmt, encryptAtRest, decryptAtRest, onAuthKeyCreated: userId => messageCrypto.forgetSigningKey(userId) });
 
@@ -62,8 +63,13 @@ function auditAuthKeys() {
     const ilegibles = [];
     let ok = 0;
     for (const fila of filas) {
+        // M7: cada auth_key va atada a su usuario; la heredada sin AAD también
+        // cuenta como legible (no es una desincronización).
         let plain = null;
-        try { plain = decryptAtRest(fila.auth_key); } catch { }
+        try {
+            plain = decryptAtRest(fila.auth_key, aadAuthKey(fila.user_id));
+            if (typeof plain !== 'string') plain = decryptAtRest(fila.auth_key);
+        } catch { }
         if (typeof plain === 'string' && plain.length > 0) { ok++; continue; }
         ilegibles.push({ user_id: fila.user_id, username: nombres.get(fila.user_id) || '(desconocido)' });
     }

@@ -15,7 +15,9 @@ const { peerHash } = require('../crypto/peer-index.js');
 const { Stmt } = require('../db/statements.js');
 const { push, pushName } = require('../realtime/notify.js');
 const { callFiles, pendingOffers } = require('../state.js');
+const { ctxCall } = require('../crypto/aad.js');
 const { byName } = require('../users/helpers.js');
+const { publicName } = require('../users/privacy.js');
 
 // Llamadas
 function addCall(username, entry) {
@@ -30,7 +32,8 @@ function addCall(username, entry) {
         Stmt.insertCall.run(list[list.length - 1].id, user.id,
             entry.peer ? encField('calls.peer', entry.peer) : null,
             entry.peer ? peerHash(entry.peer) : null,
-            list[list.length - 1].ts, encryptForUser(user.id, JSON.stringify(list[list.length - 1])));
+            list[list.length - 1].ts,
+            encryptForUser(user.id, JSON.stringify(list[list.length - 1]), ctxCall(user.id, list[list.length - 1].id)));
         Stmt.trimCalls.run(user.id, user.id, 100);
     }
     return list[list.length - 1];
@@ -43,7 +46,7 @@ function updateCall(username, id, patch) {
     if (c) Object.assign(c, patch);
     callFiles.set(username, list);
     const user = byName(username);
-    if (user && c) Stmt.updateCallData.run(encryptForUser(user.id, JSON.stringify(c)), id, user.id);
+    if (user && c) Stmt.updateCallData.run(encryptForUser(user.id, JSON.stringify(c), ctxCall(user.id, id)), id, user.id);
     return c;
 }
 const hasCall = (username, peer, id) =>
@@ -69,7 +72,7 @@ function endUserCalls(username) {
         updateCall(username, c.id, { state: 'ended' });
         if (c.peer) {
             updateCall(c.peer, c.id, { state: 'ended' });
-            pushName(c.peer, { type: 'call-ended', from: username, callId: c.id });
+            pushName(c.peer, { type: 'call-ended', from: publicName(username, c.peer), callId: c.id });
         }
     }
 }

@@ -44,12 +44,16 @@ const chatPrefsLimiter = createMessageRateLimiter(20, 60 * 1000);
    cota el endpoint era un DoS de proceso barato. */
 const passwordCheckLimiter = createMessageRateLimiter(5, 60 * 1000);
 /* Acuses de entrega (/receipt): cada uno recorre hasta 500 ids, descifra cada
-   fila (AES-256-GCM por mensaje) y toca resúmenes: sin cota era el multiplicador
+   fila (PCE3, MTProto 2.0) y toca resúmenes: sin cota era el multiplicador
    barato de escritura más caro del chat. SECOA-I-004. */
 const receiptLimiter = createMessageRateLimiter(120, 60 * 1000);
 const reactionLimiter = createMessageRateLimiter(120, 60 * 1000);
+/* Clave pública (/key): guardarla reescribe TODA la fila del usuario
+   (perfil, ajustes, contactos, grupos vistos…). Sin cota, una sesión válida
+   martilleando la ruta era un DoS de escrituras barato (M3). */
+const keyUploadLimiter = createMessageRateLimiter(30, 60 * 1000);
 setInterval(() => messageRateLimiter.prune(), MESSAGE_LIMITS.messageWindowMs).unref();
-setInterval(() => { giphyLimiter.prune(); stickerCreateLimiter.prune(); profileLimiter.prune(); keyRegenLimiter.prune(); storyLimiter.prune(); storyViewLimiter.prune(); contactLimiter.prune(); groupCreateLimiter.prune(); callOfferLimiter.prune(); chatPrefsLimiter.prune(); passwordCheckLimiter.prune(); receiptLimiter.prune(); reactionLimiter.prune(); }, 60 * 1000).unref();
+setInterval(() => { giphyLimiter.prune(); stickerCreateLimiter.prune(); profileLimiter.prune(); keyRegenLimiter.prune(); storyLimiter.prune(); storyViewLimiter.prune(); contactLimiter.prune(); groupCreateLimiter.prune(); callOfferLimiter.prune(); chatPrefsLimiter.prune(); passwordCheckLimiter.prune(); receiptLimiter.prune(); reactionLimiter.prune(); keyUploadLimiter.prune(); }, 60 * 1000).unref();
 /* Limpieza perezosa de los contadores de acceso y registro: las entradas cuya
    ventana ya venció no significan nada y ocupan memoria. Incluye el freno por
    IP (`brk:...`) con su enfriamiento corto y el contador por cuenta e IP
@@ -88,4 +92,5 @@ module.exports = {
     passwordCheckLimiter,
     receiptLimiter,
     reactionLimiter,
+    keyUploadLimiter,
 };

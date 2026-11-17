@@ -12,6 +12,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { decryptAtRest, encryptAtRest } = require('../crypto/setup.js');
+const { aadBlob } = require('../crypto/aad.js');
 const { Stmt } = require('../db/statements.js');
 const { profiles, users, blobBytesCache } = require('../state.js');
 const { permite } = require('../users/privacy.js');
@@ -47,7 +48,8 @@ const BLOB_QUOTA_PER_USER_BYTES = 512 * 1024 * 1024;   // 512 MB por cuenta
 const BLOB_QUOTA_GLOBAL_BYTES = 20 * 1024 * 1024 * 1024; // 20 GB en total
 
 /* Caché por cuenta del espacio ocupado por sus adjuntos (los que
-   referencia desde sus conversaciones, grupos o historias). La suma real es
+   referencia desde sus conversaciones, grupos o historias) MÁS el medio
+   inline de sus historias, que no tiene blob propio (A5). La suma real es
    algo costosa (un hash por adjunto), así que se memoriza 15 s: la cuota se
    comprueba en cada envío con adjunto y no hace falta recalcularla en cada
    petición. Memoria acotada por uso y vida (shared/cache, "Redis sin
@@ -58,6 +60,7 @@ function blobBytesOfUser(userId) {
     const cached = cuotaCache.get(userId);
     // El total puede ser 0: `cached === undefined` distingue el hueco del cero.
     if (cached !== undefined) return cached;
+    const inlineStories = Stmt.storyInlineBytes.get(userId);
     let bytes = 0;
     /* La cuenta usa: adjuntos de chat, adjuntos de grupo, historias, stickers
        propios y sus imágenes (avatar y fondo), que también consumen cuota. */
@@ -65,6 +68,7 @@ function blobBytesOfUser(userId) {
         const row = Stmt.blobSize.get(hash);
         if (row) bytes += Number(row.bytes || 0);
     }
+    bytes += Number(inlineStories.bytes || 0);
     cuotaCache.set(userId, bytes);
     return bytes;
 }
@@ -106,7 +110,10 @@ function storeBlob(hash, value) {
     if (BLOB_ACTIVE_MIME_RE.test(mime)) return false;
     const bytes = Buffer.from(match[2], 'base64');
     if (crypto.createHash('sha256').update(bytes).digest('hex') !== hash.toLowerCase()) return false;
-    const cipher = encryptAtRest(value);
+    /* M7: el contenido va atado a su hash (AAD). El hash ya no es un simple
+       indicador de contenido sino parte de la clave del sobre: intercambiar
+       dos filas de blobs deja las dos ilegibles. */
+    const cipher = encryptAtRest(value, aadBlob(hash.toLowerCase()));
     // INSERT OR IGNORE: changes===0 solo cuando el hash ya estaba guardado;
     // contenido y longitud idénticos, así que el contador no se mueve.
     const info = Stmt.insertBlob.run(hash.toLowerCase(), cipher);
@@ -117,7 +124,9 @@ function storeBlob(hash, value) {
 function readBlob(hash) {
     const row = Stmt.getBlob.get(hash.toLowerCase());
     if (!row) return null;
-    return decryptAtRest(row.data);
+    // Con el AAD del hash; si no (blob escrito antes de atarlo), sin él.
+    const conAad = decryptAtRest(row.data, aadBlob(hash.toLowerCase()));
+    return typeof conAad === 'string' ? conAad : decryptAtRest(row.data);
 }
 
 function blobAvailableTo(user, hash) {

@@ -40,6 +40,33 @@ const usernameTakenInDb = (username, exceptId = '') => {
     const row = Stmt.getUserByName.get(username);
     return !!row && row.id !== exceptId;
 };
+/* Resuelve un identificador de cuenta recibido del cliente aceptando el
+   nombre canónico y, SOLO para quien tiene una relación autorizada con la
+   cuenta, su alias opaco (el UUID que se publica cuando la privacidad
+   'usuario' oculta el @usuario). Sin esta comprobación, /profile, /send o la
+   búsqueda con el UUID serían un oráculo para confirmar cuentas ajenas.
+   Relaciones válidas: uno mismo, contacto, solicitud de contacto pendiente
+   en cualquier dirección o grupo en común (los mismos supuestos con los que
+   se entrega el alias). */
+const resolveAccount = (identifier, viewer) => {
+    if (typeof identifier !== 'string') return undefined;
+    const trimmed = identifier.trim();
+    if (!trimmed) return undefined;
+    const direct = byName(trimmed);
+    if (direct) return direct;
+    const account = users.get(trimmed);
+    if (!account) return undefined;
+    const viewerAccount = typeof viewer === 'string'
+        ? (byName(viewer) || users.get(viewer))
+        : (viewer && typeof viewer === 'object' ? viewer : undefined);
+    if (!viewerAccount) return undefined;
+    if (viewerAccount.id === account.id) return account;
+    if (viewerAccount.contacts && viewerAccount.contacts.has(account.id)) return account;
+    if (Stmt.contactRequestBetween.get(viewerAccount.id, account.id, account.id, viewerAccount.id)) return account;
+    if (Stmt.sharedGroupBetween.get(viewerAccount.id, account.id)) return account;
+    if (Stmt.groupJoinRequestForAdmin.get(account.id, viewerAccount.id)) return account;
+    return undefined;
+};
 /* Identificador estable de una cuenta: el UUID si está registrada y un
    marcador con su nombre si no, para poder asociar datos sin cuenta. */
 const accountId = username => byName(username)?.id || `unregistered:${username}`;
@@ -70,6 +97,7 @@ module.exports = {
     parseJsonSafe,
     byId,
     byName,
+    resolveAccount,
     usernameTakenInDb,
     accountId,
     pairKeyFromIds,

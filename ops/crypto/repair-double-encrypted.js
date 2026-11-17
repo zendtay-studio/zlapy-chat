@@ -30,6 +30,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const Database = require('better-sqlite3');
 const { loadConfig } = require('../../src/config');
+const { ctxProfile, ctxUserNote } = require('../../src/crypto/aad');
 const { createMessageCrypto } = require('../../src/crypto/message-crypto');
 const { createUserAuthKeys } = require('../../src/crypto/user-auth-keys');
 const { getMasterKeyBytes } = require('../../src/crypto/master-key');
@@ -58,10 +59,11 @@ const { encryptAtRest, decryptAtRest } = messageCrypto;
 const authKeys = createUserAuthKeys({ db, Stmt, encryptAtRest, decryptAtRest });
 const { decryptForUser, encryptForUser } = authKeys;
 
-/* Descifra con la auth_key del titular (PCE3) o con la llave maestra (PCE1). */
-function decrypt(value, userId) {
+/* Descifra con la auth_key del titular (PCE3/PCE3A) o con la llave maestra
+   (PCE1). M1: se pasa el contexto de la pieza cuando se conoce. */
+function decrypt(value, userId, context = null) {
     if (typeof value !== 'string' || value === '') return null;
-    const plain = decryptForUser(userId, value);
+    const plain = decryptForUser(userId, value, context);
     return typeof plain === 'string' ? plain : null;
 }
 
@@ -89,13 +91,15 @@ for (const row of profiles) {
         if (typeof blob !== 'string' || blob === '') continue;
         // developed = el texto original (si estaba cifrado dos veces) o el
         // propio valor si ya estaba en claro (se vuelve a cifrar).
-        const developed = blob.startsWith('PCE') ? develop(blob, row.user_id) : blob;
+        const contexto = ctxProfile(row.user_id, field);
+        const developed = blob.startsWith('PCE') ? develop(blob, row.user_id, contexto) : blob;
         if (developed === null) continue;
         if (developed === blob && blob.startsWith('PCE')) continue;   // ya está bien
         // Ida y vuelta: al cifrar de nuevo debe salir el mismo texto.
-        const check = decrypt(encryptForUser(row.user_id, developed), row.user_id);
+        const cifrado = encryptForUser(row.user_id, developed, contexto);
+        const check = decrypt(cifrado, row.user_id, contexto);
         if (check !== developed) continue;
-        update[column] = encryptForUser(row.user_id, developed);
+        update[column] = cifrado;
         changes.push({ tabla: 'user_profiles', user: row.user_id, campo: field, antes: String(blob).slice(0, 46), despues: developed.slice(0, 46) });
     }
     if (!Object.keys(update).length) continue;
@@ -109,17 +113,18 @@ for (const row of profiles) {
 const notes = db.prepare('SELECT user_id, data FROM user_notes').all();
 for (const row of notes) {
     checked++;
-    const plain = develop(row.data, row.user_id);
+    const plain = develop(row.data, row.user_id, ctxUserNote(row.user_id));
     if (plain === null) continue;
     let parsed = null;
     try { parsed = JSON.parse(plain); } catch { continue; }
     if (!parsed || typeof parsed !== 'object') continue;
     const text = JSON.stringify(parsed);
-    const check = decrypt(encryptForUser(row.user_id, text), row.user_id);
+    const cifrado = encryptForUser(row.user_id, text, ctxUserNote(row.user_id));
+    const check = decrypt(cifrado, row.user_id, ctxUserNote(row.user_id));
     if (typeof check !== 'string' || check === '') continue;
     changes.push({ tabla: 'user_notes', user: row.user_id, campo: 'nota', antes: String(row.data).slice(0, 46), despues: text.slice(0, 46) });
     fixedNotes++;
-    if (APPLY) db.prepare('UPDATE user_notes SET data = ? WHERE user_id = ?').run(encryptForUser(row.user_id, text), row.user_id);
+    if (APPLY) db.prepare('UPDATE user_notes SET data = ? WHERE user_id = ?').run(cifrado, row.user_id);
 }
 
 console.log(`Filas revisadas: ${checked}`);

@@ -158,8 +158,11 @@ function ensureEnvFile(envPath = ENV_PATH, examplePath = ENV_EXAMPLE_PATH) {
     const contenido = fs.readFileSync(examplePath, 'utf8')
         .replace(/^DB_USER=.*$/m, 'DB_USER=' + user)
         .replace(/^DB_PASSWORD=.*$/m, 'DB_PASSWORD=' + pass);
-    fs.writeFileSync(envPath, contenido);
-    try { fs.chmodSync(envPath, 0o600); } catch (error) { /* best-effort */ }
+    /* M14: el fichero lleva la credencial del propietario, así que se escribe
+       con writeSecretFile (temporal 0600 + rename atómico): nunca existe un
+       `.env` legible durante el tiempo que tarda el chmod de después. */
+    const { writeSecretFile } = require('../ops/config/env-writer.js');
+    writeSecretFile(envPath, contenido);
     return true;
 }
 const envCreated = ensureEnvFile();

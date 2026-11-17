@@ -42,6 +42,8 @@ const path = require('node:path');
 const Database = require('better-sqlite3');
 const { FIELD_TABLES, aadOf } = require('../../src/crypto/field-crypto.js');
 const { META } = require('../../src/crypto/owner-key.js');
+const { aadAuthKey, aadBlob, aadGroupKeys, aadMeta } = require('../../src/crypto/aad.js');
+const { assertServerStopped, resolvePidFile, serverIsRunning, acquireMaintenanceLock } = require('../runtime/server-gate.js');
 
 /* Filas de `meta` que atan la credencial a esta base: quien llama puede
    reescribirlas en la MISMA transacción que el re-cifrado (`metaRows`), así
@@ -130,23 +132,36 @@ function collectPlan({ dbPath, blobPath, oldCrypto, newCrypto }) {
     // Re-envuelve: null queda null; en claro se ahora cifra (subida de
     // seguridad); en claro heredado gana el sobre con la llave nueva.
     const wrappedOf = plain => (typeof plain === 'string' ? newCrypto.encryptAtRest(plain) : null);
+    /* M7: lectura y escritura CON el contexto de cada pieza. La lectura prueba
+       primero con el AAD y, si el valor se escribió antes de atarlo, lo reintenta
+       sin él (compatibilidad); la escritura SIEMPRE lo lleva. Sin esto, una
+       rotación de la llave maestra perdería el AAD de todo lo ya escrito (o
+       fallaría al no poder leer lo que sí era suyo). */
+    const plainOfCtx = (stored, aad) => {
+        if (!isMasterEnvelope(stored)) return stored;
+        const conAad = oldCrypto.decryptAtRest(stored, aad);
+        return typeof conAad === 'string' ? conAad : oldCrypto.decryptAtRest(stored);
+    };
+    const wrappedOfCtx = (plain, aad) => (typeof plain === 'string' ? newCrypto.encryptAtRest(plain, aad) : null);
 
     const db = new Database(dbPath, { readonly: true, fileMustExist: true });
     try {
         for (const fila of db.prepare('SELECT user_id, auth_key FROM user_auth_keys').all()) {
-            const plain = plainOf(fila.auth_key);
+            // M7: la auth_key va atada a su usuario.
+            const plain = plainOfCtx(fila.auth_key, aadAuthKey(fila.user_id));
             if (isMasterEnvelope(fila.auth_key) && typeof plain !== 'string')
                 throw new Error(`La auth_key de user_auth_keys (user ${fila.user_id}) no se descifra con la credencial actual: no se puede migrar sin ella.`);
             plan.authKeys.push({ id: fila.user_id, plain });
-            plan.wrapped.authKeys.push({ id: fila.user_id, cipher: wrappedOf(plain) });
+            plan.wrapped.authKeys.push({ id: fila.user_id, cipher: wrappedOfCtx(plain, aadAuthKey(fila.user_id)) });
             plan.originals.authKeys.push({ id: fila.user_id, cipher: fila.auth_key });
         }
         for (const fila of db.prepare('SELECT id, keys_cipher FROM groups WHERE keys_cipher IS NOT NULL').all()) {
-            const plain = plainOf(fila.keys_cipher);
+            // M7: el material del grupo va atado a su gid.
+            const plain = plainOfCtx(fila.keys_cipher, aadGroupKeys(fila.id));
             if (isMasterEnvelope(fila.keys_cipher) && typeof plain !== 'string')
                 throw new Error(`El material E2E del grupo ${fila.id} (groups.keys_cipher) no se descifra con la credencial actual.`);
             plan.groups.push({ id: fila.id, plain });
-            plan.wrapped.groups.push({ id: fila.id, cipher: wrappedOf(plain) });
+            plan.wrapped.groups.push({ id: fila.id, cipher: wrappedOfCtx(plain, aadGroupKeys(fila.id)) });
             plan.originals.groups.push({ id: fila.id, cipher: fila.keys_cipher });
         }
         for (const fila of db.prepare('SELECT key, value FROM meta').all()) {
@@ -157,21 +172,22 @@ function collectPlan({ dbPath, blobPath, oldCrypto, newCrypto }) {
             if (CREDENTIAL_KEYS.has(fila.key)) {
                 plan.originals.credential.push([fila.key, fila.value]);
                 if (isMasterEnvelope(fila.value)) {
-                    const plain = plainOf(fila.value);
+                    // M7: cada fila de meta con sobre va atada a su clave.
+                    const plain = plainOfCtx(fila.value, aadMeta(fila.key));
                     if (typeof plain !== 'string')
                         throw new Error(`meta['${fila.key}'] no se descifra con la credencial actual.`);
                     plan.meta.push({ key: fila.key, plain });
-                    plan.wrapped.meta.push({ key: fila.key, cipher: wrappedOf(plain) });
+                    plan.wrapped.meta.push({ key: fila.key, cipher: wrappedOfCtx(plain, aadMeta(fila.key)) });
                     plan.originals.meta.push({ key: fila.key, cipher: fila.value });
                 }
                 continue;
             }
             if (!isMasterEnvelope(fila.value)) continue;   // en claro (schema_version…): no es de la maestra
-            const plain = plainOf(fila.value);
+            const plain = plainOfCtx(fila.value, aadMeta(fila.key));
             if (typeof plain !== 'string')
                 throw new Error(`meta['${fila.key}'] no se descifra con la credencial actual.`);
             plan.meta.push({ key: fila.key, plain });
-            plan.wrapped.meta.push({ key: fila.key, cipher: wrappedOf(plain) });
+            plan.wrapped.meta.push({ key: fila.key, cipher: wrappedOfCtx(plain, aadMeta(fila.key)) });
             plan.originals.meta.push({ key: fila.key, cipher: fila.value });
         }
         // Campos sueltos por columna (avatar/wallpaper van en blobs: esto es
@@ -203,11 +219,12 @@ function collectPlan({ dbPath, blobPath, oldCrypto, newCrypto }) {
         const blobDb = new Database(blobPath, { readonly: true, fileMustExist: true });
         try {
             for (const fila of blobDb.prepare('SELECT hash, data FROM blobs').all()) {
-                const plain = plainOf(fila.data);
+                // M7: el contenido de cada blob va atado a su hash.
+                const plain = plainOfCtx(fila.data, aadBlob(fila.hash));
                 if (isMasterEnvelope(fila.data) && typeof plain !== 'string')
                     throw new Error(`Un adjunto de blobs (hash ${String(fila.hash).slice(0, 12)}…) no se descifra con la credencial actual.`);
                 plan.blobs.push({ hash: fila.hash, plain });
-                plan.wrapped.blobs.push({ hash: fila.hash, cipher: wrappedOf(plain) });
+                plan.wrapped.blobs.push({ hash: fila.hash, cipher: wrappedOfCtx(plain, aadBlob(fila.hash)) });
                 plan.originals.blobs.push({ hash: fila.hash, cipher: fila.data });
             }
         } finally { try { blobDb.close(); } catch { } }
@@ -232,8 +249,13 @@ function collectPlan({ dbPath, blobPath, oldCrypto, newCrypto }) {
 function auditMasterKey({ dbPath, blobPath, cryptoFactory, key }) {
     assertBuffer32('La llave maestra', key);
     const crypto = cryptoFactory(key);
-    const legible = valor => {
+    /* M7: cada pieza se comprueba con SU contexto (AAD). Un valor escrito
+       antes de atarlo se acepta también: la auditoría no debe dar falsos
+       positivos precisamente en el momento en que el operador necesita
+       saber qué está roto de verdad. */
+    const legible = (valor, aad) => {
         if (!isMasterEnvelope(valor)) return true;      // en claro: no depende de la maestra
+        if (aad && typeof crypto.decryptAtRest(valor, aad) === 'string') return true;
         return typeof crypto.decryptAtRest(valor) === 'string';
     };
 
@@ -254,12 +276,12 @@ function auditMasterKey({ dbPath, blobPath, cryptoFactory, key }) {
         try {
             const nombres = new Map(db.prepare('SELECT id, username FROM users').all().map(f => [f.id, f.username]));
             for (const fila of db.prepare('SELECT user_id, auth_key FROM user_auth_keys').all()) {
-                if (legible(fila.auth_key)) { reporte.authKeys.ok++; continue; }
+                if (legible(fila.auth_key, aadAuthKey(fila.user_id))) { reporte.authKeys.ok++; continue; }
                 reporte.authKeys.ilegibles.push(fila.user_id);
                 const mensajes = db.prepare('SELECT COUNT(*) AS total FROM messages WHERE from_id = ? OR to_id = ?')
                     .get(fila.user_id, fila.user_id);
                 const perfil = db.prepare(
-                    "SELECT COUNT(*) AS total FROM user_profiles WHERE user_id = ? AND (display_name LIKE 'PCE3:%' OR bio LIKE 'PCE3:%' OR note LIKE 'PCE3:%')"
+                    "SELECT COUNT(*) AS total FROM user_profiles WHERE user_id = ? AND (display_name LIKE 'PCE3%' OR bio LIKE 'PCE3%' OR note LIKE 'PCE3%')"
                 ).get(fila.user_id);
                 const notas = db.prepare('SELECT COUNT(*) AS total FROM user_notes WHERE user_id = ?').get(fila.user_id);
                 reporte.contenido.ilegibles.push({
@@ -271,12 +293,12 @@ function auditMasterKey({ dbPath, blobPath, cryptoFactory, key }) {
                 });
             }
             for (const fila of db.prepare('SELECT id, keys_cipher FROM groups WHERE keys_cipher IS NOT NULL').all()) {
-                if (legible(fila.keys_cipher)) reporte.groups.ok++;
+                if (legible(fila.keys_cipher, aadGroupKeys(fila.id))) reporte.groups.ok++;
                 else reporte.groups.ilegibles.push(fila.id);
             }
             for (const fila of db.prepare('SELECT key, value FROM meta').all()) {
                 if (!isMasterEnvelope(fila.value)) continue;
-                if (legible(fila.value)) reporte.meta.ok++;
+                if (legible(fila.value, aadMeta(fila.key))) reporte.meta.ok++;
                 else reporte.meta.ilegibles.push(fila.key);
             }
             for (const { table, columns } of FIELD_TABLES) {
@@ -286,9 +308,7 @@ function auditMasterKey({ dbPath, blobPath, cryptoFactory, key }) {
                         const stored = row[column];
                         if (typeof stored !== 'string' || stored === '') continue;
                         if (!isMasterEnvelope(stored)) { reporte.campos.ok++; continue; }
-                        const aad = aadOf(`${table}.${column}`);
-                        const plain = crypto.decryptAtRest(stored, aad);
-                        if (typeof plain === 'string') reporte.campos.ok++;
+                        if (legible(stored, aadOf(`${table}.${column}`))) reporte.campos.ok++;
                         else reporte.campos.ilegibles.push({ tabla: table, columna: column, fila: row.rowid });
                     }
                 }
@@ -303,7 +323,7 @@ function auditMasterKey({ dbPath, blobPath, cryptoFactory, key }) {
         const blobDb = new Database(blobPath, { readonly: true, fileMustExist: true });
         try {
             for (const fila of blobDb.prepare('SELECT hash, data FROM blobs').all()) {
-                if (legible(fila.data)) reporte.blobs.ok++;
+                if (legible(fila.data, aadBlob(fila.hash))) reporte.blobs.ok++;
                 else reporte.blobs.ilegibles.push(fila.hash);
             }
         } catch (error) {
@@ -322,49 +342,11 @@ function auditMasterKey({ dbPath, blobPath, cryptoFactory, key }) {
 }
 
 /**
- * Ruta del fichero de PID: se deriva de la ruta de la base para que una
- * instalación de pruebas en un directorio temporal NO se confunda con el
- * servidor de producción (que vive en otra raíz).
- *
- * @param {object} options
- * @param {string} [options.dbPath]
- * @param {string} [options.pidFile]
- * @returns {string}
+ * Ruta del fichero de PID y comprobación de "servidor vivo" viven ahora en
+ * ops/runtime/server-gate.js, compartidos por TODAS las operaciones de
+ * mantenimiento (M5): antes cada script tenía su propia copia, con su propia
+ * idea de qué PID comprobar.
  */
-function resolvePidFile({ dbPath, pidFile } = {}) {
-    const raiz = dbPath ? path.dirname(path.dirname(dbPath)) : path.join(__dirname, '..', '..');
-    if (pidFile) return path.isAbsolute(pidFile) ? pidFile : path.join(raiz, pidFile);
-    const delEntorno = process.env.SUPERVISOR_PID_FILE;
-    if (delEntorno) return path.isAbsolute(delEntorno) ? delEntorno : path.join(raiz, delEntorno);
-    return path.join(raiz, '.zlapy.pid');
-}
-
-/**
- * ¿Hay un servidor de Zlapy VIVO con esta instalación?
- *
- * El re-cifrado no puede impedir que un proceso vivo siga ESCRIBIENDO con
- * la llave que tiene en memoria: esas filas nuevas quedarían cifradas con
- * la llave anterior y la base acabaría con dos llaves mezcladas (la
- * desincronización que sufrió esta instalación). Por eso exige el servidor
- * parado.
- *
- * @param {object} options
- * @param {string} [options.pidFile]
- * @param {string} [options.dbPath]
- * @returns {{vivo: boolean, pid?: number, detalle?: string}}
- */
-function serverIsRunning({ pidFile, dbPath } = {}) {
-    const ruta = resolvePidFile({ dbPath, pidFile });
-    let pid = 0;
-    try { pid = Number.parseInt(fs.readFileSync(ruta, 'utf8').trim(), 10); } catch { return { vivo: false }; }
-    if (!Number.isInteger(pid) || pid <= 0) return { vivo: false };
-    // ¿El proceso sigue vivo y es el nuestro?
-    let cmdline = '';
-    try { cmdline = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').replace(/\0/g, ' ').trim(); } catch { return { vivo: false }; }
-    if (!/server\.js|ops\/supervisor\.js/.test(cmdline))
-        return { vivo: false, pid, detalle: 'el PID guardado ya no es un servidor de Zlapy' };
-    return { vivo: true, pid, detalle: cmdline };
-}
 
 /**
  * Motor del re-cifrado: verificación → re-cifrado transaccional de
@@ -385,17 +367,27 @@ function serverIsRunning({ pidFile, dbPath } = {}) {
  * @returns {{authKeys:number, groups:number, meta:number, blobs:number, campos:number}}
  */
 function rotateMasterKey(options) {
-    const { dbPath, blobPath, oldKey, newKey, cryptoFactory, pidFile, metaRows = [] } = options;
+    const { dbPath, pidFile } = options;
+
+    // 0) El servidor debe estar PARADO (compuerta común, M5).
+    assertServerStopped({ pidFile, dbPath }, {
+        motivo: 'Deténlo antes de migrar la credencial: si sigue vivo, seguiría cifrando con la llave anterior ' +
+            'y dejaría filas que la llave nueva no descifra.'
+    });
+    // 0b) Nadie más puede estar tocando las bases (M10): un re-cifrado en
+    // paralelo con otro (o con una reparación de auth_keys) corrompe la base.
+    const candado = acquireMaintenanceLock({ dbPath, etiqueta: 'reencrypt-master' });
+    try {
+        return rotateMasterKeyLocked(options);
+    } finally {
+        candado.release();
+    }
+}
+
+function rotateMasterKeyLocked(options) {
+    const { dbPath, blobPath, oldKey, newKey, cryptoFactory, metaRows = [] } = options;
     assertBuffer32('La llave maestra actual', oldKey);
     assertBuffer32('La llave maestra nueva', newKey);
-
-    // 0) El servidor debe estar PARADO.
-    const vivo = serverIsRunning({ pidFile, dbPath });
-    if (vivo.vivo) {
-        throw new Error(`Hay un servidor de Zlapy en marcha (pid ${vivo.pid}: ${vivo.detalle}). ` +
-            'Deténlo antes de migrar la credencial: si sigue vivo, seguiría cifrando con la llave anterior ' +
-            'y dejaría filas que la llave nueva no descifra.');
-    }
 
     // 1) Verificación completa con la vieja: nada escribe todavía.
     const plan = collectPlan({ dbPath, blobPath, oldCrypto: cryptoFactory(oldKey), newCrypto: cryptoFactory(newKey) });

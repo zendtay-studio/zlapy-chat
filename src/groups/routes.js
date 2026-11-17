@@ -18,8 +18,7 @@ const { readImage } = require('../profile/images.js');
 const { push, pushName } = require('../realtime/notify.js');
 const { validAvatar, validGroupCustomId } = require('../shared/validation.js');
 const { profiles } = require('../state.js');
-const { byName, uniq } = require('../users/helpers.js');
-const { isContact } = require('../users/privacy.js');
+const { byName, resolveAccount, uniq } = require('../users/helpers.js');
 
 const normalizeGroupSearch = value => String(value).normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase();
@@ -116,7 +115,11 @@ function postGroups(req, res, url, data, actor) {
     if (customId && !validGroupCustomId(customId)) return json(res, 400, { error: 'La ID personalizada admite 3-32 letras minúsculas, números, guiones y guiones bajos (sin empezar por g_).' });
     if (customId && Stmt.getGroupByCustom.get(customId)) return json(res, 409, { error: 'Esa ID personalizada ya está en uso.' });
     if (typeof name !== 'string' || !name.trim() || name.length > 40) return json(res, 400, { error: 'Nombre inválido.' });
-    if (Array.isArray(members) && members.some(m => !byName(m) || !isContact(profiles[req.authUser.username], m)))
+    /* Los miembros pueden llegar con el alias opaco (UUID) si su @usuario
+       está oculto: resolveAccount lo acepta solo para relaciones
+       autorizadas (aquí, contactos). */
+    const memberAccounts = Array.isArray(members) ? members.map(m => resolveAccount(m, req.authUser)) : [];
+    if (Array.isArray(members) && memberAccounts.some(m => !m || !req.authUser.contacts.has(m.id)))
         return json(res, 403, { error: 'Solo contactos.' });
     const nextContentPolicy = Object.fromEntries(Object.keys(groupPolicies).map(k => [k, 'all']));
     if (contentPolicy && typeof contentPolicy === 'object' && !Array.isArray(contentPolicy)) {
@@ -129,7 +132,7 @@ function postGroups(req, res, url, data, actor) {
     const id = requestedGroupId && /^[a-zA-Z0-9_-]{2,80}$/.test(requestedGroupId) ? requestedGroupId
         : 'g_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     if (readGroup(id)) return json(res, 409, { error: 'ID en uso.' });
-    const uniqMembers = uniq([actor, ...(Array.isArray(members) ? members.filter(m => byName(m)) : [])]);
+    const uniqMembers = uniq([actor, ...memberAccounts.filter(Boolean).map(m => m.username)]);
     const memberIds = uniqMembers.map(m => byName(m)?.id).filter(Boolean);
     // Cota de miembros: el coste por mensaje es O(N) (fan-out a cada uno);
     // sin techo, un grupo desmedido era un generador de fan-out (SECOA-I-008).

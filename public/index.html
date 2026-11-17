@@ -13059,6 +13059,44 @@
                     }
                     return;
                 }
+                if (msg.type === 'story-meta') {
+                    /* A5: metadato de UNA historia (likes, vistas, edición).
+                       El medio no viaja: se parchea la copia que ya tiene el
+                       cliente y se ignoran las historias que no estén en
+                       memoria. */
+                    let changed = false;
+                    myStories = (myStories || []).map(story => {
+                        if (story.from !== msg.from || Number(story.ts) !== Number(msg.ts)) return story;
+                        changed = true;
+                        return {
+                            ...story,
+                            text: typeof msg.text === 'string' ? msg.text : story.text,
+                            bg: typeof msg.bg === 'string' ? msg.bg : story.bg,
+                            edited: !!msg.edited,
+                            liked: typeof msg.liked === 'boolean' ? msg.liked : story.liked,
+                            viewers: Array.isArray(msg.viewers) ? msg.viewers : story.viewers,
+                            likes: Array.isArray(msg.likes) ? msg.likes : story.likes,
+                            likeCount: Number.isFinite(msg.likeCount) ? msg.likeCount : story.likeCount
+                        };
+                    });
+                    if (changed) renderStories();
+                    if (document.getElementById('storyView').style.display === 'flex' && storyUser) {
+                        const currentTs = storyList[storyIdx] && storyList[storyIdx].ts;
+                        refreshStoryList();
+                        const nextIdx = storyList.findIndex(s => s.ts === currentTs);
+                        if (nextIdx >= 0) {
+                            storyIdx = nextIdx;
+                            const current = storyList[storyIdx];
+                            document.getElementById('storyViewsCount').textContent = (current.viewers || []).length;
+                            document.getElementById('storyLikeBtn').classList.toggle('liked', !!current.liked);
+                            document.getElementById('storyLikeCount').textContent = storyLikeTotal(current) || '';
+                            document.getElementById('storyWhen').textContent = fmtAgo(current.ts) + (current.edited ? ' · editado' : '');
+                            const sheet = document.getElementById('storyViewsSheet');
+                            if (sheet.classList.contains('on') && current.from === me.username) renderStoryViewsSheet(current);
+                        }
+                    }
+                    return;
+                }
                 if (msg.type === 'profile') {
                     delete profilesCache[msg.username];
                     if (msg.username === me.username) {
@@ -20445,6 +20483,12 @@
                 }
             }
             function refreshStoryList() { storyList = (myStories || []).filter(s => s.from === storyUser).sort((a, b) => a.ts - b.ts); }
+            /* Recuento de "me gusta": el autor conoce los nombres (lista
+               completa), el resto solo el número que manda story-meta. */
+            function storyLikeTotal(s) {
+                if (s && Number.isFinite(s.likeCount)) return s.likeCount;
+                return (s && s.likes ? s.likes.length : 0);
+            }
             function firstUnseenIdx(u) {
                 const seenTs = storySeenMap[u] || 0;
                 const i = storyList.findIndex(s => s.ts > seenTs);
@@ -20546,7 +20590,7 @@
                 const likeBtn = document.getElementById('storyLikeBtn');
                 likeBtn.style.display = isMine ? 'none' : 'flex';
                 likeBtn.classList.toggle('liked', !!s.liked);
-                document.getElementById('storyLikeCount').textContent = (s.likes || []).length || '';
+                document.getElementById('storyLikeCount').textContent = storyLikeTotal(s) || '';
                 document.getElementById('storyStickerBtn').style.display = isMine ? 'none' : 'flex';
                 const reply = document.getElementById('storyReply');
                 reply.style.display = isMine ? 'none' : 'block';
@@ -20950,7 +20994,10 @@
                     btn.classList.toggle('liked', !!r.liked);
                     s.likes = Array.isArray(s.likes) ? s.likes.filter(x => x !== me.username) : [];
                     if (r.liked) s.likes.push(me.username);
-                    document.getElementById('storyLikeCount').textContent = s.likes.length || '';
+                    /* El recuento del servidor es el bueno (otros también
+                       pueden estar dándolo a la vez). */
+                    if (Number.isFinite(r.count)) s.likeCount = r.count;
+                    document.getElementById('storyLikeCount').textContent = storyLikeTotal(s) || '';
                     renderStories();
                 } catch (error) {
                     s.liked = !nowLiked;
@@ -24809,8 +24856,9 @@
 
             /* Aviso de transporte sin cifrar. El envoltorio de `fetch`/XHR emite
                `zlapy-transport-insecure` cuando el servidor no ofrece clave:
-               se muestra una vez y de forma discreta, para que la degradación
-               no pase desapercibida. */
+               se muestra de forma PERSISTENTE, para que la degradación no
+               pase desapercibida en ningún momento de la sesión. El propio
+               envoltorio también crea la barra si esta página no la trae. */
             window.addEventListener('zlapy-transport-insecure', () => {
                 if (document.getElementById('tlsWarn')) return;
                 const bar = document.createElement('div');
@@ -24820,7 +24868,6 @@
                 bar.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:9999;padding:8px 12px;' +
                     'background:#b3261e;color:#fff;font:500 13px/1.4 system-ui,sans-serif;text-align:center';
                 document.body.appendChild(bar);
-                setTimeout(() => bar.remove(), 15000);
             });
 
             window.addEventListener('load', () => {

@@ -12,8 +12,9 @@ const crypto = require('crypto');
 const { accountCookieName, accountCookies, clearCookie, clearSessionCookie, createLinkedAccountSession, createSession, sessionCookie, sessionFromToken, sessionUser, setAccountSessionCookie } = require('./sessions.js');
 const { esHashAntiguo, hashPassword, verifyPassword } = require('./password.js');
 const { Stmt } = require('../db/statements.js');
-const { loginAttempts, registerAttempts } = require('../http/rate-limit.js');
+const { keyUploadLimiter, loginAttempts, registerAttempts } = require('../http/rate-limit.js');
 const { json } = require('../http/responses.js');
+const { rejectRateLimited } = require('../http/helpers.js');
 const { broadcastUsersAround } = require('../realtime/notify.js');
 const { clientIp, validUsername } = require('../shared/validation.js');
 const { characterCount } = require('../shared/limits.js');
@@ -98,7 +99,16 @@ function getKey(req, res, url, data, actor) {
 
 function postKey(req, res, url, data, actor) {
     const user = req.authUser;
-    if (!data.pubKey || typeof data.pubKey !== 'object') return json(res, 400, { error: 'clave inválida' });
+    if (!data.pubKey || typeof data.pubKey !== 'object' || Array.isArray(data.pubKey))
+        return json(res, 400, { error: 'clave inválida' });
+    /* M3: guardar la clave reescribe la fila entera del usuario (perfil,
+       ajustes, contactos, grupos vistos…). Sin cota ni tope de tamaño, una
+       sesión válida martilleando la ruta con cuerpos enormes era un DoS de
+       escrituras barato. 64 KB de sobra para una clave pública; el cuerpo
+       total además ya está topeado por la ruta. */
+    if (Buffer.byteLength(JSON.stringify(data.pubKey)) > 64 * 1024)
+        return json(res, 413, { error: 'Clave demasiado grande.' });
+    if (rejectRateLimited(res, keyUploadLimiter, user.id, 30, 'subidas de clave por minuto')) return;
     user.publicKey = data.pubKey; saveUserToDb(user);
     return json(res, 200, { ok: true });
 }
@@ -178,9 +188,15 @@ async function postAuthRegister(req, res, url, data, actor) {
 async function postAuthLogin(req, res, url, data, actor) {
     const ip = clientIp(req);
     const name = typeof data.username === 'string' ? data.username.trim().toLowerCase() : '';
-    /* Contadores de fallos, en dos niveles:
+    /* Contadores de fallos, en tres niveles:
        · por CUENTA e IP → retardo progresivo (nunca bloqueo), ver las
          constantes de arriba.
+       · por CUENTA (sin IP) → retardo progresivo SOLO de esa cuenta
+         (M12). El contador con IP se reinicia cuando el atacante cambia de
+         dirección: sin el contador por cuenta, rotar IPs dejaba el intento
+         de fuerza bruta contra una víctima concreta sin ningún freno.
+         Sigue siendo retardo, nunca bloqueo: el dueño legítimo solo tarda
+         unos segundos más y el contador se borra al acertar.
        · por IP → circuit breaker que devuelve 429 SOLO a esa dirección,
          para frenar a quien rota nombres de cuenta. Cada intento de login
          cuesta un scrypt completo: sin tope por IP, miles de peticiones
@@ -188,6 +204,9 @@ async function postAuthLogin(req, res, url, data, actor) {
        La IP es siempre la del socket (nunca una cabecera), así que no se puede
        falsear para girar entre cubos. */
     const acct = loginAttempts.get('acct:' + name + '@' + ip);
+    /* El contador por cuenta existe aunque no haya cuenta con ese nombre:
+       así el freno también cubre la enumeración de nombres. */
+    const acctSolo = loginAttempts.get('acct:' + name);
     const ipBox = loginAttempts.get('brk:' + ip);
     const now = Date.now();
     if (ipBox && ipBox.cooldown > now) {
@@ -204,6 +223,9 @@ async function postAuthLogin(req, res, url, data, actor) {
         const entry = acct && acct.until > now ? acct : { count: 0, until: now + LOGIN_WINDOW_MS };
         entry.count++;
         loginAttempts.set('acct:' + name + '@' + ip, entry);
+        const entrySolo = acctSolo && acctSolo.until > now ? acctSolo : { count: 0, until: now + LOGIN_WINDOW_MS };
+        entrySolo.count++;
+        loginAttempts.set('acct:' + name, entrySolo);
         const brk = ipBox && ipBox.until > now ? ipBox : { count: 0, until: now + LOGIN_WINDOW_MS, cooldown: 0 };
         brk.count++;
         if (brk.count >= LOGIN_IP_LIMIT) {
@@ -212,7 +234,9 @@ async function postAuthLogin(req, res, url, data, actor) {
             console.warn(`[auth] ${LOGIN_IP_LIMIT} intentos de acceso fallidos desde ${ip}: enfriamiento de ${LOGIN_IP_COOLDOWN_MS / 1000}s SOLO para esa dirección.`);
         }
         loginAttempts.set('brk:' + ip, brk);
-        await new Promise(resolve => setTimeout(resolve, loginDelayMs(entry.count)));
+        /* El retardo es el MAYOR de los dos contadores: el de cuenta e IP
+           protege al servicio y el de cuenta protege a la víctima. */
+        await new Promise(resolve => setTimeout(resolve, loginDelayMs(Math.max(entry.count, entrySolo.count))));
         return json(res, 401, { error: 'Invalid username or password.' });
     }
     /* Migración perezosa del formato: las cuentas viejas guardan el hash en

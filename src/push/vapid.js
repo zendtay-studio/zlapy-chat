@@ -8,6 +8,7 @@
 
 const crypto = require('crypto');
 const { decryptAtRest, encryptAtRest } = require('../crypto/setup.js');
+const { aadMeta } = require('../crypto/aad.js');
 const { decField, encField } = require('../crypto/field-crypto.js');
 const { Stmt } = require('../db/statements.js');
 const { push } = require('../realtime/notify.js');
@@ -22,18 +23,26 @@ const vapidRecord = Stmt.getMeta.get('vapid');
 // La clave privada VAPID se guarda cifrada en reposo: quien la obtenga
 // podría firmar notificaciones push falsas para todos los dispositivos
 // suscritos.
-let VAPID = vapidRecord ? parseJsonSafe(decryptAtRest(vapidRecord.value) || '') : null;
+/* M7: la clave VAPID (con la PRIVADA dentro) va atada a su fila de meta: el
+   sobre de otra fila de meta ya no vale aqui, ni este alla. Un valor heredado
+   sin AAD se sigue leyendo. */
+const AAD_VAPID = aadMeta('vapid');
+const decVapid = value => {
+    const conAad = decryptAtRest(value, AAD_VAPID);
+    return typeof conAad === 'string' ? conAad : decryptAtRest(value);
+};
+let VAPID = vapidRecord ? parseJsonSafe(decVapid(vapidRecord.value) || '') : null;
 if (!VAPID) {
     const gen = crypto.createECDH('prime256v1'); gen.generateKeys();
     const pubKey = gen.getPublicKey(), prv = gen.getPrivateKey();
     VAPID = { publicKey: b64u(pubKey), jwk: { kty: 'EC', crv: 'P-256', x: b64u(pubKey.slice(1, 33)), y: b64u(pubKey.slice(33, 65)), d: b64u(prv) } };
-    Stmt.setMeta.run('vapid', encryptAtRest(JSON.stringify(VAPID)));
+    Stmt.setMeta.run('vapid', encryptAtRest(JSON.stringify(VAPID), AAD_VAPID));
 } else if (vapidRecord.value && !vapidRecord.value.startsWith('PCE1:') && !vapidRecord.value.startsWith('PCE1v2:')) {
     // Un registro sin cifrar se re-cifra al vuelo, sin migración previa
     // (PCE1v2 es el sobre actual; PCE1 el heredado: ambos cuentan como
     // ya cifrados, y re-cifrar un sobre cifrado crearía el fallo de
     // cifrado doble en la clave VAPID).
-    Stmt.setMeta.run('vapid', encryptAtRest(JSON.stringify(VAPID)));
+    Stmt.setMeta.run('vapid', encryptAtRest(JSON.stringify(VAPID), AAD_VAPID));
 }
 const hkdfExtract = (salt, ikm) => crypto.createHmac('sha256', salt).update(ikm).digest();
 function hkdfExpand(prk, info, len) {

@@ -12,9 +12,10 @@ const { accountCookieName, clearCookie, clearSessionCookie, createSession, rotat
 const { hashPassword, verifyPassword } = require('../auth/password.js');
 const { propagateUsernameChange } = require('../chat/mentions.js');
 const { decryptForUser, messageCrypto } = require('../crypto/setup.js');
+const { ctxProfile } = require('../crypto/aad.js');
 const { Stmt } = require('../db/statements.js');
 const { pruneBlobHashes, tx } = require('../db/transactions.js');
-const { groupLastEntry, invalidateGroupPubCache, lastGroupMessage, pub, readGroup, readGroupSummary, sharesGroup, writeGroupSummary } = require('../groups/store.js');
+const { groupLastEntry, invalidateGroupPubCache, lastGroupMessage, pub, readGroup, readGroupSummary, writeGroupSummary } = require('../groups/store.js');
 const { rejectRateLimited } = require('../http/helpers.js');
 const { passwordCheckLimiter, keyRegenLimiter, profileLimiter } = require('../http/rate-limit.js');
 const { json } = require('../http/responses.js');
@@ -23,8 +24,8 @@ const { normalizeChatAppearanceSettings } = require('../shared/appearance.js');
 const { MESSAGE_LIMITS, characterCount } = require('../shared/limits.js');
 const { NOTE_TTL, validAvatar, validUsername } = require('../shared/validation.js');
 const { blockedSet, callFiles, groupCache, notesMap, profiles, usernameIndex, users } = require('../state.js');
-const { accountId, byName, freshNote, usernameTakenInDb } = require('../users/helpers.js');
-const { accountsBlocked, isBlockedBy, isContact, normPriv, permite, permiteDescripcion, privacyCacheBust, privacyFor } = require('../users/privacy.js');
+const { accountId, byName, freshNote, resolveAccount, usernameTakenInDb } = require('../users/helpers.js');
+const { accountsBlocked, isBlockedBy, isContact, normPriv, permite, permiteDescripcion, privacyCacheBust, privacyFor, publicName } = require('../users/privacy.js');
 const { accountByName, purgeUserFromMemory, regenerateAuthKey, saveChatSettings, saveUserToDb } = require('../users/store.js');
 
 function getAccountChatSettings(req, res, url, data, actor) {
@@ -40,16 +41,12 @@ function getProfile(req, res, url, data, actor) {
     const meQ = req.authUser.username;
     // Resolver por nombre sin distinguir capitalización (igual que el resto de
     // las rutas) y caer al índice directo para los perfiles sin cuenta.
-    let acc = byName(requested);
-    /* Alias opaco (UUID) de un integrante con el @usuario oculto: en los
-       payloads de grupo el nombre se sustituye por ese UUID. Solo se resuelve
-       si comparte grupo con quien pregunta; sin esa comprobación la ruta sería
-       un oráculo de cuentas por identificador interno. */
-    const viaAlias = !acc && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requested);
-    if (viaAlias) {
-        const candidate = users.get(requested.toLowerCase());
-        if (candidate && sharesGroup(candidate.id, req.authUser.id)) acc = candidate;
-    }
+    /* El alias opaco (UUID) de un integrante con el @usuario oculto se
+       acepta SOLO si quien pregunta tiene relación autorizada (contacto,
+       solicitud pendiente o grupo en común): sin esa comprobación la ruta
+       sería un oráculo de cuentas por identificador interno. */
+    const viaAlias = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requested);
+    const acc = resolveAccount(requested, req.authUser);
     const p = (acc ? profiles[acc.username] : undefined) || profiles[requested];
     if (!p) return json(res, 200, { username: requested });
     const owner = profiles[p.username];
@@ -330,16 +327,19 @@ function postProfile(req, res, url, data, actor) {
        Se comprueba ANTES que los límites de longitud: el texto cifrado es
        más largo que el original, así que si se validara primero el servidor
        lo rechazaría con un 400 y el cliente no podría guardar su perfil. */
-    const cifradoDeVuelta = value => {
+    const cifradoDeVuelta = (value, campo) => {
         if (typeof value !== 'string' || !value.startsWith('PCE')) return false;
         try {
-            const plain = decryptForUser(req.authUser.id, value);
+            /* M1: name/note/desc llevan el contexto de su columna (PCE3A). Sin
+               él, el valor ya cifrado no se reconocería como tal y el servidor
+               lo volvería a cifrar, destruyendo el original. */
+            const plain = decryptForUser(req.authUser.id, value, campo ? ctxProfile(req.authUser.id, campo) : null);
             return typeof plain === 'string' && plain.length > 0;
         } catch (error) { return false; }
     };
     const yaCifrado = {};
     for (const key of ['name', 'note', 'desc'])
-        if (Object.prototype.hasOwnProperty.call(data, key) && cifradoDeVuelta(data[key])) yaCifrado[key] = true;
+        if (Object.prototype.hasOwnProperty.call(data, key) && cifradoDeVuelta(data[key], key)) yaCifrado[key] = true;
     if (!yaCifrado.desc && Object.prototype.hasOwnProperty.call(data, 'desc') &&
         (typeof data.desc !== 'string' || characterCount(data.desc, MESSAGE_LIMITS.profileDescriptionCharacters) > MESSAGE_LIMITS.profileDescriptionCharacters))
         return json(res, 400, { error: `La descripción admite hasta ${MESSAGE_LIMITS.profileDescriptionCharacters} caracteres.` });
@@ -411,7 +411,7 @@ function postProfile(req, res, url, data, actor) {
         };
     }
     saveUserToDb(req.authUser);
-    for (const u of users.values()) push(u, { type: 'profile', username: data.username });
+    for (const u of users.values()) push(u, { type: 'profile', username: publicName(data.username, u.username) });
     return json(res, 200, { ok: true });
 }
 

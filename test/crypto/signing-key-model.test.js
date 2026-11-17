@@ -30,6 +30,7 @@ function lastMessageSigning(dataDir) {
     const master = deriveFromCredential(TEST_CREDENTIAL, { salt, params: SCRYPT_PARAMS });
     assert.equal(master.length, 32, 'la llave maestra debe tener 32 bytes');
     const { createMessageCrypto } = require('../../src/crypto/message-crypto.js');
+    const { aadAuthKey } = require('../../src/crypto/aad.js');
     const mc = createMessageCrypto(master);
     const db = new Database(path.join(dataDir, 'zlapy.db'), { readonly: true });
     const row = db
@@ -39,7 +40,8 @@ function lastMessageSigning(dataDir) {
     const authRow = db.prepare('SELECT auth_key FROM user_auth_keys WHERE user_id = ?').get(row.from_id);
     assert.ok(authRow, 'el autor debe tener auth_key persistida');
     db.close();
-    const authKey = Buffer.from(mc.decryptAtRest(authRow.auth_key), 'hex');
+    // M7: la auth_key va atada a su usuario (AAD).
+    const authKey = Buffer.from(mc.decryptAtRest(authRow.auth_key, aadAuthKey(row.from_id)), 'hex');
     const expected = createMessageCrypto(master, { signingKeyFor: () => authKey });
     return { row, expectedFromAuthKey: expected.getSigningPublicKey(row.from_id) };
 }

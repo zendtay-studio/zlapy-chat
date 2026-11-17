@@ -37,6 +37,7 @@ const { createMessageCrypto } = require('../../src/crypto/message-crypto.js');
 const owner = require('../../src/crypto/owner-key.js');
 const { ensureSchema } = require('../../src/db/schema.js');
 const { writeSecretFile, readEnvValue } = require('../config/env-writer.js');
+const { acquireMaintenanceLock } = require('../runtime/server-gate.js');
 const {
     rotateMasterKey, auditMasterKey, serverIsRunning, hasMasterDataAtRest
 } = require('../crypto/reencrypt-master.js');
@@ -150,11 +151,23 @@ async function resolverPassword(args, { required = true } = {}) {
     return pedirSecreto('Contraseña del propietario');
 }
 
-/** El servidor tiene que estar parado para tocar las bases. */
+/** El servidor tiene que estar parado para tocar las bases (compuerta
+    común de mantenimiento, M5). */
 function exigirServidorParado(ctx) {
     const vivo = serverIsRunning({ dbPath: ctx.dbPath });
     if (vivo.vivo)
         fail(`Hay un servidor de Zlapy en marcha (pid ${vivo.pid}). Deténlo antes de esta operación.`);
+}
+
+/* Candado exclusivo de mantenimiento (M10): mientras se cambia la credencial
+   del propietario, NI otro `npm run owner` NI un re-cifrado pueden tocar las
+   bases. Se suelta solo al terminar o al salir del proceso. */
+function exigirCandado(ctx, etiqueta) {
+    try {
+        return acquireMaintenanceLock({ dbPath: ctx.dbPath, etiqueta });
+    } catch (error) {
+        fail(error.message);
+    }
 }
 
 /**
@@ -291,6 +304,7 @@ function auditar(ctx, key) {
 
 async function cmdInit(ctx, args) {
     exigirServidorParado(ctx);
+    exigirCandado(ctx, 'owner:init');
     const user = exigirGuardable(String(args.user || process.env.DB_USER || '').trim(), 'usuario');
     if (!user) fail('Falta el usuario del propietario: `npm run owner -- init --user NOMBRE`.');
     const password = exigirGuardable(await resolverPassword(args), 'contraseña');
@@ -328,6 +342,7 @@ async function cmdInit(ctx, args) {
 
 async function cmdCredential(ctx, args) {
     exigirServidorParado(ctx);
+    exigirCandado(ctx, 'owner:credential');
     const vigente = leerCredencialDelEnv(ctx);
     if (!vigente)
         fail('No hay credencial vigente en el .env (DB_USER + DB_PASSWORD): no se puede migrar sin la llave actual.');

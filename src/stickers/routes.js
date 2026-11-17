@@ -276,6 +276,16 @@ function postCreateSticker(req, res, url, data) {
     const tags = publish ? stickerTags(data.tags) : [];
     if (publish && (!tags || !tags.length))
         return json(res, 400, { error: 'Añade al menos una etiqueta para publicar en Zlapy.' });
+    /* A3: publicar expone el archivo a cualquier cuenta. Solo se permite si
+       el blob es propio (subida directa, mensaje propio, sticker propio o
+       avatar/fondo propios); si llegó de otra cuenta —chat, grupo, historia
+       ajena, avatar/fondo ajenos— se rechaza para no convertir el catálogo
+       público en una vía de fuga de contenido privado. */
+    if (publish && Stmt.blobForeignProvenance.get(
+        hash, req.authUser.id, hash, req.authUser.id, hash, req.authUser.id,
+        hash, req.authUser.id, hash, req.authUser.id, hash
+    ).is_foreign)
+        return json(res, 403, { error: 'No puedes publicar un archivo que pertenece a otra cuenta.' });
     const exists = !!Stmt.hasBlob.get(hash);
     const alreadyCounted = blobAvailableTo(req.authUser, hash);
     if (!alreadyCounted && !blobQuotaOk(req.authUser.id, Buffer.byteLength(data.data)))

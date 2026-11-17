@@ -16,7 +16,8 @@ const { pruneBlobHashes, removeBlobAccess } = require('../db/transactions.js');
 const { rejectRateLimited } = require('../http/helpers.js');
 const { storyLimiter, storyViewLimiter } = require('../http/rate-limit.js');
 const { json } = require('../http/responses.js');
-const { liveStories, push, pushStories, storyForViewer } = require('../realtime/notify.js');
+const { liveStories, push, pushStories, pushStoryMeta, storyForViewer } = require('../realtime/notify.js');
+const { ctxStory } = require('../crypto/aad.js');
 const { MESSAGE_LIMITS, characterCount } = require('../shared/limits.js');
 const { validMime, validStoryMedia } = require('../shared/validation.js');
 const { profiles, stories, setStories } = require('../state.js');
@@ -76,7 +77,7 @@ function postStory(req, res, url, data, actor) {
             Stmt.insertStory.run(fromUser.id, s.ts, encryptForUser(fromUser.id, JSON.stringify({
                 kind: s.kind, text: s.text, bg: s.bg, mime: s.mime, data: s.data,
                 enc: s.enc, keys: s.keys, viewers: [], likes: []
-            })), s.hash || null);
+            }, ctxStory(fromUser.id, s.ts))), s.hash || null);
             if (s.hash) Stmt.insertBlobAccessStory.run(s.hash.toLowerCase(), storyId, 'story', fromUser.id);
             return hashes;
         })();
@@ -125,12 +126,14 @@ function postStoryLike(req, res, url, data, actor) {
         if (liked) inMemory.likes.push(data.viewer); else inMemory.likes.splice(i, 1);
         // Techo: likes/viewers se reescriben enteros por evento.
         if (inMemory.likes.length > 1000) inMemory.likes = inMemory.likes.slice(-1000);
+        const ctxHistoria = ctxStory(accountId(inMemory.from), inMemory.ts);
         Stmt.updateStoryData.run(encryptForUser(accountId(inMemory.from), JSON.stringify({
             kind: inMemory.kind, text: inMemory.text, bg: inMemory.bg, mime: inMemory.mime,
-            data: inMemory.data, enc: inMemory.enc, keys: inMemory.keys,
+            data: inMemory.data, enc: inMemory.enc, keys: inMemory.keys, edited: inMemory.edited === true,
             viewers: inMemory.viewers, likes: inMemory.likes
-        })), accountId(inMemory.from), inMemory.ts);
-        pushStories();
+        }), ctxHistoria), accountId(inMemory.from), inMemory.ts);
+        /* A5: solo el metadato, no la lista entera de historias. */
+        pushStoryMeta(inMemory);
         return json(res, 200, { ok: true, liked, count: inMemory.likes.length });
     }
     if (url.pathname === '/story/view') {
@@ -140,12 +143,14 @@ function postStoryLike(req, res, url, data, actor) {
                 inMemory.viewers.push(data.viewer);
                 // Techo de viewers.
                 if (inMemory.viewers.length > 1000) inMemory.viewers = inMemory.viewers.slice(-1000);
-                Stmt.updateStoryData.run(encryptForUser(accountId(inMemory.from), JSON.stringify({
+                const ctxHistoria = ctxStory(accountId(inMemory.from), inMemory.ts);
+        Stmt.updateStoryData.run(encryptForUser(accountId(inMemory.from), JSON.stringify({
                     kind: inMemory.kind, text: inMemory.text, bg: inMemory.bg, mime: inMemory.mime,
-                    data: inMemory.data, enc: inMemory.enc, keys: inMemory.keys,
+                    data: inMemory.data, enc: inMemory.enc, keys: inMemory.keys, edited: inMemory.edited === true,
                     viewers: inMemory.viewers, likes: inMemory.likes
-                })), accountId(inMemory.from), inMemory.ts);
-                pushStories();
+                }), ctxHistoria), accountId(inMemory.from), inMemory.ts);
+                /* A5: solo el metadato, no la lista entera de historias. */
+                pushStoryMeta(inMemory);
             }
         }
         return json(res, 200, { ok: true });
@@ -158,12 +163,14 @@ function postStoryLike(req, res, url, data, actor) {
         inMemory.text = data.text;
         if (data.bg !== undefined) inMemory.bg = data.bg;
         inMemory.edited = true;
+        const ctxHistoria = ctxStory(accountId(inMemory.from), inMemory.ts);
         Stmt.updateStoryData.run(encryptForUser(accountId(inMemory.from), JSON.stringify({
             kind: inMemory.kind, text: inMemory.text, bg: inMemory.bg, mime: inMemory.mime,
-            data: inMemory.data, enc: inMemory.enc, keys: inMemory.keys,
+            data: inMemory.data, enc: inMemory.enc, keys: inMemory.keys, edited: true,
             viewers: inMemory.viewers, likes: inMemory.likes
-        })), accountId(inMemory.from), inMemory.ts);
-        pushStories();
+        }), ctxHistoria), accountId(inMemory.from), inMemory.ts);
+        /* A5: texto y fondo nuevos sin reenviar el medio. */
+        pushStoryMeta(inMemory);
         return json(res, 200, { ok: true });
     }
 }

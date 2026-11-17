@@ -140,8 +140,9 @@ test('vaciar chats y borrar grupos no deja filas de acceso huérfanas', async ()
         assert.ok(filas.acceso === 0 && filas.miembros === 0, 'precondición: sin huérfanos antes de borrar');
 
         // Vaciar el chat 1:1 (borrado masivo por SQL)…
+        // M9: vaciar "para los dos" exige UN destino explícito en `to`.
         const vaciar = await api(srv.base, 'POST', '/chat/delete',
-            { peers: ['betohuerfano'], clearBoth: true }, ana.cookie);
+            { to: 'betohuerfano', clearBoth: true }, ana.cookie);
         assert.equal(vaciar.status, 200, 'vaciar el chat debe funcionar');
 
         // …y borrar el grupo entero (el admin es ana).

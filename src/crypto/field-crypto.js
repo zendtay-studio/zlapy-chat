@@ -54,14 +54,23 @@ function decField(column, value) {
 /**
  * Descifra un campo distinguiendo "vacío" de "ilegible".
  *
+ * Compatibilidad: los campos escritos antes de atar el contexto (AAD propio
+ * de columna) se leían solo con el dominio del formato. Se prueba primero CON
+ * el contexto y, si no descifra, sin él; al volver a escribir el campo queda
+ * atado. `null` significa "no se puede leer" (llave equivocada o valor
+ * corrupto), que es lo que distingue al saneador del re-cifrado.
+ *
  * @param {string} column
  * @param {string} value
  * @returns {string|null} null si el sobre no descifra con esta llave
  */
 function decFieldOrNull(column, value) {
     if (typeof value !== 'string' || value === '') return typeof value === 'string' ? value : null;
-    const plain = cryptoSetup().decryptAtRest(value, aadOf(column));
-    return typeof plain === 'string' ? plain : null;
+    const setup = cryptoSetup();
+    const conAad = setup.decryptAtRest(value, aadOf(column));
+    if (typeof conAad === 'string') return conAad;
+    const legacy = setup.decryptAtRest(value);
+    return typeof legacy === 'string' ? legacy : null;
 }
 
 /**
@@ -88,7 +97,8 @@ const FIELD_TABLES = Object.freeze([
     { table: 'group_join_requests', columns: ['username'] },
     { table: 'groups', columns: ['name', 'description', 'content_policy', 'invite_code'] },
     { table: 'calls', columns: ['peer'] },
-    { table: 'push_subs', columns: ['endpoint'] }
+    { table: 'push_subs', columns: ['endpoint'] },
+    { table: 'message_reactions', columns: ['emoji'] }
 ]);
 
 module.exports = {

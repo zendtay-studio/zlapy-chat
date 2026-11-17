@@ -7,8 +7,9 @@
  * leyenda. No dibuja grafos: para eso está ops/db/db-viewer.js.
  *
  * Uso:
- *   npm run sqliteview                        → http://127.0.0.1:3002
+ *   npm run sqliteview                        → http://127.0.0.1:3002 (con #token=…)
  *   SQLITEVIEW_PORT=3010 npm run sqliteview   → otro puerto
+ *   SQLITEVIEW_TOKEN=secreto npm run sqliteview → token fijo en vez de aleatorio
  *   npm run sqliteview -- --snapshot          → ve una COPIA temporal
  *
  * Detalles de seguridad:
@@ -17,6 +18,12 @@
  *     cae a una copia temporal 0700/0600 que se borra al salir.
  *   - Escucha por defecto solo en 127.0.0.1 y en el puerto 3002 (distinto del
  *     servidor y del visor de grafos): no interfiere con `npm start`.
+ *   - La API exige un token (`X-Viewer-Token`): se toma de SQLITEVIEW_TOKEN o
+ *     se genera uno aleatorio que se imprime en la URL con FRAGMENTO
+ *     (#token=…), que no viaja al servidor ni queda en logs de red. Los
+ *     estáticos (HTML/CSS/JS) siguen abiertos: no contienen datos.
+ *   - Allowlist de Host (anti DNS-rebinding): solo loopback, literales IP o
+ *     los hosts de SQLITEVIEW_ALLOWED_HOSTS (separados por comas).
  *   - El material sensible (hashes de contraseña, auth_key, llaves de grupo,
  *     blobs) se enmascara salvo que la petición pida `reveal=1`.
  */
@@ -24,7 +31,9 @@
 'use strict';
 
 const http = require('node:http');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
+const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 const Database = require('better-sqlite3');
@@ -46,6 +55,34 @@ const readInt = (raw, fallback, min, max) => {
 
 const HOST = String(process.env.SQLITEVIEW_HOST === undefined ? '127.0.0.1' : process.env.SQLITEVIEW_HOST).trim() || '127.0.0.1';
 const PORT = readInt(process.env.SQLITEVIEW_PORT, 3002, 1, 65535);
+/* Token de la API (A4): las rutas /api/* exigen `X-Viewer-Token`. Sin
+   SQLITEVIEW_TOKEN se genera uno aleatorio y se imprime en la URL con
+   fragmento (#token=…), que el navegador no envía al servidor. */
+const SQLITEVIEW_TOKEN = String(process.env.SQLITEVIEW_TOKEN || '').trim() || crypto.randomBytes(24).toString('base64url');
+/* Allowlist de Host (A4): bloquea DNS rebinding. Loopback, literales IP y lo
+   que el operador ponga en SQLITEVIEW_ALLOWED_HOSTS. */
+const EXTRA_ALLOWED_HOSTS = new Set(
+    String(process.env.SQLITEVIEW_ALLOWED_HOSTS || '')
+        .split(',').map(h => h.trim().toLowerCase()).filter(Boolean)
+);
+
+function hostAllowed(rawHost) {
+    if (!rawHost) return false;
+    let hostname;
+    try { hostname = new URL(`http://${rawHost}`).hostname.toLowerCase(); } catch { return false; }
+    if (hostname.startsWith('[') && hostname.endsWith(']')) hostname = hostname.slice(1, -1);
+    if (hostname === 'localhost' || hostname === '::1') return true;
+    if (net.isIP(hostname)) return true;
+    return EXTRA_ALLOWED_HOSTS.has(hostname);
+}
+
+/* Comparación en tiempo constante. */
+function tokenOk(provided, expected) {
+    if (typeof provided !== 'string' || !provided) return false;
+    const a = Buffer.from(provided);
+    const b = Buffer.from(String(expected));
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
 const DEFAULT_LIMIT = 100;
 const LIMIT_MAX = 500;
 
@@ -312,8 +349,15 @@ function staticResponse(pathname) {
     return { status: 200, type, body };
 }
 
-function createHandler(dbs) {
+function createHandler(dbs, config = {}) {
+    const token = config.token || SQLITEVIEW_TOKEN;
+    const hostCheck = config.hostAllowed || hostAllowed;
     return (req, res) => {
+        // A4: Host en la allowlist antes de tocar nada (anti DNS rebinding).
+        if (!hostCheck(req.headers.host)) {
+            res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
+            return res.end('403 - host no permitido');
+        }
         if (req.method !== 'GET' && req.method !== 'HEAD') {
             return sendError(res, 405, 'método no permitido: el visor solo acepta GET');
         }
@@ -321,6 +365,7 @@ function createHandler(dbs) {
         const url = new URL(req.url || '/', 'http://localhost');
         const pathname = decodeURIComponent(url.pathname);
 
+        // Estáticos (HTML/CSS/JS): sin datos, quedan abiertos.
         if (!pathname.startsWith('/api/')) {
             const asset = staticResponse(pathname);
             if (!asset) {
@@ -333,6 +378,12 @@ function createHandler(dbs) {
                 'X-Content-Type-Options': 'nosniff'
             });
             return req.method === 'HEAD' ? res.end() : res.end(asset.body);
+        }
+
+        // API: solo con el token (A4). El cliente lo toma del fragmento
+        // (#token=…) de la URL impresa al arrancar.
+        if (!tokenOk(req.headers['x-viewer-token'], token)) {
+            return sendError(res, 401, 'token requerido: abre el visor con la URL que termina en #token=…');
         }
 
         const reveal = url.searchParams.get('reveal') === '1';
@@ -369,8 +420,9 @@ function startServer(options = {}) {
     };
     const host = options.host || HOST;
     const port = options.port === undefined ? PORT : options.port;
+    const token = options.token || SQLITEVIEW_TOKEN;
 
-    const server = http.createServer(createHandler(dbs));
+    const server = http.createServer(createHandler(dbs, { token }));
     return new Promise((resolve, reject) => {
         server.once('error', reject);
         server.listen(port, host, () => {
@@ -379,7 +431,8 @@ function startServer(options = {}) {
                 server,
                 port: typeof address === 'object' && address ? address.port : port,
                 host,
-                dbs
+                dbs,
+                token
             });
         });
     });
@@ -416,9 +469,10 @@ async function main() {
     }
 
     const overview = overviewPayload(opened);
-    console.log(`✅ Visor de tablas en http://${running.host}:${running.port}`);
+    console.log(`✅ Visor de tablas en http://${running.host}:${running.port}/#token=${SQLITEVIEW_TOKEN}`);
     console.log(`   ${overview.totals.tables} tablas · ${overview.totals.rows.toLocaleString('es-ES')} filas · ${overview.totals.columns} columnas`);
-    console.log('   Solo lectura. Ctrl+C para parar. Muestra datos reales: no lo publiques con el túnel.');
+    console.log('   Solo lectura. Abre esa URL exacta: la API exige el token (#token=…). Ctrl+C para parar.');
+    console.log('   Muestra datos reales: no lo publiques con el túnel.');
 
     const shutdown = () => {
         running.server.close(() => {
@@ -445,6 +499,9 @@ module.exports = {
     findTable,
     overviewPayload,
     rowsPayload,
+    hostAllowed,
+    tokenOk,
+    SQLITEVIEW_TOKEN,
     createHandler,
     startServer
 };

@@ -99,7 +99,7 @@ test('nada de lo sensible queda en claro en el fichero de la base', async t => {
     const db = new Database(path.join(srv.dataDir, 'zlapy.db'), { readonly: true });
     const perfil = db.prepare('SELECT display_name, avatar_ref FROM user_profiles WHERE user_id = (SELECT id FROM users WHERE username = ?)').get('ana');
     assert.ok(perfil, 'debe existir el perfil');
-    assert.match(perfil.display_name, /^PCE3:/, 'el nombre visible va cifrado con la clave del usuario');
+    assert.match(perfil.display_name, /^PCE3A:/, 'el nombre visible va cifrado (con su contexto) con la clave del usuario');
     assert.match(perfil.avatar_ref, /^[a-f0-9]{64}$/, 'la foto es una referencia al blob cifrado');
     const grupoFila = db.prepare('SELECT name, description, invite_code FROM groups WHERE id = ?').get(grupoId);
     assert.match(grupoFila.name, /^PCE1v2:/, 'el nombre del grupo va cifrado');

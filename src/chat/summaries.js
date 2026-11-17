@@ -9,9 +9,11 @@
 
 const { findMessage, rowToMessage } = require('./messages.js');
 const { decryptForUser, encryptForUser } = require('../crypto/setup.js');
+const { ctxSummary } = require('../crypto/aad.js');
 const { Stmt } = require('../db/statements.js');
 const { users } = require('../state.js');
 const { makeCache } = require('../shared/cache.js');
+const { publicName } = require('../users/privacy.js');
 
 /* Caché de descifrado del preview (PERF-P03). La lista de conversaciones
    descifraba con AES-GCM el `last_data` de CADA fila en cada GET. La clave de
@@ -22,11 +24,11 @@ const { makeCache } = require('../shared/cache.js');
    (shared/cache). */
 const SUMMARY_PLAIN_CACHE_MAX = 20000;
 const summaryPlainCache = makeCache({ max: SUMMARY_PLAIN_CACHE_MAX });
-const decryptSummaryCached = (owner, cipher) => {
+const decryptSummaryCached = (owner, cipher, context = null) => {
     if (!cipher) return null;
     let plain = summaryPlainCache.get(cipher);
     if (plain !== undefined) return plain;
-    plain = decryptForUser(owner, cipher) ?? null;
+    plain = decryptForUser(owner, cipher, context) ?? null;
     if (!plain) return plain;
     summaryPlainCache.set(cipher, plain);
     return plain;
@@ -39,14 +41,34 @@ function resolveName(id) {
     return (u && u.username) || 'eliminado';
 }
 
-function decorateForClient(m) {
+function decorateForClient(m, viewer = '') {
     if (!m || typeof m !== 'object') return m;
     const out = { ...m };
-    if (out.fromId) out.from = resolveName(out.fromId);
-    if (out.toId) out.to = resolveName(out.toId);
+    /* El nombre canónico solo se sustituye por el alias opaco cuando el
+       visor no tiene permiso para ver el @usuario. Sin viewer se mantiene el
+       comportamiento histórico (payloads de grupo que ya se aliasan
+       después con groupMessageForViewer). */
+    const visibleName = id => {
+        const name = resolveName(id);
+        return viewer ? publicName(name, viewer) : name;
+    };
+    if (out.fromId) out.from = visibleName(out.fromId);
+    if (out.toId) out.to = visibleName(out.toId);
     if (out.reply && typeof out.reply === 'object') {
         out.reply = { ...out.reply };
-        if (out.reply.fromId) out.reply.from = resolveName(out.reply.fromId);
+        if (out.reply.fromId) out.reply.from = visibleName(out.reply.fromId);
+    }
+    /* Tarjeta de contacto compartida: dentro del JSON viaja el @usuario. Se
+       aliasa por visor para no reabrir por esta vía lo que la lista y el
+       perfil ya ocultan. */
+    if (viewer && out.kind === 'contact' && typeof out.data === 'string' && out.data) {
+        try {
+            const card = JSON.parse(out.data);
+            if (card && typeof card.username === 'string') {
+                card.username = publicName(card.username, viewer);
+                out.data = JSON.stringify(card);
+            }
+        } catch { }
     }
     return out;
 }
@@ -58,12 +80,14 @@ function readSummaryEntry(owner, peer) {
     // La copia de resumen se guarda cifrada con la clave del usuario: si no,
     // expondría en claro los primeros 200 caracteres del mensaje. Se tolera
     // el formato antiguo sin migrar.
-    try { const raw = decryptSummaryCached(owner, row.last_data); last = raw ? JSON.parse(raw) : null; } catch { }
+    try { const raw = decryptSummaryCached(owner, row.last_data, ctxSummary(owner, peer)); last = raw ? JSON.parse(raw) : null; } catch { }
     return { peerId: peer, peer: resolveName(peer), unread: row.unread, last };
 }
 
 function writeSummaryEntry(owner, peer, entry) {
-    Stmt.upsertSummary.run(owner, peer, entry.unread || 0, encryptForUser(owner, JSON.stringify(entry.last || null)));
+    // M1: la copia cifrada del resumen va atada a esta conversación.
+    Stmt.upsertSummary.run(owner, peer, entry.unread || 0,
+        encryptForUser(owner, JSON.stringify(entry.last || null), ctxSummary(owner, peer)));
 }
 
 /* El resumen es una CACHÉ del último mensaje. Si su copia cifrada quedó

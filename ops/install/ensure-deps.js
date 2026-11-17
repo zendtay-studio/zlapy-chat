@@ -113,12 +113,21 @@ function verifyDeps({ deps = dependencies, deep = false } = {}) {
     return { ok: missing.length === 0, enginesOk, missing };
 }
 
-/* Instalador por defecto: npm install de las dependencias del proyecto.
+/* Instalador por defecto: `npm ci` cuando hay lockfile, `npm install` si no.
+ *
+ * `npm ci` instala EXACTAMENTE lo que fija package-lock.json y falla si el
+ * árbol no cuadra: una puesta al día que arrastra versiones nuevas (o un
+ * módulo nativo compilado contra otra versión) ya no puede colarse en el
+ * arranque. `npm install` se reserva para el repo sin lockfile (clonado
+ * parcial o instalado a mano), donde es lo único posible.
+ *
  * Se instala el conjunto completo (no solo lo que falta) porque añadir un
  * paquete suelto con npm puede reescribir el árbol; el coste es el mismo. */
 function defaultInstall() {
     const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-    const r = spawnSync(npm, ['install', '--no-audit', '--no-fund', '--omit=dev'], {
+    const hayLock = fs.existsSync(path.join(ROOT, 'package-lock.json'));
+    const comando = hayLock ? 'ci' : 'install';
+    const r = spawnSync(npm, [comando, '--no-audit', '--no-fund', '--omit=dev'], {
         cwd: ROOT, stdio: 'inherit', timeout: NPM_TIMEOUT_MS
     });
     return { ok: r.status === 0, error: r.error ? r.error.message : (r.status === 0 ? null : `npm salió con ${r.status}`) };

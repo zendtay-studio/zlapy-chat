@@ -42,6 +42,7 @@ const http = require('http');
 const path = require('path');
 const fs = require('fs');
 const { ensureDeps } = require('../install/ensure-deps.js');
+const { writePidFile, serverIsRunning } = require('./server-gate.js');
 
 // El supervisor y el servidor deben leer el MISMO fichero de configuración.
 // `dotenv` no sobrescribe variables ya presentes en el entorno, así que el
@@ -161,15 +162,11 @@ let lastHeartbeat = 0;
 let depAttempts = 0;
 
 function writePid(pid) {
-    try {
-        // El directorio del PID file se crea si falta (con 0700): un
-        // SUPERVISOR_PID_FILE con subdirectorio no debe fallar en silencio.
-        fs.mkdirSync(path.dirname(PID_FILE), { recursive: true, mode: 0o700 });
-        fs.writeFileSync(PID_FILE, pid ? String(pid) : '');
-        // El PID del hijo en 0644 era legible por cualquier usuario local;
-        // no es secreto, pero el fichero no necesita más permisos.
-        try { fs.chmodSync(PID_FILE, 0o600); } catch { /* best-effort */ }
-    } catch (e) { /* best-effort */ }
+    /* Escritura ATÓMICA y con 0600 desde el primer byte (M10): con el
+       writeFileSync de antes, otro proceso podía leer el fichero durante el
+       hueco previo al chmod y ver un PID vacío (concluyendo que no había
+       servidor) o truncado. */
+    try { writePidFile(PID_FILE, pid); } catch (e) { /* best-effort */ }
 }
 
 // Backoff exponencial acotado: el máximo nunca se supera, así que un
@@ -422,18 +419,14 @@ function handleChildExit(code, signal) {
 }
 
 /* Otro server.js vivo bajo OTRO supervisor arrancado antes: se detecta por
-   el PID guardado. Sin esta guarda, un segundo `npm start` entra en el bucle
-   de "puerto ocupado" sin explicar que el puerto lo tiene una instancia
-   anterior que sigue corriendo — y la impresión es que el servidor
-   "no se deja parar". */
+   el PID guardado, con la MISMA comprobación que usan las operaciones de
+   mantenimiento (ops/runtime/server-gate.js). Sin esta guarda, un segundo
+   `npm start` entra en el bucle de "puerto ocupado" sin explicar que el
+   puerto lo tiene una instancia anterior que sigue corriendo — y la
+   impresión es que el servidor "no se deja parar". */
 function aliveServerPid() {
-    try {
-        const pid = Number.parseInt(fs.readFileSync(PID_FILE, 'utf8').trim(), 10);
-        if (!Number.isInteger(pid) || pid <= 0) return 0;
-        // Pid reciclado por otro proceso: no es un server.js.
-        if (!fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').includes('server.js')) return 0;
-        return pid;
-    } catch { return 0; }
+    const vivo = serverIsRunning();
+    return vivo.vivo ? vivo.pid : 0;
 }
 
 function start() {

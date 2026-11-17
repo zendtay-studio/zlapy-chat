@@ -11,7 +11,7 @@ const { CONFIG } = require('../config.js');
 const { Stmt } = require('../db/statements.js');
 const { profiles, stories, users } = require('../state.js');
 const { byName } = require('../users/helpers.js');
-const { isBlockedBy, permite } = require('../users/privacy.js');
+const { isBlockedBy, permite, publicName } = require('../users/privacy.js');
 const { sealFrame } = require('./encrypted.js');
 
 // WebSocket — frames y push
@@ -79,11 +79,13 @@ function userList(viewerId) {
         const u = users.get(id);
         if (!u) continue;
         if (isBlockedBy(profiles[u.username], viewer.username)) continue;
-        /* El @usuario se pinta solo si su dueno lo permite: la bandera
-           viaja SOLO cuando esta oculto (ausente = visible), igual que
-           los campos de presencia. La decision la toma el servidor. */
-        const hideUsuario = !permite(profiles[u.username], 'usuario', viewer.username);
-        out.push({ id: u.id, username: u.username, ...(hideUsuario ? { verUsuario: false } : {}), ...presenceEntry(u) });
+        /* El @usuario se pinta solo si su dueno lo permite: cuando esta
+           oculto viaja el alias opaco (UUID) en vez del nombre real, para
+           que la busqueda y la lista no revelen la cuenta. La decision la
+           toma el servidor. */
+        const visibleName = publicName(u.username, viewer.username);
+        const hideUsuario = visibleName !== u.username;
+        out.push({ id: u.id, username: visibleName, ...(hideUsuario ? { verUsuario: false } : {}), ...presenceEntry(u) });
     }
     return sortUserList(out);
 }
@@ -183,6 +185,37 @@ function pushStories() {
     }
 }
 
+/* Metadato de UNA historia (A5): antes cada "me gusta", vista o edición
+   reenviaba TODAS las historias a TODOS los conectados. Con el medio inline
+   dentro del payload, un like costaba O(usuarios × historias × bytes) y
+   saturaba el servidor con unos pocos usuarios conectados.
+
+   Ahora viaja solo lo que cambió, sin el medio:
+     · el autor recibe viewers/likes completos (son SUYOS) y el estado de
+       edición;
+     · el resto recibe el recuento de likes, si le había dado "me gusta" y el
+       texto/fondo nuevos (la edición). Nunca recibe quién vio ni quién dio
+       like: eso es del autor.
+   El cliente parchea su copia local de esa historia; si no la tiene, ignora. */
+function pushStoryMeta(story) {
+    if (!story) return;
+    const likeSet = new Set(story.likes || []);
+    for (const u of users.values()) {
+        if (!u.online) continue;
+        if (!permite(profiles[story.from], 'historias', u.username)) continue;
+        const esAutor = story.from === u.username;
+        push(u, {
+            type: 'story-meta',
+            from: story.from,
+            ts: story.ts,
+            edited: story.edited === true,
+            ...(esAutor
+                ? { viewers: (story.viewers || []).slice(-1000), likes: (story.likes || []).slice(-1000) }
+                : { likeCount: likeSet.size, liked: likeSet.has(u.username), text: story.text || '', bg: story.bg || '' })
+        });
+    }
+}
+
 module.exports = {
     WS_MAX_PER_USER,
     WS_FRAME_RATE,
@@ -204,4 +237,5 @@ module.exports = {
     liveStories,
     storyForViewer,
     pushStories,
+    pushStoryMeta,
 };

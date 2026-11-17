@@ -34,6 +34,7 @@ const { mimeMap, rejectRateLimitedMessage, safeDecodeSegment } = require('./help
 const { cspFor, json, securityHeaders } = require('./responses.js');
 const { isEncrypted, openRequest, sealResponse } = require('./transport.js');
 const { getConfig, getHealthz } = require('../meta/routes.js');
+const { hostAllowed } = require('../shared/hosts.js');
 const { getAccountChatSettings, getNotes, getProfile, postAccountChatSettings, postAccountDelete, postAccountProfile, postAccountRegenerateKey, postNotes, postProfile, postPushAvatar } = require('../profile/routes.js');
 const { postPushSubscribe, postPushTest, postPushUnsubscribe } = require('../push/routes.js');
 const { VAPID, notifyUser, avatarPushGroupUrl, avatarPushUrl, pushBody, pushNameOf } = require('../push/vapid.js');
@@ -47,16 +48,18 @@ const { clampStr, localStickerHash, validAvatar, validGroupCustomId, validMessag
 const { blockedSet, groupCache, profiles, stories, users } = require('../state.js');
 const { getGiphySearch, getLegacyDefaultSticker, getStickerBlob, getStickerDiscover, getStickers, postCreateSticker, postStickers } = require('../stickers/routes.js');
 const { getStories, postStory, postStoryLike } = require('../stories/routes.js');
-const { byName, wantsAlwaysPush } = require('../users/helpers.js');
+const { byName, resolveAccount, wantsAlwaysPush } = require('../users/helpers.js');
 const { isBlockedBy, isContact, privacyFor, publicName } = require('../users/privacy.js');
 
 /* Resuelve una cuenta por @usuario o por su alias opaco (UUID). Los
    integrantes que ocultan el @usuario llegan al cliente como UUID, así que
    las acciones de administración (expulsar, ascender, aprobar) aceptan los
    dos formatos sin que el nombre real tenga que viajar. */
-const accountFromValue = value => {
+const accountFromValue = (value, viewer) => {
     if (typeof value !== 'string' || !value) return null;
-    return byName(value) || users.get(value) || null;
+    /* Acepta el alias opaco solo si la relación con el actor lo autoriza
+       (miembro del mismo grupo, contacto o solicitud pendiente). */
+    return resolveAccount(value, viewer) || null;
 };
 
 const handleRequest = (req, res) => {
@@ -73,10 +76,16 @@ const handleRequest = (req, res) => {
     // de confianza que termina TLS, así que no se entra en bucle.
     if (tlsState.forceTls && !requestEncrypted(req) && url.pathname !== '/healthz') {
         const host = req.headers.host;
-        if (host) {
+        /* M2: la redirección solo se arma con un Host PROPIO (loopback,
+           literal IP o los de TLS_HOSTS). Un Host manipulado convertiría este
+           301 en un rebote a un dominio ajeno, con el camino de la sesión
+           por delante. `no-store`: una redirección no debe quedar en la
+           caché de navegador ni de proxy. */
+        if (host && hostAllowed(host)) {
             res.writeHead(301, {
                 'Location': `https://${host}${req.url}`,
                 'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+                'Cache-Control': 'no-store',
                 ...securityHeaders
             });
             return res.end();
@@ -137,9 +146,12 @@ const handleRequest = (req, res) => {
         const identifier = safeDecodeSegment(avatarMatch[1]);
         if (!identifier) return json(res, 404, { error: 'avatar not found' });
         // El avatar exige sesión: sin ella no se pueden enumerar usuarios.
-        if (!sessionUser(req)) return json(res, 401, { error: 'authentication required' });
+        const viewer = sessionUser(req);
+        if (!viewer) return json(res, 401, { error: 'authentication required' });
+        /* El identificador opaco (UUID) solo resuelve con relación autorizada
+           con quien mira; el @usuario sigue resolviendo por nombre. */
         const byId = /^[0-9a-f-]{36}$/i.test(identifier);
-        const user = byId ? users.get(identifier.toLowerCase()) : byName(identifier.toLowerCase());
+        const user = byId ? resolveAccount(identifier, viewer) : byName(identifier.toLowerCase());
         // Un grupo sin foto usa su identificador interno para generar un
         // avatar propio (con otro diseño que el de las personas).
         if (!user && identifier.startsWith('g_')) {
@@ -303,7 +315,11 @@ const handleRequest = (req, res) => {
         // usuario y contraseña, así que no tienen por qué aceptar 32 MB (ni
         // pagar el coste de parsearlos).
         const SMALL_BODY_ROUTES = new Set(['/auth/register', '/auth/login', '/auth/add-account', '/auth/switch', '/auth/logout', '/auth/account/remove']);
-        const bodyLimit = SMALL_BODY_ROUTES.has(url.pathname) ? 8 * 1024 : CONFIG.maxHttpBodyBytes;
+        /* M3: /key solo lleva una clave pública: 64 KB en vez de los
+           megabytes del límite general. Así un cuerpo manipulado no se
+           parsea ni se arrastra por el descifrado. */
+        const bodyLimit = url.pathname === '/key' ? 64 * 1024
+            : SMALL_BODY_ROUTES.has(url.pathname) ? 8 * 1024 : CONFIG.maxHttpBodyBytes;
         if (Number(req.headers['content-length']) > bodyLimit) {
             json(res, 413, { error: 'Contenido demasiado grande.' });
             req.resume();
@@ -546,7 +562,7 @@ const handleRequest = (req, res) => {
                             !blobAvailableTo(req.authUser, stickerBlobHash)))
                         return json(res, 400, { error: 'Sticker no disponible.' });
                     if (kind === 'contact') {
-                        const contact = normalizeContactData(source.data, byName);
+                        const contact = normalizeContactData(source.data, name => resolveAccount(name, req.authUser));
                         if (!contact) return json(res, 400, { error: 'Contacto inválido.' });
                         source.data = JSON.stringify(contact);
                     } else if (kind === 'poll') {
@@ -606,7 +622,7 @@ const handleRequest = (req, res) => {
                         name: kind === 'image' ? '' : clampStr(source.name, 180),
                         mime: validMime(source.mime) ? source.mime.slice(0, 120) : '',
                         caption: typeof source.caption === 'string' ? source.caption.slice(0, 2000) : '',
-                        reply: resolveReply(source.reply, 'group:' + id),
+                        reply: resolveReply(source.reply, 'group:' + id, req.authUser),
                         ts: Date.now(), mentions, mentionLabels,
                         enc: typeof source.enc === 'string' && (source.enc === 'e2' || source.enc === 'g2') ? source.enc : ''
                     };
@@ -662,7 +678,7 @@ const handleRequest = (req, res) => {
                 }
                 if (data.addMember) {
                     if (g.addPolicy !== 'all' && !isAdmin) return json(res, 403, { error: 'Solo admins.' });
-                    const newMember = accountFromValue(data.addMember);
+                    const newMember = accountFromValue(data.addMember, req.authUser);
                     if (!newMember) return json(res, 404, { error: 'No existe.' });
                     if (!isContact(profiles[req.authUser.username], newMember.username)) return json(res, 403, { error: 'Solo contactos.' });
                     if (g.members.length >= CONFIG.maxGroupMembers) return json(res, 403, { error: 'El grupo está lleno.' });
@@ -684,7 +700,7 @@ const handleRequest = (req, res) => {
                 const removeMember = data.removeMember || data.removed;
                 if (removeMember) {
                     if (!isAdmin) return json(res, 403, { error: 'Solo admins.' });
-                    const removed = accountFromValue(removeMember);
+                    const removed = accountFromValue(removeMember, req.authUser);
                     if (!removed || !g.memberIds.includes(removed.id) || removed.id === req.authUser.id)
                         return json(res, 400, { error: 'Usa salir.' });
                     /* El propietario no es expulsable por otro admin: si lo
@@ -773,7 +789,7 @@ const handleRequest = (req, res) => {
                 }
                 if (data.approveJoin || data.rejectJoin) {
                     if (!isAdmin) return json(res, 403, { error: 'Solo admins.' });
-                    const requested = accountFromValue(data.approveJoin || data.rejectJoin);
+                    const requested = accountFromValue(data.approveJoin || data.rejectJoin, req.authUser);
                     if (!requested || !g.joinRequests.some(r => r.userId === requested.id)) return json(res, 404, { error: 'No disponible.' });
                     // El tope de miembros vale también aquí (BUG-003): aprobar
                     // era una vía de bypass de maxGroupMembers frente a join y
@@ -829,7 +845,7 @@ const handleRequest = (req, res) => {
                 }
                 if (data.approveAdmin || data.removeAdmin) {
                     if (!isAdmin) return json(res, 403, { error: 'Solo admins.' });
-                    const target = accountFromValue(data.approveAdmin || data.removeAdmin);
+                    const target = accountFromValue(data.approveAdmin || data.removeAdmin, req.authUser);
                     if (!target || !g.memberIds.includes(target.id)) return json(res, 404, { error: 'No está en el grupo.' });
                     if (data.approveAdmin && !g.admins.includes(target.username)) g.admins.push(target.username);
                     if (data.removeAdmin) {

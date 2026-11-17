@@ -7,6 +7,7 @@
 'use strict';
 
 const { decryptForUser, encryptForUser } = require('../crypto/setup.js');
+const { ctxPushSub } = require('../crypto/aad.js');
 const { encField } = require('../crypto/field-crypto.js');
 const { db } = require('../db/database.js');
 const { Stmt } = require('../db/statements.js');
@@ -53,10 +54,10 @@ function postPushSubscribe(req, res, url, data, actor) {
         const previa = findPushSubRow(id, sub.endpoint);
         if (previa) Stmt.deletePushSubByRowid.run(previa.rowid);
         Stmt.insertPushSub.run(id, encField('push_subs.endpoint', sub.endpoint),
-            encryptForUser(id, JSON.stringify(sub)));
+            encryptForUser(id, JSON.stringify(sub), ctxPushSub(id)));
         Stmt.trimPushSubs.run(id, id);
         const rows = db.prepare('SELECT data FROM push_subs WHERE user_id = ?').all(id);
-        pushSubs.set(id, rows.map(r => parseJsonSafe(decryptForUser(id, r.data) || '')).filter(Boolean));
+        pushSubs.set(id, rows.map(r => parseJsonSafe(decryptForUser(id, r.data, ctxPushSub(id)) || '')).filter(Boolean));
     }
     return json(res, 200, { ok: true });
 }
@@ -65,7 +66,7 @@ function postPushUnsubscribe(req, res, url, data, actor) {
     const fila = findPushSubRow(req.authUser.id, data.endpoint);
     if (fila) Stmt.deletePushSubByRowid.run(fila.rowid);
     const rows = db.prepare('SELECT data FROM push_subs WHERE user_id = ?').all(req.authUser.id);
-    pushSubs.set(req.authUser.id, rows.map(r => parseJsonSafe(decryptForUser(req.authUser.id, r.data) || '')).filter(Boolean));
+    pushSubs.set(req.authUser.id, rows.map(r => parseJsonSafe(decryptForUser(req.authUser.id, r.data, ctxPushSub(req.authUser.id)) || '')).filter(Boolean));
     return json(res, 200, { ok: true });
 }
 

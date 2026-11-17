@@ -32,6 +32,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { deriveMasterKey, SCRYPT_PARAMS } = require('./kdf.js');
 const { createMessageCrypto } = require('./message-crypto.js');
+const { aadMeta } = require('./aad.js');
 
 const META = Object.freeze({
     user: 'owner_user',
@@ -216,7 +217,10 @@ function verifyKeycheck(key, options = {}) {
     const stored = readMetaValue(META.check, options);
     if (!stored) return false;
     const cryptoFor = createMessageCrypto(key);
-    const plain = cryptoFor.decryptAtRest(stored);
+    // M7: el keycheck va atado a su fila de meta (AAD). Un valor heredado sin
+    // AAD sigue abriendo.
+    const plain = cryptoFor.decryptAtRest(stored, aadMeta(META.check))
+        ?? cryptoFor.decryptAtRest(stored);
     return typeof plain === 'string' && plain === KEYCHECK_PLAINTEXT;
 }
 
@@ -234,7 +238,7 @@ function verifyKeycheck(key, options = {}) {
 function keyMaterialRows(key, { user, salt, params = SCRYPT_PARAMS } = {}) {
     const cryptoFor = createMessageCrypto(key);
     return [
-        [META.check, cryptoFor.encryptAtRest(KEYCHECK_PLAINTEXT)],
+        [META.check, cryptoFor.encryptAtRest(KEYCHECK_PLAINTEXT, aadMeta(META.check))],
         [META.user, String(user)],
         [META.salt, Buffer.from(salt).toString('base64')],
         [META.params, JSON.stringify({ alg: 'scrypt', ...params })],

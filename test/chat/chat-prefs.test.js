@@ -239,15 +239,28 @@ test('responder a una nota de estado se cita como nota (no como mensaje normal)'
     const srv = await startServer();
     try {
         const { ana, beto } = await contactPair(srv.base);
+        // M8: la cita de nota se resuelve contra la nota VIVA de esa cuenta:
+        // primero la publica beto…
+        const nota = await api(srv.base, 'POST', '/notes', { data: { text: 'nota de estado', bg: '#123456' } }, beto.cookie);
+        assert.equal(nota.status, 200);
+        // …y el texto citado lo deriva EL SERVIDOR, no el cliente.
         const reply = await api(srv.base, 'POST', '/send', {
             to: 'beto', kind: 'text', data: 'te contesto',
-            reply: { kind: 'note', from: 'beto', text: 'nota de estado' }
+            reply: { kind: 'note', from: 'beto', text: 'texto inventado por el cliente' }
         }, ana.cookie);
         assert.equal(reply.json.ok, true);
         const stored = reply.json.message.reply;
         assert.equal(stored.kind, 'note');
         assert.equal(stored.text, 'nota de estado');
         assert.equal(stored.preview, 'nota de estado');
+
+        // Sin nota viva (o con una que no existe), la cita se descarta.
+        const sinNota = await api(srv.base, 'POST', '/send', {
+            to: 'beto', kind: 'text', data: 'otra vez',
+            reply: { kind: 'note', from: 'dani', text: 'nota ajena inexistente' }
+        }, ana.cookie);
+        assert.equal(sinNota.json.ok, true);
+        assert.equal(sinNota.json.message.reply, null, 'una nota inexistente no se puede citar');
     } finally { await stop(srv); }
 });
 

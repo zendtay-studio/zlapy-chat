@@ -10,11 +10,19 @@
 const { updateCall } = require('./store.js');
 const { json } = require('../http/responses.js');
 const { callFiles } = require('../state.js');
-const { accountsBlocked } = require('../users/privacy.js');
+const { accountsBlocked, publicName } = require('../users/privacy.js');
+
+/* El registro guarda el nombre canónico del par (también como índice
+   cifrado); al cliente le viaja el alias opaco si esa cuenta oculta su
+   @usuario. */
+function callsForViewer(username, actor) {
+    return (callFiles.get(username) || [])
+        .filter(c => !c.peer || !accountsBlocked(username, c.peer))
+        .map(c => (c && c.peer ? { ...c, peer: publicName(c.peer, actor) } : c));
+}
 
 function getCalls(req, res, url, data, actor) {
-    const calls = (callFiles.get(req.authUser.username) || []).filter(c => !c.peer || !accountsBlocked(req.authUser.username, c.peer));
-    return json(res, 200, { calls });
+    return json(res, 200, { calls: callsForViewer(req.authUser.username, actor) });
 }
 
 const CALL_LOG_STATES = new Set(['ended', 'missed', 'rejected', 'cancelled', 'busy', 'blocked', 'denied', 'active', 'calling']);
@@ -34,8 +42,7 @@ function postCallLog(req, res, url, data, actor) {
         updateCall(username, data.callId, { state, duration });
     }
     // Coherente con GET /calls: sin llamadas de bloqueados.
-    const calls = (callFiles.get(username) || []).filter(c => !c.peer || !accountsBlocked(username, c.peer));
-    return json(res, 200, { ok: true, calls });
+    return json(res, 200, { ok: true, calls: callsForViewer(username, actor) });
 }
 
 

@@ -12,6 +12,7 @@ const { renamePeerInSummaries } = require('./summaries.js');
 const { encField } = require('../crypto/field-crypto.js');
 const { peerHash } = require('../crypto/peer-index.js');
 const { decryptForUser, encryptForUser } = require('../crypto/setup.js');
+const { ctxCall } = require('../crypto/aad.js');
 const { db } = require('../db/database.js');
 const { Stmt } = require('../db/statements.js');
 const { readGroup, writeGroupMeta } = require('../groups/store.js');
@@ -79,10 +80,10 @@ function propagateUsernameChange(previous, next) {
         try {
             /* decryptForUser devuelve TEXTO (el JSON del registro), no un
                objeto: hay que parsearlo antes de mirar `peer`. */
-            const registro = parseJsonSafe(decryptForUser(dueño.id, row.data) || '');
+            const registro = parseJsonSafe(decryptForUser(dueño.id, row.data, ctxCall(dueño.id, row.id)) || '');
             if (registro && registro.peer === previous) {
                 registro.peer = next;
-                Stmt.updateCallData.run(encryptForUser(dueño.id, JSON.stringify(registro)), row.id, dueño.id);
+                Stmt.updateCallData.run(encryptForUser(dueño.id, JSON.stringify(registro), ctxCall(dueño.id, row.id)), row.id, dueño.id);
             }
         } catch { /* blob ilegible: la columna peer ya quedó reescrita */ }
     }

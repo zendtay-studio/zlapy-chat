@@ -46,6 +46,7 @@ const Database = require('better-sqlite3');
 const { DB_PATH } = require('../../src/config.js');
 const { createMessageCrypto } = require('../../src/crypto/message-crypto.js');
 const { unlockMasterKey } = require('../../src/crypto/owner-key.js');
+const { aadAuthKey } = require('../../src/crypto/aad.js');
 
 const ROOT = path.join(__dirname, '..', '..');
 const APPLY = process.argv.includes('--apply');
@@ -69,11 +70,14 @@ try {
 }
 const crypto = createMessageCrypto(key);
 
-/* ¿La fila de auth_key de esta cuenta se descifra con la llave actual? */
-const authKeyLegible = authKey => {
+/* ¿La fila de auth_key de esta cuenta se descifra con la llave actual?
+   M7: primero con el AAD de su usuario (como se escribe hoy) y, si no,
+   sin él (las heredadas). */
+const authKeyLegible = (authKey, userId) => {
     if (typeof authKey !== 'string' || !authKey) return false;
     let plain = null;
-    try { plain = crypto.decryptAtRest(authKey); } catch { }
+    try { plain = crypto.decryptAtRest(authKey, aadAuthKey(userId)); } catch { }
+    if (typeof plain !== 'string') { try { plain = crypto.decryptAtRest(authKey); } catch { } }
     if (typeof plain !== 'string') return false;
     return /^[0-9a-f]{512}$/i.test(plain);
 };
@@ -87,7 +91,7 @@ const usuarios = new Map(
 );
 
 const ilegibles = db.prepare('SELECT user_id, auth_key FROM user_auth_keys').all()
-    .filter(fila => !authKeyLegible(fila.auth_key))
+    .filter(fila => !authKeyLegible(fila.auth_key, fila.user_id))
     .map(fila => ({ userId: fila.user_id, username: usuarios.get(fila.user_id) || '(desconocido)' }));
 
 if (ilegibles.length === 0) {
@@ -101,7 +105,7 @@ for (const fila of ilegibles) {
     const mensajes = db.prepare('SELECT COUNT(*) AS total FROM messages WHERE from_id = ? OR to_id = ?')
         .get(fila.userId, fila.userId);
     const perfil = db.prepare(
-        "SELECT COUNT(*) AS total FROM user_profiles WHERE user_id = ? AND (display_name LIKE 'PCE3:%' OR bio LIKE 'PCE3:%' OR note LIKE 'PCE3:%')"
+        "SELECT COUNT(*) AS total FROM user_profiles WHERE user_id = ? AND (display_name LIKE 'PCE3%' OR bio LIKE 'PCE3%' OR note LIKE 'PCE3%')"
     ).get(fila.userId);
     const notas = db.prepare('SELECT COUNT(*) AS total FROM user_notes WHERE user_id = ?').get(fila.userId);
     console.log(`  · ${fila.username} (${fila.userId}): ${Number(mensajes.total)} mensajes, ${Number(perfil.total)} campos de perfil, ${Number(notas.total)} notas — irrecuperables con esta llave`);
@@ -144,7 +148,7 @@ db.backup(backupPath).then(() => {
     // Verificación posterior: la fila debe haber desaparecido y el perfil
     // debe quedar limpio (la clave nueva la generará el servidor).
     const pendientes = db.prepare('SELECT user_id, auth_key FROM user_auth_keys').all()
-        .filter(fila => !authKeyLegible(fila.auth_key)).length;
+        .filter(fila => !authKeyLegible(fila.auth_key, fila.user_id)).length;
     console.log(`Reparadas ${ilegibles.length} cuentas. auth_key ilegibles que quedan: ${pendientes}`);
     console.log('La cuenta vuelve a mostrar su nombre de usuario; el usuario puede escribir otro nombre y se cifrará con la clave nueva.');
     db.close();

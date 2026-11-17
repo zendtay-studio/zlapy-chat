@@ -11,6 +11,7 @@ const test = require('node:test');
 const { hasMasterDataAtRest, isMasterEnvelope, rotateMasterKey } = require('../../ops/crypto/reencrypt-master.js');
 const { createMessageCrypto } = require('../../src/crypto/message-crypto.js');
 const { aadOf } = require('../../src/crypto/field-crypto.js');
+const { aadAuthKey, aadBlob, aadGroupKeys, aadMeta } = require('../../src/crypto/aad.js');
 const { ensureSchema, SCHEMA_VERSION } = require('../../src/db/schema.js');
 
 /** Proyecto de juguete: un .env con credencial + data/ con las dos bases. */
@@ -74,20 +75,27 @@ test('la migración re-cifra auth_keys, grupos, meta (VAPID), campos y adjuntos'
     const nueva = createMessageCrypto(newKey);
     const vieja = createMessageCrypto(oldKey);
 
+    /* M7: cada pieza se re-cifra ATADA a su contexto (AAD). La llave nueva la
+       abre CON su contexto; sin él, ni con la llave correcta. Y con la vieja
+       ya no, ni con contexto. */
     const authRow = db.prepare('SELECT auth_key FROM user_auth_keys WHERE user_id = ?').get('u-ana');
-    assert.equal(nueva.decryptAtRest(authRow.auth_key), secretos.authkeyPlain, 'con la NUEVA se descifra');
+    assert.equal(nueva.decryptAtRest(authRow.auth_key, aadAuthKey('u-ana')), secretos.authkeyPlain, 'con la NUEVA se descifra');
+    assert.equal(nueva.decryptAtRest(authRow.auth_key), null, 'sin su AAD, tampoco la llave nueva la abre');
     assert.equal(vieja.decryptAtRest(authRow.auth_key), null, 'con la VIEJA ya no');
 
     const grpRow = db.prepare('SELECT keys_cipher FROM groups WHERE id = ?').get('g-1');
-    assert.equal(nueva.decryptAtRest(grpRow.keys_cipher), secretos.grupoPlain);
+    assert.equal(nueva.decryptAtRest(grpRow.keys_cipher, aadGroupKeys('g-1')), secretos.grupoPlain);
+    assert.equal(nueva.decryptAtRest(grpRow.keys_cipher), null, 'el material del grupo va atado a su gid');
     assert.equal(vieja.decryptAtRest(grpRow.keys_cipher), null);
 
     const vapidRow = db.prepare('SELECT value FROM meta WHERE key = ?').get('vapid');
-    assert.equal(nueva.decryptAtRest(vapidRow.value), secretos.vapidPlain);
+    assert.equal(nueva.decryptAtRest(vapidRow.value, aadMeta('vapid')), secretos.vapidPlain);
+    assert.equal(nueva.decryptAtRest(vapidRow.value), null, 'la clave VAPID va atada a su fila');
     assert.equal(vieja.decryptAtRest(vapidRow.value), null);
 
     const blobRow = blobDb.prepare('SELECT data FROM blobs WHERE hash = ?').get('h-1');
-    assert.equal(nueva.decryptAtRest(blobRow.data), secretos.blobPlain);
+    assert.equal(nueva.decryptAtRest(blobRow.data, aadBlob('h-1')), secretos.blobPlain);
+    assert.equal(nueva.decryptAtRest(blobRow.data), null, 'el adjunto va atado a su hash');
     assert.equal(vieja.decryptAtRest(blobRow.data), null);
 
     // Los campos con AAD propio también.
@@ -115,10 +123,10 @@ test('los valores EN CLARO heredados en columnas de maestra se recubren (subida 
     const nueva = createMessageCrypto(newKey);
     const grpRow = db.prepare('SELECT keys_cipher FROM groups WHERE id = ?').get('g-2');
     assert.equal(isMasterEnvelope(grpRow.keys_cipher), true, 'en claro heredado → ahora sobre');
-    assert.equal(nueva.decryptAtRest(grpRow.keys_cipher), '{"cryptoId":"c-2","keyboxes":[]}');
+    assert.equal(nueva.decryptAtRest(grpRow.keys_cipher, aadGroupKeys('g-2')), '{"cryptoId":"c-2","keyboxes":[]}');
     const blobRow = blobDb.prepare('SELECT data FROM blobs WHERE hash = ?').get('h-plain');
     assert.equal(isMasterEnvelope(blobRow.data), true);
-    assert.equal(nueva.decryptAtRest(blobRow.data), 'texto-en-claro-legacy');
+    assert.equal(nueva.decryptAtRest(blobRow.data, aadBlob('h-plain')), 'texto-en-claro-legacy');
     // El campo en claro también queda cifrado (con su AAD).
     const nombre = db.prepare('SELECT name FROM groups WHERE id = ?').get('g-3').name;
     assert.equal(isMasterEnvelope(nombre), true);

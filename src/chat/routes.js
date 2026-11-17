@@ -26,7 +26,8 @@ const { deleteMessageById, filterForViewer, getChatPage, invalidateChatPage, rea
 const { decorateForClient, decryptSummaryCached, healSummary, lastEntryFromMsg, onChatDeletedSummary, onMessageDeletedSummary, onMessageSentSummary, onReadSummary, readSummaryEntry, resolveName, writeSummaryEntry } = require('./summaries.js');
 const { applyChatPrefs, readChatPrefs, resolveTarget, unarchiveForIncoming } = require('./prefs.js');
 const { CONFIG } = require('../config.js');
-const { decryptAtRest, encryptAtRest } = require('../crypto/setup.js');
+const { decField, encField } = require('../crypto/field-crypto.js');
+const { ctxGroupSummary, ctxSummary } = require('../crypto/aad.js');
 const { db } = require('../db/database.js');
 const { Stmt } = require('../db/statements.js');
 const { pruneBlobHashes, tx } = require('../db/transactions.js');
@@ -41,7 +42,7 @@ const { MESSAGE_LIMITS, characterCount } = require('../shared/limits.js');
 const { normalizeContactData, normalizePollData, togglePollVote } = require('../shared/types.js');
 const { clampStr, localStickerHash, validMessageId, validMime, validStickerData } = require('../shared/validation.js');
 const { profiles, users } = require('../state.js');
-const { byName, isChatMuted, mutedChatPeers, pairKeyFromIds, wantsAlwaysPush } = require('../users/helpers.js');
+const { byName, isChatMuted, mutedChatPeers, pairKeyFromIds, resolveAccount, wantsAlwaysPush } = require('../users/helpers.js');
 const { accountsBlocked, isBlockedBy, permite, publicName } = require('../users/privacy.js');
 
 const REACTION_EMOJI_RE = /[\p{Extended_Pictographic}\p{Regional_Indicator}\u20e3]/u;
@@ -61,7 +62,9 @@ function withMessageReactions(messages, viewerId) {
         WHERE message_id IN (${placeholders}) ORDER BY updated_at ASC`).all(...ids);
     const grouped = new Map();
     for (const stored of rows) {
-        const row = { ...stored, emoji: decryptAtRest(stored.emoji) };
+        // M7: el emoji va atado a su columna (AAD); `decField` acepta además el
+        // valor heredado sin contexto.
+        const row = { ...stored, emoji: decField('message_reactions.emoji', stored.emoji) };
         if (typeof row.emoji !== 'string' || !isValidReactionEmoji(row.emoji)) {
             console.error(`[reactions] Reacción ilegible para el mensaje ${row.message_id}.`);
             continue;
@@ -89,7 +92,7 @@ function broadcastMessageReactions(row, group, reactions) {
     const unique = new Map(recipients.map(user => [user.id, user]));
     const userReactions = Stmt.listMessageReactions.all(row.id).map(item => ({
         ...item,
-        emoji: decryptAtRest(item.emoji)
+        emoji: decField('message_reactions.emoji', item.emoji)
     }));
     for (const user of unique.values()) {
         const personalized = reactions.map(reaction => ({
@@ -126,11 +129,13 @@ function postMessageReaction(req, res, url, data, actor) {
     } else return json(res, 404, { error: 'Mensaje no disponible.' });
 
     const previous = Stmt.getMessageReaction.get(row.id, req.authUser.id);
-    const previousEmoji = previous ? decryptAtRest(previous.emoji) : '';
+    /* M7: se guarda con el AAD de su columna (y se admite el valor heredado
+       sin contexto al comparar). */
+    const previousEmoji = previous ? decField('message_reactions.emoji', previous.emoji) : '';
     if (!data.emoji || (previousEmoji && previousEmoji === data.emoji))
         Stmt.deleteMessageReaction.run(row.id, req.authUser.id);
     else
-        Stmt.upsertMessageReaction.run(row.id, req.authUser.id, encryptAtRest(data.emoji), Date.now());
+        Stmt.upsertMessageReaction.run(row.id, req.authUser.id, encField('message_reactions.emoji', data.emoji), Date.now());
     const reactions = messageReactionsForViewer(row.id, req.authUser.id);
     broadcastMessageReactions(row, group, reactions);
     return json(res, 200, { ok: true, reactions });
@@ -180,19 +185,24 @@ function getChatsSummary(req, res, url, data, actor) {
     // se tolera tal cual).
     let last = null;
     try {
-    const raw = decryptSummaryCached(uuid, row.last_data);
+    const raw = decryptSummaryCached(uuid, row.last_data, ctxSummary(uuid, row.peer));
     last = raw ? JSON.parse(raw) : null;
     /* Copia cifrada que YA no se puede leer (quedó con la clave anterior a la
        corrección de la rotación): el resumen es una caché, se reconstruye
        desde el último mensaje. Solo en ese caso: un resumen vacío a propósito
        (mensaje borrado "para mí") se queda como está. */
-    if (!last && raw === null && String(row.last_data || '').startsWith('PCE3:'))
+    if (!last && raw === null && String(row.last_data || '').startsWith('PCE3'))
         last = healSummary(uuid, row.peer, row.unread);
     } catch { }
     const name = resolveName(row.peer);
-    const pref = prefs[name === actor ? 'saved' : 'dm:' + name] || {};
+    const visiblePeer = publicName(name, actor);
+    /* `last.from` se guarda canónico (el resumen pertenece a esta cuenta,
+       pero la privacidad del interlocutor puede cambiar): se aliasa al
+       serializar, no al escribir. */
+    if (last && typeof last.from === 'string') last = { ...last, from: publicName(last.from, actor) };
+    const pref = prefs[name === actor ? 'saved' : 'dm:' + visiblePeer] || {};
     chats.push({
-        peer: name, peerId: row.peer, unread: row.unread, last,
+        peer: visiblePeer, peerId: row.peer, unread: row.unread, last,
         pinned: pref.pinned === true, pinnedAt: pref.pinnedAt || 0, archived: pref.archived === true
     });
     }
@@ -203,10 +213,11 @@ function getChatsSummary(req, res, url, data, actor) {
         // lista hasta que un mensaje nuevo lo reabra.
         if (Stmt.chatDeletedFor.get('group:' + row.gid, uuid)) continue;
         let last = null;
-        const cifrado = String(row.last_data || '').startsWith('PCE3:');
+        const cifrado = String(row.last_data || '').startsWith('PCE3');
         if (cifrado) {
             try {
-                const raw = decryptSummaryCached(uuid, row.last_data);
+                // M1: la copia cifrada de cada grupo lleva su contexto.
+                const raw = decryptSummaryCached(uuid, row.last_data, ctxGroupSummary(uuid, row.gid));
                 last = raw ? JSON.parse(raw) : null;
                 // Misma regla que los DMs: solo se reconstruye lo ilegible.
                 if (!last && raw === null) {
@@ -311,18 +322,17 @@ function postPollVote(req, res, url, data, actor) {
     updateStoredMessage(message, row);
     if (row.chat.startsWith('chat:')) invalidateChatPage(row.chat.slice(5));
 
-    const decorated = decorateForClient(message);
     const recipients = group ? group.memberIds.map(id => users.get(id)).filter(Boolean)
         : row.chat.slice(5).split('__').map(id => users.get(id)).filter(Boolean);
     for (const recipient of recipients) push(recipient, {
-        type: 'poll-update', message: decorated, groupId: group ? group.id : null
+        type: 'poll-update', message: decorateForClient(message, recipient.username), groupId: group ? group.id : null
     });
-    return json(res, 200, { ok: true, message: decorated });
+    return json(res, 200, { ok: true, message: decorateForClient(message, actor) });
 }
 
 function postSend(req, res, url, data, actor) {
     const sender = req.authUser;
-    const recipient = byName(data.to);
+    const recipient = resolveAccount(data.to, sender);
     if (!recipient) return json(res, 404, { error: 'contact does not exist' });
     // Se trabaja con la cuenta resuelta y su nombre canónico: indexar perfiles
     // con el texto recibido ("Ana9") dejaría fuera el bloqueo y los permisos,
@@ -407,12 +417,12 @@ function postSend(req, res, url, data, actor) {
         kind: data.kind, name: data.kind === 'image' ? '' : clampStr(data.name, 180), mime: validMime(data.mime) ? data.mime.slice(0, 120) : '',
         caption: clampStr(data.caption, 2000), data: messageData, hash: messageHash, once: !!data.once,
         gallery,
-        reply: resolveReply(data.reply, 'chat:' + pairKeyFromIds(sender.id, recipient.id)),
+        reply: resolveReply(data.reply, 'chat:' + pairKeyFromIds(sender.id, recipient.id), sender),
         enc: typeof data.enc === 'string' && (data.enc === 'e2' || data.enc === 'g2') ? data.enc : '',
         status: 'sent', edited: false, ts: Date.now()
     };
     if (msg.kind === 'contact') {
-        const contact = normalizeContactData(msg.data, byName);
+        const contact = normalizeContactData(msg.data, name => resolveAccount(name, sender));
         if (!contact) return json(res, 400, { error: 'Contacto inválido.' });
         msg.data = JSON.stringify(contact);
     } else if (msg.kind === 'poll') {
@@ -447,9 +457,8 @@ function postSend(req, res, url, data, actor) {
         unarchiveForIncoming(recipient.username, recipient.id, 'dm:' + sender.username);
     invalidateChatPage(pk);
     onMessageSentSummary(msg);
-    const decorated = decorateForClient(msg);
-    push(sender, { type: 'message', message: decorated });
-    if (recipient.id !== sender.id) push(recipient, { type: 'message', message: decorated });
+    push(sender, { type: 'message', message: decorateForClient(msg, sender.username) });
+    if (recipient.id !== sender.id) push(recipient, { type: 'message', message: decorateForClient(msg, recipient.username) });
     // Push solo a quien no está conectado… salvo que la cuenta haya activado
     // «Push con la app conectada» (app abierta en otro dispositivo, navegador
     // que murió sin cerrar el socket, etc.).
@@ -462,9 +471,9 @@ function postSend(req, res, url, data, actor) {
             tag: 'msg-' + msg.id,
             renotify: true,
             icon: avatarPushUrl(sender.username),
-            url: '/?open=' + encodeURIComponent(sender.username)
+            url: '/?open=' + encodeURIComponent(publicName(sender.username, recipient.username))
         });
-    return json(res, 200, { ok: true, message: decorated });
+    return json(res, 200, { ok: true, message: decorateForClient(msg, sender.username) });
 }
 
 function postSeen(req, res, url, data, actor) {
@@ -733,12 +742,25 @@ function postMsgEdit(req, res, url, data, actor) {
  * `keepSummary` deja el chat en la lista (solo se ocultan los mensajes y la
  * conversación se reabre al escribir de nuevo). */
 function postChatDelete(req, res, url, data, actor) {
-    const peers = Array.isArray(data.peers)
-        ? data.peers.filter(item => typeof item === 'string' && item).slice(0, 200)
-        : (typeof data.to === 'string' ? [data.to] : []);
+    const clearBoth = data.clearBoth === true;
+    /* M9: vaciar un chat "para los dos" borra el historial de las DOS partes,
+       así que solo puede pedirse con UNA conversación y con el destino dado
+       de forma explícita (`to`). Con una lista de destinos, un cliente
+       manipulado (o un bug) vaciaba de golpe el historial de varias cuentas,
+       y con el destino implícito el vaciado podía caer sobre la conversación
+       equivocada. */
+    let peers;
+    if (clearBoth) {
+        peers = typeof data.to === 'string' && data.to.trim() ? [data.to.trim()] : [];
+        if (peers.length !== 1 || Array.isArray(data.peers))
+            return json(res, 400, { error: 'Para vaciar la conversación indica un solo destinatario.' });
+    } else {
+        peers = Array.isArray(data.peers)
+            ? data.peers.filter(item => typeof item === 'string' && item).slice(0, 200)
+            : (typeof data.to === 'string' ? [data.to] : []);
+    }
     if (!peers.length) return json(res, 404, { error: 'chat not found' });
     const keepSummary = data.keepSummary === true;
-    const clearBoth = data.clearBoth === true;
     const targets = [];
     // Los chats de grupo se aceptan como "group:<gid>" (BUG-013): ocultar el
     // grupo de la lista sin dejar de ser miembro. Vaciar "para los dos" no
@@ -751,14 +773,24 @@ function postChatDelete(req, res, url, data, actor) {
             groupTargets.push(g);
             continue;
         }
-        if (peer !== actor && !byName(peer)) return json(res, 404, { error: 'chat not found' });
-        const peerAcc = byName(peer);
-        const peerId = peer === actor ? req.authUser.id : (peerAcc ? peerAcc.id : null);
-        if (!peerId) return json(res, 404, { error: 'chat not found' });
-        targets.push({ peer, peerId, pk: pairKeyFromIds(req.authUser.id, peerId) });
+        const peerAcc = peer === actor ? req.authUser : resolveAccount(peer, req.authUser);
+        if (!peerAcc) return json(res, 404, { error: 'chat not found' });
+        targets.push({
+            peer: peerAcc.username,
+            displayPeer: publicName(peerAcc.username, actor),
+            peerId: peerAcc.id,
+            pk: pairKeyFromIds(req.authUser.id, peerAcc.id)
+        });
     }
     if (clearBoth) {
         if (groupTargets.length) return json(res, 400, { error: 'Vaciar un grupo no está disponible.' });
+        /* M9: si alguna de las dos partes tiene bloqueada a la otra, el vaciado
+           "para los dos" no procede: el aviso llegaría a una cuenta que ha
+           cortado la relación (y el bloqueo también puede venir del otro
+           lado, contra quien pide). */
+        const bloqueados = targets.filter(t => t.peerId !== req.authUser.id &&
+            (accountsBlocked(actor, t.peer) || accountsBlocked(t.peer, actor)));
+        if (bloqueados.length) return json(res, 403, { error: 'Hay un bloqueo entre las dos cuentas: no se puede vaciar la conversación.' });
         // Vaciar para los dos: se borran los mensajes del chat y se avisa a
         // ambas partes para que limpien su copia local.
         // UNA transacción para todos los chats: si algo falla a medias, antes
@@ -786,14 +818,25 @@ function postChatDelete(req, res, url, data, actor) {
             }
             return hechos;
         })();
-        for (const peer of cleared) {
-            const target = targets.find(t => t.peer === peer);
-            for (const account of [users.get(req.authUser.id), users.get(target.peerId)]) {
-                if (account) push(account, { type: 'chat-cleared', peer: peer === actor ? req.authUser.id : peer, clearedBy: actor });
+        for (const target of targets) {
+            const peerAccount = users.get(target.peerId);
+            /* Un solo aviso por cuenta: con el chat propio (peer === actor) las
+               dos cuentas son la misma, y el mismo destino repetido en la
+               lista la recibía dos veces (M9). */
+            const vistos = new Set();
+            for (const account of [req.authUser, peerAccount]) {
+                if (!account || vistos.has(account.id)) continue;
+                vistos.add(account.id);
+                const other = account.id === req.authUser.id ? target.peer : actor;
+                push(account, {
+                    type: 'chat-cleared',
+                    peer: publicName(other, account.username),
+                    clearedBy: publicName(actor, account.username)
+                });
             }
         }
         invalidateBlobQuota(req.authUser.id);
-        return json(res, 200, { ok: true, scope: 'both', cleared });
+        return json(res, 200, { ok: true, scope: 'both', cleared: targets.map(target => target.displayPeer) });
     }
     const now = Date.now();
     tx.deleteChats(req.authUser.id, targets.map(target => ({
@@ -819,30 +862,31 @@ function postChatDelete(req, res, url, data, actor) {
     for (const target of targets) {
         if (!keepSummary) onChatDeletedSummary(req.authUser.id, target.peerId);
         invalidateChatPage(target.pk);
-        if (me) push(me, { type: 'chatDelete', peer: target.peer });
+        if (me) push(me, { type: 'chatDelete', peer: target.displayPeer });
     }
     for (const g of groupTargets) {
         if (me) push(me, { type: 'chatDelete', peer: 'group:' + g.id });
     }
     return json(res, 200, { ok: true, scope: 'me', deleted: [
-        ...targets.map(target => target.peer),
+        ...targets.map(target => target.displayPeer),
         ...groupTargets.map(g => 'group:' + g.id)
     ] });
 }
 
 function postMessages(req, res, url, data, actor) {
     const peer = data.to;
-    if (typeof peer !== 'string' || (peer !== actor && !byName(peer))) return json(res, 404, { messages: [], more: false });
-    if (peer !== actor && accountsBlocked(actor, peer)) return json(res, 404, { messages: [], more: false });
-    const peerId = peer === actor ? req.authUser.id : byName(peer)?.id;
-    if (!peerId) return json(res, 404, { messages: [], more: false });
+    if (typeof peer !== 'string') return json(res, 404, { messages: [], more: false });
+    const peerAcc = peer === actor ? req.authUser : resolveAccount(peer, req.authUser);
+    if (!peerAcc) return json(res, 404, { messages: [], more: false });
+    if (peerAcc.id !== req.authUser.id && accountsBlocked(actor, peerAcc.username)) return json(res, 404, { messages: [], more: false });
+    const peerId = peerAcc.id;
     const pk = pairKeyFromIds(req.authUser.id, peerId);
     const limit = Math.min(200, Math.max(1, Number(data.limit) || 20));
     let page;
     if (typeof data.beforeId === 'string') page = readMessagePage('chat:' + pk, { beforeId: data.beforeId, limit });
     else page = getChatPage(pk, limit);
     const visible = filterForViewer(page.messages, req.authUser.id, 'chat:' + pk);
-    return json(res, 200, { messages: withMessageReactions(visible, req.authUser.id).map(decorateForClient), more: page.more });
+    return json(res, 200, { messages: withMessageReactions(visible, req.authUser.id).map(m => decorateForClient(m, actor)), more: page.more });
 }
 
 

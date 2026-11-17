@@ -85,8 +85,20 @@ function fmtCell(value) {
 
 /* ---------------- carga ---------------- */
 
+/* Token de la API (A4): el servidor lo imprime en el FRAGMENTO de la URL
+   (#token=…), que el navegador no envía al servidor. Se lee una vez y se
+   manda en cada petición por cabecera; después se limpia de la barra para
+   que no quede a la vista (capturas, compartir pestaña). */
+const VIEWER_TOKEN = (function () {
+    const fromHash = location.hash.match(/[#&]token=([^&]+)/);
+    const fromQuery = location.search.match(/[?&]token=([^&]+)/);
+    const raw = (fromHash || fromQuery || [])[1] || '';
+    if (fromHash) history.replaceState(null, '', location.pathname + location.search);
+    try { return decodeURIComponent(raw); } catch { return raw; }
+})();
+
 async function api(path) {
-    const res = await fetch(path);
+    const res = await fetch(path, { headers: { 'X-Viewer-Token': VIEWER_TOKEN } });
     if (!res.ok) {
         let error = res.statusText;
         try { error = (await res.json()).error || error; } catch { /* no era JSON */ }

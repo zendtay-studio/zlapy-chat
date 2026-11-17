@@ -9,10 +9,10 @@
  * claro incluso habiendo clave disponible.
  *
  * La clave publica del servidor se pide una vez a `/config` y se guarda en
- * memoria. Si el servidor no la ofrece, la peticion sale sin cifrar en vez de
- * fallar: el cifrado es una capa adicional, no un requisito. Cuando eso pasa se
- * avisa una vez por sesion (`ZlapyTransportWarning`) para que la degradacion no
- * sea silenciosa. */
+ * memoria. Si el servidor NO ofrece clave de transporte, la peticion sale sin
+ * cifrar (es una instalacion sin esa capa) pero con un aviso persistente en
+ * pantalla. Si la clave existe y el cifrado o la entropia fallan, la peticion
+ * se ABORTA: nunca se degrada a claro en silencio. */
 'use strict';
 
 (function (global) {
@@ -29,10 +29,9 @@
     let noKeyOnServer = false;
 
     /* Clave pública del servidor, cacheada. Si /config responde sin clave, la
-       situación es estable y no se vuelve a preguntar. Pero si la petición
-       falla (corta de red, no ok), solo se pierde ESTA petición: el caché se
-       limpia para que el siguiente intento reitere en vez de degradar el canal
-       durante toda la sesión. */
+       situación es estable y no se vuelve a preguntar. Un fallo de red NO se
+       cachea: la promesa se rechaza para que esta petición se aborte y la
+       siguiente pueda reintentar. */
     function loadServerKey() {
         if (serverKey) return Promise.resolve(serverKey);
         if (noKeyOnServer) return Promise.resolve(null);
@@ -47,21 +46,44 @@
                     else noKeyOnServer = true;
                     return serverKey;
                 })
-                .catch(() => null)
                 .finally(() => { keyRequest = null; });
         }
         return keyRequest;
     }
 
-    /* Aviso de degradación: una sola vez por sesión. */
+    /* Aviso de degradación: visible y persistente. La barra se crea aquí para
+       que también exista en páginas que no traen su propio manejador (por
+       ejemplo, el creador de stickers). */
     let avisado = false;
+    function showInsecureBanner() {
+        if (typeof document === 'undefined') return;
+        const paint = () => {
+            if (!document.body || document.getElementById('tlsWarn')) return;
+            const bar = document.createElement('div');
+            bar.id = 'tlsWarn';
+            bar.setAttribute('role', 'status');
+            bar.textContent = 'Conexión sin cifrar de transporte: usa HTTPS para proteger tus mensajes en tránsito.';
+            bar.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:9999;padding:8px 12px;' +
+                'background:#b3261e;color:#fff;font:500 13px/1.4 system-ui,sans-serif;text-align:center';
+            document.body.appendChild(bar);
+        };
+        if (document.body) paint();
+        else document.addEventListener('DOMContentLoaded', paint, { once: true });
+    }
     function transportWarning() {
         if (avisado) return;
         avisado = true;
         try { global.dispatchEvent(new CustomEvent('zlapy-transport-insecure')); } catch (e) { }
+        showInsecureBanner();
         console.warn('[transporte] El servidor no ofreció clave de cifrado: las peticiones salen sin cifrar.');
     }
     global.ZlapyTransportWarning = transportWarning;
+
+    /* Error de canal: se lanza en vez de enviar contenido privado en claro
+       cuando la clave ya existía pero el sobre no se pudo construir. */
+    function transportFailure() {
+        return new Error('No se pudo cifrar la petición: se canceló para no enviarla en claro.');
+    }
 
     /* Envoltura de XMLHttpRequest: el mismo sobre que en `fetch`. La subida de
        adjuntos y de historias pasa por aquí, así que sin esto esos cuerpos
@@ -87,10 +109,16 @@
             if (absolute.origin !== global.location.origin) return nativeSend.call(this, body);
             return loadServerKey().then(k => {
                 // loadServerKey devuelve una promesa: el valor real llega aquí.
-                if (!k) { transportWarning(); return nativeSend.call(this, body); }
+                if (!k) {
+                    // Sin clave ofrecida por el servidor: claro + aviso.
+                    if (noKeyOnServer) { transportWarning(); return nativeSend.call(this, body); }
+                    // Falló la consulta de la clave: no se degrada a claro.
+                    try { this.abort(); } catch { }
+                    return;
+                }
                 let envelope;
                 try { envelope = T.encrypt(zt.method, absolute.pathname, body, k); }
-                catch { transportWarning(); return nativeSend.call(this, body); }
+                catch { try { this.abort(); } catch { } return; }
                 for (const name of ['Content-Type', 'X-Zlapy-Enc', 'X-Zlapy-Ephemeral', 'X-Zlapy-Nonce', 'X-Zlapy-Time'])
                     nativeSetHeader.call(this, name, envelope.headers[name]);
                 zt.envelope = envelope;
@@ -98,6 +126,9 @@
                    poder abrirla después. */
                 try { this.responseType = 'arraybuffer'; } catch { }
                 nativeSend.call(this, envelope.body);
+            }).catch(() => {
+                // Red caída al pedir la clave: misma política de fallo cerrado.
+                try { this.abort(); } catch { }
             });
         };
     }
@@ -163,11 +194,16 @@
         if (!String(headers.get('Content-Type')).includes(JSON_TYPE)) return nativeFetch(input, init);
 
         const key = await loadServerKey();
-        if (!key) { transportWarning(); return nativeFetch(input, init); }
+        if (!key) {
+            if (noKeyOnServer) { transportWarning(); return nativeFetch(input, init); }
+            // No se sabe si el servidor tiene clave (fallo de /config): se
+            // aborta en vez de arriesgar un envío en claro.
+            throw transportFailure();
+        }
 
         let envelope;
         try { envelope = T.encrypt(method, url.pathname, options.body, key); }
-        catch { transportWarning(); return nativeFetch(input, init); }
+        catch { throw transportFailure(); }
 
         headers.set('Content-Type', envelope.headers['Content-Type']);
         headers.set('X-Zlapy-Enc', envelope.headers['X-Zlapy-Enc']);
@@ -184,8 +220,10 @@
     // WebSocket cifrado
     /* Se envuelve el constructor para que cada conexión abra su propia sesión.
      * El primer frame es el saludo (clave pública efímera, en claro); desde
-     * ahí todos los frames llevan el prefijo `z1:`. Si la clave del servidor
-     * no está disponible, la conexión sigue en claro en vez de romperse. */
+     * ahí todos los frames llevan el prefijo `z1:`. Si el servidor no ofrece
+     * clave de transporte se sigue en claro (con aviso persistente); si la
+     * clave existía y el cifrado falla, la conexión se CIERRA en vez de
+     * degradar el canal en silencio. */
     const NativeWebSocket = global.WebSocket;
     if (NativeWebSocket) {
         class SecureWebSocket extends NativeWebSocket {
@@ -196,20 +234,23 @@
             }
 
             async _ztStart() {
-                const key = await loadServerKey();
+                let key;
+                try { key = await loadServerKey(); }
+                catch { try { this.close(); } catch { } return; }
                 if (!key) {
-                    // Sin clave se vacía la cola en claro: la app sigue igual,
-                    // pero se avisa de que el canal va sin cifrar. Se marca la
-                    // conexión como insegura para que los mensajes que lleguen
-                    // después no se queden en la cola esperando una clave que
-                    // no va a venir (y acaban silenciosamente tirados).
+                    // Solo se habla en claro cuando /config respondió SIN
+                    // clave. Un fallo al consultarla se trata como error de
+                    // canal: cerrar es preferible a exponer los frames.
+                    if (!noKeyOnServer) { try { this.close(); } catch { } return; }
                     this._zt.insecure = true;
                     transportWarning();
                     for (const text of this._zt.queue.splice(0)) super.send(text);
                     return;
                 }
                 if (this.readyState !== NativeWebSocket.OPEN) { this._zt.queue.length = 0; return; }
-                const session = T.wsKey(T.randomBytes(32), T.fromBase64(key));
+                let session;
+                try { session = T.wsKey(T.randomBytes(32), T.fromBase64(key)); }
+                catch { try { this.close(); } catch { } return; }
                 this._zt.key = session.key;
                 super.send(JSON.stringify({ type: 'enc', ephemeral: T.toBase64(session.ephemeralRaw) }));
                 for (const text of this._zt.queue.splice(0)) this.send(text);

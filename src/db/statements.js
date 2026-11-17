@@ -42,7 +42,7 @@ const Stmt = {
 
     // Claves del dispositivo (cifradas en reposo)
     getKey: db.prepare('SELECT key_cipher FROM user_keys WHERE user_id = ?'),
-    // Clave de cifrado de contenido por usuario (auth_key, AES-256-GCM)
+    // Clave de cifrado de contenido por usuario (auth_key, PCE3 MTProto 2.0)
     getAuthKey: db.prepare('SELECT auth_key, key_id FROM user_auth_keys WHERE user_id = ?'),
     insertAuthKey: db.prepare('INSERT INTO user_auth_keys (user_id, auth_key, key_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)'),
     replaceAuthKey: db.prepare('UPDATE user_auth_keys SET auth_key = ?, key_id = ?, updated_at = ? WHERE user_id = ?'),
@@ -269,6 +269,24 @@ const Stmt = {
         UNION SELECT hash FROM public_stickers WHERE user_id = ?
         UNION SELECT avatar_ref FROM user_profiles WHERE user_id = ? AND avatar_ref <> ''
         UNION SELECT wallpaper_ref FROM user_chat_settings WHERE user_id = ? AND wallpaper_ref <> ''`),
+    /* Procedencia ajena de un blob (A3): publicar como sticker un archivo que
+       llegó de otra cuenta, o que es su avatar/fondo, lo expondría a todo el
+       mundo. Devuelve 1 si CUALQUIER referencia ajena existe. Los mensajes
+       propios y las subidas propias no cuentan. */
+    blobForeignProvenance: db.prepare(`SELECT (
+        EXISTS (SELECT 1 FROM blob_access ba JOIN messages m ON m.id = ba.message_id
+            WHERE ba.hash = ? AND ba.kind IN ('chat','group') AND m.from_id <> ?)
+        OR EXISTS (SELECT 1 FROM blob_access
+            WHERE hash = ? AND kind = 'story' AND story_user <> ?)
+        OR EXISTS (SELECT 1 FROM public_stickers
+            WHERE hash = ? AND user_id <> ?)
+        OR EXISTS (SELECT 1 FROM user_profiles
+            WHERE avatar_ref = ? AND avatar_ref <> '' AND user_id <> ?)
+        OR EXISTS (SELECT 1 FROM user_chat_settings
+            WHERE wallpaper_ref = ? AND wallpaper_ref <> '' AND user_id <> ?)
+        OR EXISTS (SELECT 1 FROM groups
+            WHERE avatar_ref = ? AND avatar_ref <> '')
+    ) AS is_foreign`),
     allBlobHashes: blobDb.prepare('SELECT hash FROM blobs'),
     /* Referencias de TODOS los blobs: los adjuntos y también las imágenes de
        perfil, fondo y avatar de grupo (que no pasan por blob_access). */
@@ -282,6 +300,10 @@ const Stmt = {
         UNION SELECT value FROM meta WHERE key = 'media_fallback_hash'`),
     blobSize: blobDb.prepare('SELECT LENGTH(data) AS bytes FROM blobs WHERE hash = ?'),
     blobBytesGlobal: blobDb.prepare('SELECT COALESCE(SUM(LENGTH(data)), 0) AS bytes FROM blobs'),
+    /* Historias con el medio INLINE (sin hash): su data-URL cifrada ocupa
+       disco pero no tiene blob, así que no aparece en las sumas de blobs.
+       Cuenta a efectos de cuota de la cuenta autora (A5). */
+    storyInlineBytes: db.prepare('SELECT COALESCE(SUM(LENGTH(data)), 0) AS bytes FROM stories WHERE from_id = ? AND hash IS NULL'),
     deleteBlobByHash: blobDb.prepare('DELETE FROM blobs WHERE hash = ?'),
 
     hasBlob: blobDb.prepare('SELECT 1 FROM blobs WHERE hash = ? LIMIT 1'),
@@ -350,6 +372,19 @@ const Stmt = {
     deleteContactRequest: db.prepare('DELETE FROM contact_requests WHERE from_id = ? AND to_id = ?'),
     listContactRequestsTo: db.prepare('SELECT from_id, ts FROM contact_requests WHERE to_id = ?'),
     listContactRequestsFrom: db.prepare('SELECT to_id, ts FROM contact_requests WHERE from_id = ?'),
+    /* Relación autorizada para resolver el alias opaco (UUID) de una cuenta:
+       solicitud pendiente en cualquier dirección o grupo en común. Se consulta
+       aquí, en SQL, para no arrastrar el módulo de grupos a users/helpers. */
+    contactRequestBetween: db.prepare(`SELECT 1 FROM contact_requests
+        WHERE (from_id = ? AND to_id = ?) OR (from_id = ? AND to_id = ?) LIMIT 1`),
+    sharedGroupBetween: db.prepare(`SELECT 1 FROM group_members a
+        JOIN group_members b ON b.gid = a.gid
+        WHERE a.user_id = ? AND b.user_id = ? LIMIT 1`),
+    /* El alias también se publica en las solicitudes de ingreso que ve un
+       admin del grupo: ese admin debe poder aprobar por alias. */
+    groupJoinRequestForAdmin: db.prepare(`SELECT 1 FROM group_join_requests jr
+        JOIN group_members gm ON gm.gid = jr.gid
+        WHERE jr.user_id = ? AND gm.user_id = ? AND gm.role = 'admin' LIMIT 1`),
 
     // Blocked
     insertBlocked: db.prepare('INSERT OR IGNORE INTO blocked (owner, target) VALUES (?, ?)'),

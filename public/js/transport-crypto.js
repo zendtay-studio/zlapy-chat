@@ -298,8 +298,14 @@
     const dec = new TextDecoder();
 
     function randomBytes(n) {
+        /* Sin CSPRNG no hay forma segura de generar la efímera ni el nonce:
+           se lanza para que transport.js aborte la petición en vez de firmar
+           con bytes predecibles. */
+        const source = global.crypto;
+        if (!source || typeof source.getRandomValues !== 'function')
+            throw new Error('CSPRNG no disponible');
         const out = new Uint8Array(n);
-        global.crypto.getRandomValues(out);
+        source.getRandomValues(out);
         return out;
     }
 

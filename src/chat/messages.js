@@ -1,8 +1,8 @@
 /**
  * Mensajes.
  *
- * Un mensaje se guarda cifrado con la auth_key de su autor (AES-256-GCM
- * con el contexto del mensaje autenticado, ver src/crypto/mtproto.js):
+ * Un mensaje se guarda cifrado con la auth_key de su autor (PCE3, MTProto
+ * 2.0, con el contexto del mensaje autenticado, ver src/crypto/mtproto.js):
  * el servidor conoce la clave y con ella sincroniza el historial entre
  * dispositivos. La auth_key va guardada cifrada con la llave maestra, asi que
  * la maestra ES la raiz de confianza: el modelo "por usuario" solo protege
@@ -19,7 +19,9 @@ const { authKeyRecord, decryptAtRest, ensureAuthKey, messageContextBytes, messag
 const { Stmt } = require('../db/statements.js');
 const { decryptLegacyMessageFields } = require('../shared/message-data.js');
 const { clampStr } = require('../shared/validation.js');
-const { CHAT_PAGE_MAX, CHAT_PAGE_TTL, chatPageCache } = require('../state.js');
+const { byName, freshNote, resolveAccount } = require('../users/helpers.js');
+const { permite } = require('../users/privacy.js');
+const { CHAT_PAGE_MAX, CHAT_PAGE_TTL, chatPageCache, profiles, stories, users } = require('../state.js');
 
 // Mensajes — helpers SQL
 function messageBody(message) {
@@ -49,8 +51,9 @@ function prepareStoredMessage(message, chat, cryptoGroupId = null) {
     message.signingPublicKey = signature.signingPublicKey;
     message.cryptoGroupId = row.crypto_group_id || '';
     message.signatureValid = true;
-    // Cifrado del contenido: AES-256-GCM con la auth_key del autor y el
-    // contexto del mensaje (chat, autor, tipo, marca) como dato autenticado,
+    // Cifrado del contenido: PCE3 (MTProto 2.0, AES-256-IGE) con la
+    // auth_key del autor y el contexto del mensaje (chat, autor, tipo,
+    // marca) como dato autenticado,
     // para que una fila movida de chat no siga siendo valida.
     const body = JSON.stringify(messageBody(message));
     const encrypted = mtproto.encrypt(rec.key, body, messageContextBytes(row));
@@ -74,7 +77,7 @@ function updateStoredMessage(message, row) {
 
 function rowToMessage(row) {
     if (!row) return null;
-    // Un solo formato: PCE3 (AES-256-GCM con la auth_key del autor, AAD que
+    // Un solo formato: PCE3 (MTProto 2.0 con la auth_key del autor, AAD que
     // ata el contexto). Las bases que no hablan PCE3 no son compatibles: el
     // arranque exige un esquema nuevo (tests + guards en database.js).
     if (!(typeof row.data === 'string' && row.data.startsWith('PCE3:')) || row.crypto_version !== 3) {
@@ -135,17 +138,51 @@ const findMessageRow = id => Stmt.getMessage.get(id);
  * original, así que si ese mensaje se edita o se borra la vista previa se
  * actualiza o desaparece en lugar de quedarse congelada. */
 const REPLY_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
-function resolveReply(input, chatKey) {
+const NOTE_PREVIEW_MAX = 140;
+const STORY_PREVIEW_MAX = 140;
+
+/* Cita de HISTORIA (M8): ni la historia existe ni la puede ver cualquiera.
+   El cliente manda `{kind:'story', from, storyTs, preview}` y ANTES se
+   guardaba tal cual: con un `from` ajeno y un `preview` falsificado, la cita
+   atribuía a otra cuenta un texto que no escribió (y servía de aviso en la
+   conversación del receptor). Ahora se resuelve contra la historia VIVA, se
+   comprueba que el emisor puede verla y el texto sale del servidor. */
+function resolveStoryReply(input, viewer) {
+    if (!Number.isSafeInteger(input.storyTs) || input.storyTs <= 0) return null;
+    if (typeof input.from !== 'string') return null;
+    // El cliente puede dirigirse al autor por su alias opaco: solo resuelve
+    // con relación autorizada, igual que el resto de rutas.
+    const author = resolveAccount(input.from, viewer);
+    if (!author) return null;
+    const now = Date.now();
+    const story = stories.find(s => s.ts === input.storyTs && s.from === author.username && now - s.ts < CONFIG.storyTtlMs);
+    if (!story) return null;
+    if (!permite(profiles[story.from], 'historias', viewer.username)) return null;
+    return {
+        kind: 'story', storyTs: story.ts, from: story.from, id: '',
+        preview: clampStr(story.text || '', STORY_PREVIEW_MAX)
+    };
+}
+
+/* Cita de NOTA de estado (M8): la nota no es un mensaje, así que no tiene id.
+   Antes se guardaba el texto que enviaba el cliente: cualquiera podía citar la
+   nota de otra cuenta con un texto inventado. Ahora se exige que la nota
+   exista y siga viva, y su texto sale del servidor. */
+function resolveNoteReply(input) {
+    if (typeof input.from !== 'string' || !input.from) return null;
+    const author = byName(input.from) || users.get(input.from);
+    if (!author) return null;
+    const text = freshNote(author.username);
+    if (!text) return null;
+    return { kind: 'note', from: author.username, id: '', text: clampStr(text, NOTE_PREVIEW_MAX), preview: clampStr(text, NOTE_PREVIEW_MAX) };
+}
+
+function resolveReply(input, chatKey, viewer) {
     if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
-    // Las citas de historia se validan aparte (el cliente comprueba que la
-    // historia existe; aquí solo se acota el formato).
-    if (input.kind === 'story' && Number.isSafeInteger(input.storyTs) && input.storyTs > 0 && typeof input.from === 'string')
-        return { kind: 'story', storyTs: input.storyTs, from: clampStr(input.from, 64), id: '', preview: clampStr(input.preview || '', 120) };
-    // Las notas de estado (el texto de 24 h del perfil) no son mensajes, asi
-    // que no tienen id: se cita el texto que envio el cliente, firmado por el
-    // emisor. Sin este caso la cita se descartaba y el mensaje salia normal.
-    if (input.kind === 'note' && typeof input.from === 'string' && input.from)
-        return { kind: 'note', from: clampStr(input.from, 64), text: clampStr(input.text || '', 140), id: '', preview: clampStr(input.text || '', 140) };
+    // Las citas de historia y de nota se validan contra el estado vivo del
+    // servidor (M8): ni existen ni se ven "porque sí".
+    if (input.kind === 'story') return viewer ? resolveStoryReply(input, viewer) : null;
+    if (input.kind === 'note') return resolveNoteReply(input);
     const id = typeof input.id === 'string' ? input.id : '';
     if (!REPLY_ID_RE.test(id)) return null;
     const row = Stmt.getMessage.get(id);

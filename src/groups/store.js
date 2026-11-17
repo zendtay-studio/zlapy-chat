@@ -13,6 +13,7 @@ const { rowToMessage } = require('../chat/messages.js');
 const { decorateForClient, resolveName } = require('../chat/summaries.js');
 const { decryptAtRest, encryptAtRest, encryptForUser } = require('../crypto/setup.js');
 const { decField, decFieldOrNull, encField } = require('../crypto/field-crypto.js');
+const { aadGroupKeys, ctxGroupSummary } = require('../crypto/aad.js');
 const { Stmt, deleteGroupSummary } = require('../db/statements.js');
 const { db } = require('../db/database.js');
 const { pruneBlobHashes } = require('../db/transactions.js');
@@ -90,7 +91,7 @@ function readGroup(gid) {
     if (groupNegCache.get(gid) !== undefined) return null;
     const row = Stmt.getGroup.get(gid);
     if (!row) { groupNegMiss(gid, ahora); return null; }
-    const keys = decryptGroupKeys(row.keys_cipher);
+    const keys = decryptGroupKeys(row.keys_cipher, gid);
     const inviteCode = decFieldOrNull('groups.invite_code', row.invite_code);
     const g = normalizeGroup({
         id: row.id,
@@ -148,10 +149,17 @@ function resolveGroup(identifier) {
 }
 
 /* El material de cifrado extremo a extremo (cryptoId + keyboxes) viaja en una
-   sola columna cifrada: no es «el grupo entero», solo las claves. */
-function decryptGroupKeys(cipher) {
+   sola columna cifrada: no es «el grupo entero», solo las claves.
+
+   M7: el sobre va ATADO a su grupo (AAD con el gid). Antes, cualquier
+   `keys_cipher` de la tabla valía en cualquier otra fila: copiar el de un
+   grupo sobre el de otro dejaba a los miembros del segundo leyendo el canal
+   del primero. Los valores heredados (sin AAD) se siguen leyendo y se re-atan
+   en la siguiente escritura. */
+function decryptGroupKeys(cipher, gid = '') {
     if (!cipher) return {};
-    const plain = decryptAtRest(cipher);
+    let plain = gid ? decryptAtRest(cipher, aadGroupKeys(gid)) : null;
+    if (typeof plain !== 'string') plain = decryptAtRest(cipher);
     if (!plain) return {};
     const value = parseJsonSafe(plain, null);
     return value && typeof value === 'object' ? value : {};
@@ -162,12 +170,19 @@ function writeGroupMeta(g) {
     const keysCipher = encryptAtRest(JSON.stringify({
         cryptoId: normalized.cryptoId,
         keyboxes: Array.isArray(normalized.keyboxes) ? normalized.keyboxes : []
-    }));
+    }), aadGroupKeys(normalized.id));
     const ownerId = users.has(normalized.ownerId) ? normalized.ownerId : null;
     /* El avatar del grupo va al almacén de blobs (cifrado en reposo); en la
-       fila solo queda su hash. */
+       fila solo queda su hash. La cuota se cobra AL DUEÑO del grupo (M13):
+       sin usuario, un admin podía subir avatares de grupo sin límite
+       saltándose la cuota por cuenta. Si el grupo no tiene dueño, se cobra
+       el primer administrador; si tampoco, se conserva la imagen anterior. */
     const prevRow = Stmt.getGroup.get(normalized.id);
-    const avatarRef = storeImage(typeof normalized.avatar === 'string' ? normalized.avatar : '')
+    const quotaOwner = ownerId
+        || (normalized.members || []).map(name => byName(name)?.id).find(id => id && users.has(id))
+        || '';
+    const avatarRef = storeImage(typeof normalized.avatar === 'string' ? normalized.avatar : '',
+        { userId: quotaOwner || undefined })
         || (prevRow ? prevRow.avatar_ref : '');
     /* La ID personalizada se PRESERVA si el payload no la trae (los
        editores que no la tocan no deben borrarla); `customIdSet` marca
@@ -324,6 +339,15 @@ function groupMessageForViewer(message, viewer) {
     if (out.reply && out.reply.from) out.reply = { ...out.reply, from: publicName(out.reply.from, viewer) };
     if (Array.isArray(out.mentionUsers))
         out.mentionUsers = out.mentionUsers.map(u => (u && u.username ? { ...u, username: publicName(u.username, viewer) } : u));
+    if (out.kind === 'contact' && typeof out.data === 'string' && out.data) {
+        try {
+            const card = JSON.parse(out.data);
+            if (card && typeof card.username === 'string') {
+                card.username = publicName(card.username, viewer);
+                out.data = JSON.stringify(card);
+            }
+        } catch { }
+    }
     return out;
 }
 
@@ -343,11 +367,16 @@ function readGroupSummary(owner, gid) {
     const row = Stmt.getGroupSummary.get(owner, gid);
     if (!row) return null;
     let last = null;
-    try { const raw = require('../chat/summaries.js').decryptSummaryCached(owner, row.last_data); last = raw ? JSON.parse(raw) : null; } catch { }
+    try {
+        // M1: la copia cifrada va atada a este grupo y a este miembro.
+        const raw = require('../chat/summaries.js').decryptSummaryCached(owner, row.last_data, ctxGroupSummary(owner, gid));
+        last = raw ? JSON.parse(raw) : null;
+    } catch { }
     return { gid, unread: row.unread, last };
 }
 function writeGroupSummary(owner, gid, entry) {
-    Stmt.upsertGroupSummary.run(owner, gid, entry.unread || 0, encryptForUser(owner, JSON.stringify(entry.last || null)));
+    Stmt.upsertGroupSummary.run(owner, gid, entry.unread || 0,
+        encryptForUser(owner, JSON.stringify(entry.last || null), ctxGroupSummary(owner, gid)));
 }
 
 /* Igual que los DMs: si la copia cifrada del resumen quedó ilegible, se
@@ -388,8 +417,10 @@ function updateGroupMessageSummaries(group, msg, senderId) {
             // se compone con el alias que corresponde a cada visor.
             const lastData = JSON.stringify(groupLastEntry(lastMessage, uuid));
             // Cifrado con la clave de cada miembro, como writeGroupSummary: el
-            // resumen llevaba el preview del último mensaje en claro.
-            Stmt.bumpGroupSummary.run(uuid, group.id, uuid === senderId ? 0 : 1, encryptForUser(uuid, lastData));
+            // resumen llevaba el preview del último mensaje en claro. M1: con
+            // el contexto de este grupo para este miembro.
+            Stmt.bumpGroupSummary.run(uuid, group.id, uuid === senderId ? 0 : 1,
+                encryptForUser(uuid, lastData, ctxGroupSummary(uuid, group.id)));
         }
         // Un mensaje nuevo vuelve a abrir el grupo ocultado manualmente para la
         // lista (BUG-013), igual que en los DMs con chat_deletions.
