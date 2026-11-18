@@ -108,6 +108,34 @@ test('la migración re-cifra auth_keys, grupos, meta (VAPID), campos y adjuntos'
     db.close(); blobDb.close();
 });
 
+test('una reacción cifrada antes de atar su columna también migra (sin AAD heredado)', t => {
+    const oldKey = crypto.randomBytes(32);
+    const { dbPath, blobPath, db, blobDb } = maqueta(t);
+    const vieja = createMessageCrypto(oldKey);
+    /* Así se escribían las reacciones antes de M7: sobre PCE1v2 SIN el AAD
+       `field:message_reactions.emoji`. Es legible con la llave actual, pero
+       no con ese contexto. La migración tiene que probar las dos lecturas. */
+    const reaccionHeredada = vieja.encryptAtRest('❤️');
+    assert.equal(vieja.decryptAtRest(reaccionHeredada), '❤️');
+    assert.equal(vieja.decryptAtRest(reaccionHeredada, aadOf('message_reactions.emoji')), null,
+        'precisamente el caso que abortaba `owner -- credential`');
+    db.pragma('foreign_keys = OFF');
+    db.prepare('INSERT INTO message_reactions (message_id, user_id, emoji, updated_at) VALUES (?, ?, ?, ?)')
+        .run('m-legacy', 'u-legacy', reaccionHeredada, 1);
+
+    const newKey = crypto.randomBytes(32);
+    rotateMasterKey({ dbPath, blobPath, oldKey, newKey, cryptoFactory: createMessageCrypto });
+
+    const nueva = createMessageCrypto(newKey);
+    const emoji = db.prepare('SELECT emoji FROM message_reactions WHERE message_id = ? AND user_id = ?')
+        .get('m-legacy', 'u-legacy').emoji;
+    assert.equal(nueva.decryptAtRest(emoji, aadOf('message_reactions.emoji')), '❤️',
+        'tras migrar se lee con la llave nueva y el AAD actual');
+    assert.equal(vieja.decryptAtRest(emoji, aadOf('message_reactions.emoji')), null,
+        'la llave vieja ya no lo abre');
+    db.close(); blobDb.close();
+});
+
 test('los valores EN CLARO heredados en columnas de maestra se recubren (subida de seguridad)', t => {
     const oldKey = crypto.randomBytes(32);
     const { dbPath, blobPath, db, blobDb } = maqueta(t);

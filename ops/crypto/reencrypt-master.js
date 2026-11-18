@@ -200,7 +200,12 @@ function collectPlan({ dbPath, blobPath, oldCrypto, newCrypto }) {
                     if (typeof stored !== 'string' || stored === '') continue;
                     const aad = aadOf(`${table}.${column}`);
                     const esSobre = isMasterEnvelope(stored);   // PCE1v2 y PCE1 heredado
-                    const plain = esSobre ? oldCrypto.decryptAtRest(stored, aad) : stored;
+                    /* Igual que en auth_keys, grupos, meta y blobs: primero se
+                       prueba con el AAD actual y, si no abre, SIN contexto.
+                       Los campos escritos antes de M7 (p. ej. una reacción)
+                       siguen siendo de ESTA llave: abortar la migración ahí
+                       confundía formato heredado con credencial equivocada. */
+                    const plain = plainOfCtx(stored, aad);
                     if (esSobre && typeof plain !== 'string')
                         throw new Error(`El campo ${table}.${column} (fila ${row.rowid}) no se descifra con la credencial actual.`);
                     plan.fields.push({ table, rowid: row.rowid, column, plain });
