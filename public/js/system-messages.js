@@ -7,7 +7,8 @@
  * `window.ZlapySystemLabels`.
  *
  * Reglas (estilo WhatsApp):
- *   - separador: «Hoy», «Ayer», «Antier» o la fecha real, comparando el día
+ *   - separador: «Hoy», «Ayer», «Antier», el DÍA DE LA SEMANA en los seis
+ *     días siguientes (miércoles, jueves…) o la fecha real, comparando el día
  *     NATURAL LOCAL de cada mensaje con el del anterior;
  *   - siempre con la zona horaria del usuario (el `Date` del navegador ya
  *     corre en ella: nada que configurar).
@@ -36,6 +37,13 @@ function systemDayLabel(ts, ahora = new Date()) {
     if (atras === 0) return 'Hoy';
     if (atras === 1) return 'Ayer';
     if (atras === 2) return 'Antier';
+    /* Última semana: el DÍA DE LA SEMANA (miércoles, jueves…). Más allá de
+       seis días el nombre se repetiría con semanas anteriores, así que ahí ya
+       manda la fecha. */
+    if (atras <= 6) {
+        const nombre = dia.toLocaleDateString([], { weekday: 'long' });
+        return nombre ? nombre[0].toLocaleUpperCase() + nombre.slice(1) : nombre;
+    }
     const opciones = { day: 'numeric', month: 'long' };
     if (dia.getFullYear() !== ahora.getFullYear()) opciones.year = 'numeric';
     return dia.toLocaleDateString([], opciones);

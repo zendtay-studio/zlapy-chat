@@ -29,6 +29,7 @@ const { createUserAuthKeys, AuthKeyUnreadableError } = require('../../src/crypto
 const { createMessageCrypto } = require('../../src/crypto/message-crypto.js');
 const { watchCredentialFile } = require('../../src/crypto/master-key.js');
 const { auditMasterKey, rotateMasterKey, serverIsRunning } = require('../../ops/crypto/reencrypt-master.js');
+const { resolvePidFile } = require('../../ops/runtime/server-gate.js');
 
 const ROOT = path.join(__dirname, '..', '..');
 
@@ -209,6 +210,16 @@ test('un fichero de PID obsoleto NO bloquea la rotación', t => {
     // PID improbable (por encima del máximo habitual) → no existe.
     fs.writeFileSync(pidFile, '4194303');
     assert.equal(serverIsRunning({ pidFile }).vivo, false);
+});
+
+test('el fichero de PID se deriva de la BASE, no del repo de la suite', t => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'guardas-pid-ruta-'));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    /* data/zlapy.db → la raíz es `dir`: una instalación de pruebas no debe
+       mirar el PID del servidor de producción que viva en el repo. */
+    assert.equal(resolvePidFile({ dbPath: path.join(dir, 'data', 'zlapy.db') }),
+        path.join(dir, '.zlapy.pid'));
+    assert.match(resolvePidFile(), /\.zlapy\.pid$/, 'sin dbPath sigue siendo la instalación del repo');
 });
 
 test('el vigilante del .env avisa cuando la credencial cambia con el servidor vivo', t => {

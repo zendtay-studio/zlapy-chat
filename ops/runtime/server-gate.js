@@ -53,7 +53,9 @@ function resolvePidFile({ dbPath, pidFile } = {}) {
     if (pidFile) return path.isAbsolute(pidFile) ? pidFile : path.join(raiz, pidFile);
     const delEntorno = process.env.SUPERVISOR_PID_FILE;
     if (delEntorno) return path.isAbsolute(delEntorno) ? delEntorno : path.join(raiz, delEntorno);
-    return DEFAULT_PID_FILE;
+    /* La raíz manda: una instalación de pruebas en un directorio temporal no
+       debe mirar el PID del servidor de producción del repo. */
+    return path.join(raiz, '.zlapy.pid');
 }
 
 /**

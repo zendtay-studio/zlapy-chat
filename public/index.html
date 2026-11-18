@@ -3053,6 +3053,47 @@
             box-shadow: 0 1px 3px #00000030
         }
 
+        /* Fecha FLOTANTE (estilo WhatsApp): se queda arriba mientras te
+           desplazas por el historial y dice la fecha del primer mensaje
+           visible; al cruzar de día se actualiza (Hoy → Ayer → Antier → día
+           de la semana → fecha) y se va sola a los 3 s de parar. No se pinta
+           cuando el separador de fecha de la lista ya está a la vista.
+           La caja mide CERO de alto y la píldora va en absoluto: no ocupa
+           sitio en la lista, solo sobresale. `sticky` la deja clavada en el
+           borde superior del scroll. */
+        .fechaFlotante {
+            position: sticky;
+            top: 0;
+            z-index: 6;
+            display: flex;
+            justify-content: center;
+            height: 0;
+            pointer-events: none
+        }
+
+        .fechaFlotante>span {
+            position: absolute;
+            left: 50%;
+            top: 8px;
+            transform: translate(-50%, -6px);
+            opacity: 0;
+            transition: opacity .18s ease, transform .18s ease;
+            background: var(--accent-soft);
+            color: var(--accent-readable);
+            border-radius: 999px;
+            padding: 5px 14px;
+            font-size: 12.5px;
+            line-height: 1.35;
+            text-align: center;
+            box-shadow: 0 1px 3px #00000030;
+            white-space: nowrap
+        }
+
+        .fechaFlotante.on>span {
+            opacity: 1;
+            transform: translate(-50%, 0)
+        }
+
         .me {
             background: #005c4b;
             margin-left: auto;
@@ -13726,8 +13767,12 @@
                 }
             }
             function presenceText(c) {
-                if (!c || c.online) return c && c.online ? 'en línea' : 'Sin conexión';
-                if (!c.lastSeen) return 'Sin conexión';
+                if (!c) return '';
+                if (c.online) return 'en línea';
+                /* Sin «últ. vez»: se muestra el @usuario SIN la arroba. Si el
+                   @ está oculto para mí, no se revela: se dice que hace mucho
+                   tiempo que no se le ve, con el mismo formato que el resto. */
+                if (!c.lastSeen) return usuarioOcultoDe(c.username) ? 'Últ. vez hace mucho tiempo' : c.username;
                 const d = new Date(c.lastSeen), now = new Date();
                 const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                 const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
@@ -16144,6 +16189,18 @@
                 bar.style.display = 'flex';
             }
 
+            /* Fecha flotante: con cada desplazamiento se recalcula (con retardo
+               de frame para no hacerlo por píxel) y se rearma el temporizador
+               de 3 s que la esconde. Los recolocamientos programáticos del
+               scroll (cargar mensajes antiguos) no la muestran. */
+            document.getElementById('msgs').addEventListener('scroll', () => {
+                if (fechaFlotRaf) return;
+                fechaFlotRaf = requestAnimationFrame(() => {
+                    fechaFlotRaf = 0;
+                    if (performance.now() < fechaFlotSilencio) { ocultarFechaFlotante(); return; }
+                    actualizarFechaFlotante();
+                });
+            }, { passive: true });
             document.getElementById('msgs').addEventListener('scroll', async e => {
                 const el = e.target;
                 const key = activeKind === 'group' && activeGroup ? activeGroup.id : active;
@@ -16802,7 +16859,7 @@
                         `<button class="messageReaction${reaction.mine ? ' mine' : ''}" type="button" data-reaction-message="${escapeHtml(m.id)}" data-reaction-emoji="${escapeHtml(reaction.emoji)}" aria-label="${escapeHtml(reaction.emoji)} ${reaction.count} reacciones${reaction.mine ? ', tu reacción' : ''}"><span>${escapeHtml(reaction.emoji)}</span><span class="messageReactionCount">${reaction.count}</span></button>`
                     ).join('')}</div>` : '';
                 const sinMeta = displayMeta.hide ? ' noMeta' : '';
-                return `<div class="bubble ${m.mine ? 'me' : 'them'}${onceView ? ' onceViewBubble' : ''}${m.kind === 'contact' ? ' contactBubble' : ''}${m.kind === 'audio' ? ' audioBubble' : ''}${(m.kind === 'image' || m.kind === 'file') && !m.once ? ' mediaBubble' : ''}${imageTextBubble ? ' imageTextBubble' : ''}${galleryTextBubble ? ' galleryTextBubble' : ''}${m.kind === 'image' ? ' imageBubble' : ''}${m.kind === 'poll' ? ' pollBubble' : ''}${esSticker ? ' stickerB' : ''}${esSticker && m.reply ? ' stickerReplyB' : ''}${sinMeta}${m.inGroup ? ' groupBubbleAction' : ''}" id="b${escapeHtml(m.id)}" data-message-id="${escapeHtml(m.id)}">${m.inGroup ? '' : m.kind === 'contact' ? '' : `<span class="replyBtn" onclick="event.stopPropagation();setReply('${jsArg(m.id)}')"><svg viewBox="0 0 24 24"><path d="M10 9V5l-7 7 7 7v-4.1c5 0 8.5 1.6 11 5.1-1-5-4-10-11-11z"/></svg></span>`}${content}${reactionsMarkup}</div>`;
+                return `<div class="bubble ${m.mine ? 'me' : 'them'}${onceView ? ' onceViewBubble' : ''}${m.kind === 'contact' ? ' contactBubble' : ''}${m.kind === 'audio' ? ' audioBubble' : ''}${(m.kind === 'image' || m.kind === 'file') && !m.once ? ' mediaBubble' : ''}${imageTextBubble ? ' imageTextBubble' : ''}${galleryTextBubble ? ' galleryTextBubble' : ''}${m.kind === 'image' ? ' imageBubble' : ''}${m.kind === 'poll' ? ' pollBubble' : ''}${esSticker ? ' stickerB' : ''}${esSticker && m.reply ? ' stickerReplyB' : ''}${sinMeta}${m.inGroup ? ' groupBubbleAction' : ''}" id="b${escapeHtml(m.id)}" data-message-id="${escapeHtml(m.id)}" data-ts="${Number(m.ts) || 0}">${m.inGroup ? '' : m.kind === 'contact' ? '' : `<span class="replyBtn" onclick="event.stopPropagation();setReply('${jsArg(m.id)}')"><svg viewBox="0 0 24 24"><path d="M10 9V5l-7 7 7 7v-4.1c5 0 8.5 1.6 11 5.1-1-5-4-10-11-11z"/></svg></span>`}${content}${reactionsMarkup}</div>`;
             }
             function groupedMessageMetadata(messages) {
                 const display = new Map();
@@ -17816,11 +17873,23 @@
                     ? list.map(m => bubble(activeKind === 'group' ? { ...m, inGroup: true } : m, groupedMeta.get(m.id))).join('')
                     : '<div class="emptyMessages" role="status">No hay mensajes disponibles para mostrar</div>';
                 updateExternalMessageMetadata(el);
+                /* El repintado vacía #msgs: la fecha flotante se vuelve a colgar.
+                   NO se muestra aquí: aparece solo al desplazarse. Cargar
+                   mensajes antiguos no la enseña (no es el último mensaje al
+                   que llegaste) y queda oculta hasta el siguiente scroll. */
+                ensureFechaFlotante();
                 el.querySelectorAll('.bubble[data-message-id]').forEach(message => {
                     if (!existingIds.has(message.dataset.messageId)) message.classList.add('message-enter');
                 });
                 if (wasAtBottom) scrollToBottom(false);
-                else el.scrollTop = Math.max(0, prevTop + (el.scrollHeight - prevH));
+                else {
+                    /* Reposicionar el scroll tras anteponer mensajes antiguos
+                       dispara un 'scroll' que NO es del usuario: no debe
+                       enseñar la fecha flotante (por eso el silencio). */
+                    fechaFlotSilencio = performance.now() + 250;
+                    ocultarFechaFlotante();
+                    el.scrollTop = Math.max(0, prevTop + (el.scrollHeight - prevH));
+                }
                 if (voice.id) paintVoice();
                 renderContacts();
                 paintTypingBubble();
@@ -17903,7 +17972,66 @@
                 return window.ZlapySystemLabels.buildRenderList(real, systemEvents.get(key) || []);
             }
             function systemBubble(m) {
-                return `<div class="systemMsg" role="status"><span>${escapeHtml(m.text || '')}</span></div>`;
+                /* `daySep` identifica los separadores de FECHA (los demás
+                   avisos comparten estilo pero no son separadores). La fecha
+                   flotante lo usa para no pintar una copia encima. */
+                const sep = String(m.id || '').startsWith('day-') ? ' daySep' : '';
+                return `<div class="systemMsg${sep}" role="status" data-ts="${Number(m.ts) || 0}"><span>${escapeHtml(m.text || '')}</span></div>`;
+            }
+            /* ───── Fecha flotante (barra de arriba al desplazarse) ───── */
+            let fechaFlotTimer = 0, fechaFlotRaf = 0, fechaFlotSilencio = 0;
+            function ensureFechaFlotante() {
+                const el = document.getElementById('msgs');
+                if (!el) return null;
+                let pill = document.getElementById('fechaFlotante');
+                if (!pill) {
+                    pill = document.createElement('div');
+                    pill.id = 'fechaFlotante';
+                    pill.className = 'fechaFlotante';
+                    pill.innerHTML = '<span></span>';
+                    el.insertBefore(pill, el.firstChild);
+                }
+                return pill;
+            }
+            function ocultarFechaFlotante() {
+                clearTimeout(fechaFlotTimer);
+                fechaFlotTimer = 0;
+                const pill = document.getElementById('fechaFlotante');
+                if (pill) pill.classList.remove('on');
+            }
+            /* Fecha del primer mensaje VISIBLE: es la que WhatsApp muestra arriba.
+               Al bajar por el historial va cambiando sola (Hoy → Ayer →
+               Antier → día de la semana → fecha real). */
+            function actualizarFechaFlotante() {
+                const el = document.getElementById('msgs');
+                const pill = ensureFechaFlotante();
+                if (!el || !pill) return;
+                /* Pegado al final (los mensajes de hoy, los más nuevos): la
+                   fecha no aporta nada, se queda escondida. */
+                if (el.scrollHeight - el.scrollTop - el.clientHeight <= 24) { ocultarFechaFlotante(); return; }
+                const techo = el.getBoundingClientRect().top;
+                let nodo = null;
+                for (const hijo of el.querySelectorAll('[data-ts]')) {
+                    if (hijo.getBoundingClientRect().bottom >= techo) { nodo = hijo; break; }
+                }
+                if (!nodo) { ocultarFechaFlotante(); return; }
+                /* Si el separador de fecha de la lista ya se ve en la banda de
+                   arriba, la píldora flotante sería una COPIA encima de él:
+                   no se pinta. */
+                const enBanda = sep => {
+                    const caja = sep.getBoundingClientRect();
+                    return caja.bottom > techo && caja.top < techo + 56;
+                };
+                if (nodo.classList.contains('daySep') || [...el.querySelectorAll('.daySep')].some(enBanda)) {
+                    ocultarFechaFlotante();
+                    return;
+                }
+                const etiqueta = window.ZlapySystemLabels.systemDayLabel(Number(nodo.dataset.ts));
+                const span = pill.firstElementChild;
+                if (span.textContent !== etiqueta) span.textContent = etiqueta;
+                pill.classList.add('on');
+                clearTimeout(fechaFlotTimer);
+                fechaFlotTimer = setTimeout(ocultarFechaFlotante, 3000);
             }
             const MIC_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" fill="#ef5350"><path d="M12 14a3 3 0 003-3V5a3 3 0 00-6 0v6a3 3 0 003 3zm5-3a5 5 0 01-10 0H5a7 7 0 006 6.92V21h2v-3.08A7 7 0 0019 11h-2z"/></svg>';
             function paintTypingBubble() {

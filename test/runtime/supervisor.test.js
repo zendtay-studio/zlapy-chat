@@ -11,9 +11,9 @@ const path = require('node:path');
 const test = require('node:test');
 const { spawn } = require('node:child_process');
 const { classifyExit } = require('../../ops/runtime/supervisor.js');
+const { freePort } = require('../helpers.js');
 
 const ROOT = path.join(__dirname, '..', '..');
-const PORT = 3987;
 
 test('la clasificación de salidas manda cuál se repara y cuál no', () => {
     assert.equal(classifyExit(79), 'deps', 'falta una librería: se instala y se relanza sin backoff');
@@ -55,6 +55,9 @@ function waitFor(fn, timeout = 30000, step = 500) {
 }
 
 test('el supervisor arranca el servidor y lo reinicia si muere', async t => {
+    /* Puerto LIBRE en cada ejecución (no uno fijo): la suite no puede chocar
+       con la app que el usuario tenga abierta ni con otra pasada en paralelo. */
+    const PORT = await freePort();
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zlapy-sup-'));
     const pidFile = path.join(dataDir, 'server.pid');
     t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));

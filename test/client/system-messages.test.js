@@ -1,5 +1,5 @@
 // Etiquetas y lista de pintado de los mensajes del sistema (Hoy / Ayer /
-// Antier / fecha real) y los separadores por cambio de día.
+// Antier / día de la semana / fecha real) y los separadores por cambio de día.
 //
 // La lógica es pura y vive en public/js/system-messages.js: el "ahora" se
 // inyecta, así que la medianoche se puede fijar sin depender del reloj.
@@ -26,6 +26,33 @@ test('el separador es Hoy / Ayer / Antier con el día natural LOCAL', () => {
     assert.doesNotMatch(junio, /2026/, 'el año no se repite si es el vigente');
     const otroAnio = systemDayLabel(new Date(2024, 0, 2, 9).getTime(), AHORA);
     assert.match(otroAnio, /2024/, 'de otro año sí se muestra');
+});
+
+test('del tercer día al sexto se dice el DÍA DE LA SEMANA; al séptimo, la fecha', () => {
+    /* AHORA es el 17 de junio de 2026: 3→6 días atrás son el 14, 13, 12 y 11
+       (domingo a jueves), y el 10 ya repite el nombre de la semana pasada. */
+    for (const dia of [14, 13, 12, 11]) {
+        const fecha = new Date(2026, 5, dia, 9);
+        const nombre = fecha.toLocaleDateString([], { weekday: 'long' });
+        assert.equal(systemDayLabel(fecha.getTime(), AHORA),
+            nombre[0].toLocaleUpperCase() + nombre.slice(1), `el día ${dia} es su día de la semana`);
+    }
+    const haceUnaSemana = new Date(2026, 5, 10, 9);
+    assert.equal(systemDayLabel(haceUnaSemana.getTime(), AHORA),
+        haceUnaSemana.toLocaleDateString([], { day: 'numeric', month: 'long' }),
+        'a los siete días vuelve la fecha');
+});
+
+test('la escalera aguanta el cambio de año', () => {
+    const enero = new Date(2026, 0, 2, 12, 0, 0);  // 2 de enero de 2026
+    const finDeAnio = new Date(2025, 11, 30, 9);   // 30 de diciembre: 3 días
+    assert.equal(systemDayLabel(new Date(2026, 0, 1, 9).getTime(), enero), 'Ayer');
+    assert.equal(systemDayLabel(new Date(2025, 11, 31, 9).getTime(), enero), 'Antier');
+    const nombre = finDeAnio.toLocaleDateString([], { weekday: 'long' });
+    assert.equal(systemDayLabel(finDeAnio.getTime(), enero),
+        nombre[0].toLocaleUpperCase() + nombre.slice(1), 'sigue mandando el día de la semana');
+    const viejo = new Date(2025, 11, 20, 9);
+    assert.match(systemDayLabel(viejo.getTime(), enero), /2025/, 'de otro año se muestra el año');
 });
 
 test('la medianoche es local: 23:59 y 00:01 son días distintos', () => {
