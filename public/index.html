@@ -17,6 +17,9 @@
     <link rel="stylesheet" href="/css/fonts.css">
     <script src="/js/markdown-chat.js"></script>
     <script src="/js/button-theme.js"></script>
+    <!-- Etiquetas de los mensajes del sistema (Hoy/Ayer/Antier): se carga
+         ANTES del script inline porque su renderAll() la usa al pintar. -->
+    <script src="/js/system-messages.js"></script>
 
     <meta property="og:title" content="Zlapy">
     <meta property="og:description" content="Chats, historias y llamadas. Rápido, privado y sin depender de terceros.">
@@ -3023,6 +3026,33 @@
             width: fit-content
         }
 
+        /* Mensaje del SISTEMA (estilo WhatsApp): separador de fecha o aviso
+           de seguridad. No es de nadie, así que va CENTRADO en la columna
+           (ni a la izquierda ni a la derecha, que son los mensajes de
+           usuario) y con fondo SEMI-OPACO. El color sale del acento de la
+           cuenta (`--accent-soft` y `--accent-readable` se recalculan cuando
+           cambia el acento o el tema), no de un color fijo: la píldora se
+           adapta sola al tema claro/oscuro. */
+        .systemMsg {
+            display: flex;
+            justify-content: center;
+            width: 100%;
+            margin: 12px 0;
+            clear: both
+        }
+
+        .systemMsg span {
+            background: var(--accent-soft);
+            color: var(--accent-readable);
+            border-radius: 999px;
+            padding: 5px 14px;
+            font-size: 12.5px;
+            line-height: 1.35;
+            text-align: center;
+            max-width: 80%;
+            box-shadow: 0 1px 3px #00000030
+        }
+
         .me {
             background: #005c4b;
             margin-left: auto;
@@ -3354,8 +3384,10 @@
             transition: transform .16s ease, background .16s ease
         }
 
-        /* Nota de voz aún no escuchada (sólo las recibidas): el circulito se
-           ve atenuado; al reproducirla recupera su color normal. */
+        /* Nota de voz aún NO escuchada: el circulito se ve atenuado.
+           - una recibida: hasta que YO le doy Play;
+           - una propia: hasta que el OTRO me avisa de que la escuchó
+             (reproducirla yo no cambia nada). */
         .audioMsg .voicePlay.unheard {
             opacity: .5
         }
@@ -13175,6 +13207,19 @@
                     renderAll(); renderContacts(); return;
                 }
                 if (msg.type === 'receipt' && msg.status === 'played') { for (const id of msg.ids || []) marcarAudioEscuchadoPorOtro(id); renderAll(); return; }
+                /* Un contacto regeneró su clave de cifrado: aviso informativo
+                   en su conversación (como el de WhatsApp cuando cambia el
+                   código de seguridad). Sin acción asociada: no hay nada que
+                   el usuario tenga que hacer aquí. */
+                if (msg.type === 'keychange') {
+                    const emisor = typeof msg.from === 'string' ? msg.from : '';
+                    const llaves = emisor
+                        ? dmConversationKeys().filter(k => (conv[k] || []).some(m => m.from === emisor))
+                        : [];
+                    for (const key of llaves) addSystemEvent(key, 'El código de seguridad cambió.');
+                    renderAll();
+                    return;
+                }
                 if (msg.type === 'receipt') {
                     for (const id of msg.ids) {
                         const entry = conversationMessageById.get(id);
@@ -13518,8 +13563,13 @@
             }
             function markReadOnOpen() {
                 if (!active) return;
-                const ids = (conv[active] || []).filter(m => m.from === active && m.status !== 'read').map(m => m.id);
-                if (ids.length) sendRead(active, ids);
+                const pendientes = (conv[active] || []).filter(m => m.from === active && m.status !== 'read');
+                /* Marca LOCAL como leídos: el separador de no leídos es de un
+                   solo uso y, si los acuses de lectura están apagados (no
+                   vuelve el eco del servidor), esta marca es la única que
+                   impide que el contador vuelva a salir al reabrir. */
+                for (const m of pendientes) m.status = 'read';
+                if (pendientes.length) sendRead(active, pendientes.map(m => m.id));
             }
             const peerOf = m => m.from === me.username ? m.to : m.from;
 
@@ -15835,6 +15885,11 @@
                 })();
                 await Promise.all([profilePromise, historyPromise]);
                 if (openVersion !== chatOpenVersion) return;
+                /* El separador de no leídos se calcula con los pendientes de
+                   ESTA apertura: justo antes de que `markReadOnOpen` los lea.
+                   Al reabrir el chat ya no queda ninguno pendiente, así que
+                   no vuelve a salir. */
+                registrarSeparadorNoLeidos();
                 renderContacts(); renderAll(true); markReadOnOpen();
                 applyBlockedUI();
                 scrollToBottom(true);
@@ -16019,6 +16074,13 @@
                     renderContacts();
                     if (r.blocked) toast('Has bloqueado a ' + target + '.');
                     else toast('Has desbloqueado a ' + target + '.');
+                    /* Aviso en la conversación (estilo WhatsApp). NO se guarda en ningún
+                       sitio: es un evento de la sesión, como el separador de
+                       fecha, que se calcula solo. Y NO se le manda nada al
+                       otro: el bloqueo ya es silencioso («no se le avisará de
+                       nada»); del otro lado, si me bloqueó a mí, la caja de
+                       escribir desaparece sola vía `applyBlockedUI`. */
+                    addSystemEvent(target, r.blocked ? 'Has bloqueado a ' + target + '.' : 'Has desbloqueado a ' + target + '.');
                 }
             }
             function toast(text) {
@@ -16654,6 +16716,7 @@
             }
 
             function bubble(m, displayMeta = {}) {
+                if (m.kind === 'system') return systemBubble(m);
                 if (m.temp) return uploadBubble(m);
                 const t = new Date(m.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                 const plain = (m.plain != null ? m.plain : m.data);
@@ -17408,7 +17471,9 @@
             const AUDIO_HEARD_TOPE = 600;
             /* Al revés: audios MÍOS que el otro ya escuchó (me lo avisa con
                un acuse «played»). Es distinto de leído: los checks azules
-               son de lectura, esto es de ESCUCHA. */
+               son de lectura, esto es de ESCUCHA. Los dos sets se guardan
+               SIEMPRE con la id real del mensaje (`m.id`), que es lo que el
+               render compara y lo que el servidor sabe validar. */
             const AUDIO_PLAYED_TOPE = 600;
             let audioPlayedByOtro = null;
             let audioPlayedPorOtro = null;
@@ -17421,13 +17486,16 @@
                 return audioPlayedPorOtro;
             }
             function marcarAudioEscuchadoPorOtro(id) {
+                /* `id` es la id REAL del mensaje (la que viaja en el acuse
+                   «played» del servidor y con la que se compara al pintar);
+                   el atributo data-mid del DOM usa su forma de elemento. */
                 if (!id || !accountStorageKey('audio_played')) return;
                 const set = audioPlayedSet();
                 if (set.has(id)) return;
                 set.add(id);
                 if (set.size > AUDIO_PLAYED_TOPE) { const l = [...set].slice(-AUDIO_PLAYED_TOPE); set.clear(); for (const x of l) set.add(x); }
                 writeAccountStorage('audio_played', JSON.stringify([...set]));
-                for (const el of document.querySelectorAll('.audioMsg[data-mid="' + id + '"] .voicePlay')) el.classList.remove('unheard');
+                for (const el of document.querySelectorAll('.audioMsg[data-mid="' + audioElId(id) + '"] .voicePlay')) el.classList.remove('unheard');
             }
             let audioHeard = null;
             function audioHeardSet() {
@@ -17439,6 +17507,9 @@
                 return audioHeard;
             }
             function marcarAudioOido(id) {
+                /* `id` es la id REAL del mensaje: es la que se guarda, la que
+                   se compara al pintar (`audioHeardSet().has(m.id)`) y la que
+                   se manda al emisor. El DOM usa su forma de elemento. */
                 if (!id || !accountStorageKey('audio_heard')) return;
                 const set = audioHeardSet();
                 if (set.has(id)) return;
@@ -17450,7 +17521,7 @@
                     for (const x of lista) set.add(x);
                 }
                 writeAccountStorage('audio_heard', JSON.stringify([...set]));
-                for (const el of document.querySelectorAll('.audioMsg[data-mid="' + id + '"] .voicePlay'))
+                for (const el of document.querySelectorAll('.audioMsg[data-mid="' + audioElId(id) + '"] .voicePlay'))
                     el.classList.remove('unheard');
             }
             const audioUrls = new Map();
@@ -17490,15 +17561,29 @@
                 a.preload = 'metadata';
                 a.style.cssText = 'display:none';
                 for (const ev of ['timeupdate', 'loadedmetadata', 'play', 'pause', 'seeked']) a.addEventListener(ev, paintVoice);
-                /* Al empezar a sonar, la nota queda "escuchada" (como en
-                   WhatsApp): el circulito de las notas recibidas recupera su
-                   color. El set es por cuenta, sobrevive a recargas. */
+                /* Al empezar a sonar una nota RECIBIDA, queda "escuchada" (como en
+                   WhatsApp): su circulito recupera el color y se avisa al
+                   emisor. El set es por cuenta, sobrevive a recargas. Una
+                   nota propia no cambia con solo sonar. */
                 a.addEventListener('play', () => {
-                    if (!voice.id) return;
-                    marcarAudioOido(voice.id);
+                    if (!voice.msgId) return;
                     const md = audioMsgById(voice.id);
-                    if (md && !md.mine && md.from && md.status !== 'played')
-                        fetch('/receipt', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: me.username, to: md.from, ids: [voice.id], status: 'played' }) }).catch(() => { });
+                    /* «Escuchado» NO es «leído» (los tics azules van por su
+                       cuenta): esto solo cambia la ATENUACIÓN del reproductor.
+                       Dos reglas, ninguna negociable:
+                       - reproducir una nota PROPIA no cambia nada: el emisor
+                         la ve atenuada (0.5) hasta que el OTRO la escuche;
+                       - el acuse viaja con la id REAL del mensaje, porque el
+                         servidor valida cada id contra su tabla: si manda la
+                         id del DOM no encuentra la fila y lo descarta en
+                         silencio (el emisor no se enteraba nunca). */
+                    if (!md || !md.mine) {
+                        marcarAudioOido(voice.msgId);
+                        if (md && md.from && !md.playedAvisado) {
+                            md.playedAvisado = true;
+                            fetch('/receipt', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: me.username, to: md.from, ids: [voice.msgId], status: 'played' }) }).catch(() => { });
+                        }
+                    }
                 });
                 a.addEventListener('ended', voiceEnded);
                 document.body.appendChild(a);
@@ -17623,8 +17708,15 @@
                         probe.src = audioUrlFor(m);
                     });
                 }
+                /* Atenuación (opacidad 0.5) = «escuchado», NO «leído»:
+                   recibida  → hasta que YO le doy Play (`audio_heard`);
+                   propia    → hasta que el OTRO la escucha (`audio_played`).
+                   Reproducir una propia NUNCA la des-atenúa.
+                   `m.playedAt` es la misma verdad guardada en el servidor: si
+                   viene, ya está escuchada aunque el set local esté vacío
+                   (recarga de página o aviso perdido). */
                 return `<div class="audioMsg" data-mid="${id}">
-    <button class="voicePlay${(!m.mine && audioHeardSet().has(m.id)) || (m.mine && audioPlayedSet().has(m.id)) ? '' : ' unheard'}" type="button" aria-label="Reproducir nota de voz" title="Reproducir nota de voz" onclick="toggleAudio(this,'${jsArg(id)}')">${PLAY_SVG}</button>
+    <button class="voicePlay${(!m.mine && (audioHeardSet().has(m.id) || !!m.playedAt)) || (m.mine && (audioPlayedSet().has(m.id) || !!m.playedAt)) ? '' : ' unheard'}" type="button" aria-label="Reproducir nota de voz" title="Reproducir nota de voz" onclick="toggleAudio(this,'${jsArg(id)}')">${PLAY_SVG}</button>
     <div class="voiceDetails">
       <div class="voiceTitle"><span>Nota de voz</span></div>
       <div class="bar" role="slider" aria-label="Posición de la nota de voz" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" tabindex="0" onpointerdown="seekAudio(this,'${jsArg(id)}',event)" onkeydown="seekAudioKey(this,'${jsArg(id)}',event)"><div class="fill" id="f${id}"></div></div>
@@ -17715,7 +17807,7 @@
                 const el = document.getElementById('msgs');
                 const key = activeConversationKey();
                 if (!key) return;
-                const list = conversationFor(key).messages;
+                const list = renderList(key);
                 const wasAtBottom = forceBottom || (el.scrollHeight - el.scrollTop - el.clientHeight < 140);
                 const prevTop = el.scrollTop, prevH = el.scrollHeight;
                 const existingIds = new Set([...el.querySelectorAll('.bubble[data-message-id]')].map(bubble => bubble.dataset.messageId));
@@ -17739,6 +17831,80 @@
             let typingTimer = null, typingSent = false;
             const typingState = {};
             const recState = {};
+            /* ───── Mensajes del sistema (separadores y avisos) ─────
+               NO se guardan en ningún sitio, y es a propósito:
+               - el separador de fecha se CALCULA al pintar, comparando el
+                 día de cada mensaje con el del anterior (como la
+                 conversación, se rehace solo en cada repintado);
+               - los avisos (bloqueo, cambio de clave) son eventos de la
+                 sesión en curso: viven en RAM junto al indicador de
+                 «escribiendo». No hay modelo que los persistir y tampoco
+                 hace falta: si se recarga, el historial y sus separadores se
+                 reconstruyen igual desde los mensajes. */
+            const systemEvents = new Map();
+            function addSystemEvent(key, text, ts = Date.now()) {
+                if (!key || !text) return null;
+                const lista = systemEvents.get(key) || [];
+                const evento = {
+                    id: 'sys-' + key + '-' + ts + '-' + Math.random().toString(36).slice(2, 6),
+                    kind: 'system', text: String(text), ts
+                };
+                lista.push(evento);
+                lista.sort((a, b) => a.ts - b.ts);
+                systemEvents.set(key, lista);
+                if (key === activeConversationKey()) renderConversation(key, true);
+                return evento;
+            }
+            /* ───── Separador de «N mensajes no leídos» ─────
+               Se calcula UNA vez, al ABRIR el chat, contando los mensajes
+               recibidos que seguían pendientes justo antes de marcarlos como
+               leídos. Se pinta anclado (`beforeId`) al primero de ellos, que
+               es el límite entre lo leído y lo pendiente.
+               NO se guarda en ningún sitio: al reabrir el chat ya no hay
+               pendientes (quedaron leídos), así que no vuelve a salir. Escribir
+               o responder no lo retira porque leerlo ya los dejó leídos al
+               abrir. */
+            function addUnreadDivider(key, beforeId, count, ts = Date.now()) {
+                if (!key || !beforeId) return null;
+                clearUnreadDivider(key);
+                const texto = window.ZlapySystemLabels.unreadLabel(count);
+                if (!texto) return null;
+                const evento = { id: 'unread-' + key, kind: 'system', text: texto, ts, beforeId };
+                systemEvents.set(key, [...(systemEvents.get(key) || []), evento]);
+                if (key === activeConversationKey()) renderConversation(key, true);
+                return evento;
+            }
+            function clearUnreadDivider(key) {
+                const lista = (systemEvents.get(key) || []).filter(e => !e.beforeId);
+                if (lista.length) systemEvents.set(key, lista);
+                else systemEvents.delete(key);
+            }
+            /* Cuenta y anota los pendientes de ESTA apertura. Se llama antes de
+               `markReadOnOpen`, que es quien los lee. */
+            function registrarSeparadorNoLeidos() {
+                if (!active || activeKind !== 'dm' || active === '__saved__') return;
+                const pendientes = (conv[active] || []).filter(m => m.from === active && m.status !== 'read');
+                if (pendientes.length)
+                    addUnreadDivider(active, pendientes[0].id, pendientes.length, pendientes[0].ts);
+                else clearUnreadDivider(active);
+            }
+            /* Claves de conversación que son DM. Los grupos se distinguen por su
+               contenido: sus mensajes van marcados con `inGroup`. */
+            function dmConversationKeys() {
+                return Object.keys(conv).filter(k => k !== '__saved__' && !(conv[k] || []).some(m => m.inGroup));
+            }
+            function systemDayLabel(ts, ahora) { return window.ZlapySystemLabels.systemDayLabel(ts, ahora); }
+            /* Lista de pintado: mensajes + avisos de la sesión, y con un
+               separador delante de cada cambio de día (el primero siempre
+               lleva). Se evalúa en cada repintado, así que el «Hoy» pasa a
+               «Ayer» solo al cruzar la medianoche. */
+            function renderList(key) {
+                const real = conversationFor(key).messages;
+                return window.ZlapySystemLabels.buildRenderList(real, systemEvents.get(key) || []);
+            }
+            function systemBubble(m) {
+                return `<div class="systemMsg" role="status"><span>${escapeHtml(m.text || '')}</span></div>`;
+            }
             const MIC_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" fill="#ef5350"><path d="M12 14a3 3 0 003-3V5a3 3 0 00-6 0v6a3 3 0 003 3zm5-3a5 5 0 01-10 0H5a7 7 0 006 6.92V21h2v-3.08A7 7 0 0019 11h-2z"/></svg>';
             function paintTypingBubble() {
                 const messages = document.getElementById('msgs');
@@ -23599,6 +23765,13 @@
                     const result = await response.json().catch(() => ({}));
                     if (!response.ok) throw new Error(result.error || 'No se pudo regenerar la clave.');
                     toast('Clave regenerada. Se volvieron a cifrar ' + (result.reencrypted || 0) + ' registros.');
+                    /* Aviso resumido en cada conversación: al cambiar la
+                       clave, el contenido deja de ser legible con la anterior
+                       y los contactos deben ver que el hilo sigue siendo el
+                       mismo. Se pinta localmente aquí; a cada contacto le
+                       llega por WebSocket (`keychange`), sin acción que
+                       hacer: es solo informativo. */
+                    for (const key of dmConversationKeys()) addSystemEvent(key, 'El código de seguridad cambió.');
                 } catch (error) {
                     console.error('[account] No se pudo regenerar la clave:', error);
                     toast(error.message);

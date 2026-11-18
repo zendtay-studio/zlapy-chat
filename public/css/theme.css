@@ -1079,17 +1079,28 @@ textarea {
 
         .mdLinea {
             margin: 8px 0;
-            border-top: 1px solid var(--line)
+            /* Igual que la tabla: con var(--line) se perdía sobre los
+               temas oscuros. currentColor es la tinta de la burbuja. */
+            border-top: 1px solid color-mix(in srgb, currentColor 35%, transparent)
         }
 
         .mdTablaEnv {
             max-width: 100%;
             margin: 4px 0;
-            border-radius: 8px;
+            /* Marco exterior con las esquinas redondeadas: envuelve a la
+               tabla y su radio se ve porque recorta el borde cuadrado de
+               las celdas (overflow-x conserva el scroll horizontal). */
+            border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+            border-radius: 10px;
             overflow-x: auto
         }
 
         .mdTabla {
+            /* collapse: con separate + spacing 0 cada línea interna llevaría
+               DOS bordes de 1px (el de arriba de una fila y el de abajo de la
+               anterior) y se verían a 2px. En collapse las líneas quedan a
+               1px; las esquinas redondeadas las pone el contenedor, que
+               recorta el borde cuadrado de las celdas exteriores. */
             border-collapse: collapse;
             font-size: .92em;
             /* Ancho natural: si la tabla es más ancha que la burbuja, el
@@ -1102,11 +1113,16 @@ textarea {
         .mdTabla th,
         .mdTabla td {
             padding: 4px 8px;
-            border: 1px solid var(--line)
+            /* Líneas con currentColor (la tinta de la burbuja), NUNCA con
+               var(--line): el color de línea global es casi negro y
+               desaparecía sobre los temas oscuros —el bosque, por
+               ejemplo—, donde el borde se fusionaba con el fondo. Mezclada
+               al 30% se ve igual sobre fondo claro y sobre fondo oscuro. */
+            border: 1px solid color-mix(in srgb, currentColor 30%, transparent)
         }
 
         .mdTabla th {
-            background: color-mix(in srgb, currentColor 8%, transparent)
+            background: color-mix(in srgb, currentColor 12%, transparent)
         }
 
         .mdNotaPie {

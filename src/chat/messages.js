@@ -109,6 +109,10 @@ function rowToMessage(row) {
         enc: body.enc || '', mentions: body.mentions || [],
         mentionLabels: body.mentionLabels || {}, invite: body.invite || null,
         readAt: Number.isFinite(body.readAt) ? body.readAt : 0,
+        // Nota de voz escuchada (le dio Play el destinatario). No es el
+        // estado del mensaje: viaja aparte para que el emisor conserve la
+        // burbuja des-atenuada tras recargar.
+        playedAt: row.played_at == null ? 0 : Number(row.played_at),
         signature: row.signature || '', signingPublicKey: row.signing_public_key || '',
         cryptoGroupId: row.crypto_group_id || '', signatureValid: false
     };

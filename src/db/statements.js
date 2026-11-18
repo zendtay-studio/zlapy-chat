@@ -112,6 +112,9 @@ const Stmt = {
         crypto_version = ?, crypto_group_id = ?, signature = ?, signing_public_key = ? WHERE id = ?`),
     deleteMessage: db.prepare('DELETE FROM messages WHERE id = ?'),
     getMessage: db.prepare('SELECT * FROM messages WHERE id = ?'),
+    // Escuchado de una nota de voz: se escribe UNA vez (IS NULL). No toca el
+    // estado del mensaje: eso es `read`, otra cosa.
+    markMessagePlayed: db.prepare('UPDATE messages SET played_at = ? WHERE id = ? AND played_at IS NULL'),
     /* Puesta al día de acuses al reconectar (catchUpReceipts en routes.js):
        el `status` vive DENTRO del blob cifrado, así que el candidato se
        elige por ventana temporal y el filtro real se hace al descifrar. */

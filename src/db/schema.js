@@ -293,6 +293,11 @@ CREATE TABLE IF NOT EXISTS messages (
     hash               TEXT,
     once               INTEGER NOT NULL DEFAULT 0 CHECK (once IN (0,1)),
     edited             INTEGER NOT NULL DEFAULT 0 CHECK (edited IN (0,1)),
+    /* Escuchado (notas de voz): cuándo el destinatario le dio Play. NO es el
+       estado del mensaje (eso es read, los tics azules): solo la atenuación
+       del reproductor del emisor. Persistido para que, aunque el emisor
+       recargue o pierda el aviso, el dato siga ahí. */
+    played_at           INTEGER,
     crypto_version     INTEGER NOT NULL DEFAULT 3,
     crypto_group_id    TEXT,
     signature          TEXT,
@@ -552,6 +557,10 @@ function applySchema(db) {
     // v14: `groups.custom_id` (ID personalizada para enlaces cortos).
     if (tableExists(db, 'groups') && !tableColumns(db, 'groups').has('custom_id'))
         db.exec("ALTER TABLE groups ADD COLUMN custom_id TEXT NOT NULL DEFAULT ''");
+    // v15: `messages.played_at` (nota de voz ESCUCHADA por el destinatario).
+    // Columna suelta, no estado: `read` sigue siendo el estado del mensaje.
+    if (tableExists(db, 'messages') && !tableColumns(db, 'messages').has('played_at'))
+        db.exec('ALTER TABLE messages ADD COLUMN played_at INTEGER');
     // v12: la PK de `calls` era `id` GLOBAL; los dos extremos de una llamada
     // comparten callId, así que el segundo INSERT OR REPLACE machacaba la
     // fila del primero y al reiniciar solo un historial sobrevivía. La PK

@@ -540,6 +540,12 @@ function postReceipt(req, res, url, data, actor) {
         }
         processedIds.push(id);
         peerIds.add(m.fromId);
+        /* «played» (audio escuchado) se PERSISTE en `played_at`, pero no sube el
+           estado del mensaje: los tics azules son de `read`. Persistirlo es
+           lo que permite que el emisor siga viendo su burbuja des-atenuada
+           aunque recargue (o aunque pierda este aviso por estar desconectado:
+           la próxima /messages se lo encuentra). */
+        if (data.status === 'played' && row.played_at == null) Stmt.markMessagePlayed.run(receiptAt, id);
         if ((RANK[data.status] || 0) > (RANK[m.status] || 0)) {
             m.status = data.status;
             if (data.status === 'read') m.readAt = receiptAt;

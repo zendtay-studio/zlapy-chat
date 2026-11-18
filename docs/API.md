@@ -312,7 +312,7 @@ puede suplantar a otro usuario.
 | `/notes` | Sesión | Guarda la nota personal (texto + fondo) | `{ data: { text, bg } }` — o `{}` para borrarla | `200 { ok: true }`. `400 { error: "Nota inválida." }`, `400 { error: "Nota demasiado grande." }` (>4096 caracteres) |
 | `/send` | Sesión | Envía un mensaje 1:1 | `{ to, kind, data, hash?, gallery?, mime?, name?, caption?, once?, reply?, enc?, groupId?, inviteCode? }` | `200 { ok: true, message: { … } }`. `404 { error: "contact does not exist" }`, `200 { ok: false, blocked: true }`, `200 { ok: false, denied: true }`, `400`, `413`, `429` |
 | `/seen` | Sesión | Marca como visto un mensaje de una sola vista (lo destruye) | `{ id }` | `200 { ok: true }`. `400 { ok: false }`, `404 { ok: false }`, `409 { ok: false, error: "Este mensaje no es de una sola vista." }` |
-| `/receipt` | Sesión | Acuses de entrega/lectura | `{ status: "delivered" \| "read", ids: [ "<id>" ] }` (máx. 500) | `200 { ok: true }`. `400 { error: "Invalid receipt." }` |
+| `/receipt` | Sesión | Acuses de entrega/lectura/escucha | `{ status: "delivered" \| "read" \| "played", ids: [ "<id>" ] }` (máx. 500; cada id debe existir en la tabla de mensajes, si no se descarta en silencio) | `200 { ok: true }`. `400 { error: "Invalid receipt." }`. Ojo: `played` **no cambia el estado del mensaje** (eso es `read`, los tics azules): guarda `played_at` y avisa al emisor para que su nota de voz pase de atenuada (opacidad 0.5) a normal (1.0). Basta con darle Play, no hace falta escucharla entera. Como queda guardado, el emisor lo ve aunque recargue. |
 | `/msg/delete` | Sesión | Borra un mensaje | `{ id }` | `200 { ok: true }` o `200 { ok: true, scope: "me" }` si quien borra es el destinatario (se oculta solo para él). `400 { ok: false }`, `404 { ok: false }` |
 | `/msg/edit` | Sesión | Edita un mensaje de texto propio | `{ id, data, enc? }` | `200 { ok: true }`. `400 { ok: false }`, `403 { ok: false, error: "No puedes editar este mensaje." }`, `404 { ok: false }` |
 | `/chat/delete` | Sesión | Borra una conversación (o varias) | `{ to }` o `{ peers: [...] }`, con `clearBoth: true` (vaciar para los dos) o `keepSummary: true` (dejar el chat en la lista) | `200 { ok: true, scope: "me" }` (borrar solo para mí), `200 { ok: true, scope: "both", cleared: [...] }` (vaciar para los dos: se borran los mensajes de verdad). `404 { error: "chat not found" }` |
@@ -586,7 +586,8 @@ Tipos aceptados: **15**.
 | `message` | `message: { … }` | Mensaje nuevo 1:1 (`src/chat/routes.js:206-207`) |
 | `poll-update` | `message`, `groupId` | Voto en una encuesta (`src/chat/routes.js:117-119`) |
 | `seen` | `id`, `readAt`, `signature`, `signingPublicKey`, `signatureValid` | Mensaje de una sola vista destruido (`src/chat/routes.js:241-242`) |
-| `receipt` | `ids`, `status`, `readAt` | Acuse de entrega o lectura (`src/chat/routes.js:282`) |
+| `receipt` | `ids`, `status`, `readAt` | Acuse de entrega o lectura (`src/chat/routes.js:282`); con `status: "played"` es de ESCUCHA: el emisor solo atenúa/des-atenúa su nota de voz, sin tocar el estado del mensaje |
+| `keychange` | `from`, `ts` | Ese contacto regeneró su clave de cifrado (`src/profile/routes.js`). El cliente pinta un mensaje del sistema informativo en la conversación; no hay nada que responder |
 | `msgDelete` | `id` | Mensaje borrado (`src/chat/routes.js:307`) |
 | `msgEdit` | `id`, `data`, `enc`, `signature`, `signingPublicKey`, `signatureValid` | Mensaje editado (`src/chat/routes.js:341-345`) |
 | `chatDelete` | `peer` | Conversación borrada (`src/chat/routes.js:379`) |

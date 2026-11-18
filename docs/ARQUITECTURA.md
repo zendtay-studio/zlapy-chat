@@ -829,7 +829,7 @@ guarda el `seenTs` en `user_group_seen` (`src/http/router.js:486-500`).
 | `callOfferLimiter` | 5 | 60 000 ms | ofertas de llamada (`src/realtime/websocket.js:171`) |
 | `chatPrefsLimiter` | 20 | 60 000 ms | preferencias y borrado de chats (`src/chat/routes.js:147`) |
 | `passwordCheckLimiter` | 5 | 60 000 ms | operaciones que verifican contraseña (`src/profile/routes.js:103,222`) |
-| `receiptLimiter` | 120 | 60 000 ms | `POST /receipt` (acuses de lectura) |
+| `receiptLimiter` | 120 | 60 000 ms | `POST /receipt` (acuses de entrega/lectura/escucha) |
 | `keyUploadLimiter` | 30 | 60 000 ms | `POST /key` (guardar la clave del dispositivo) |
 
 Implementación: `createMessageRateLimiter(limit, windowMs)`

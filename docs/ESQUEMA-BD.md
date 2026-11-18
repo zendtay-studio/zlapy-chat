@@ -328,6 +328,7 @@ mecanismo de revocación.
 | `hash` | TEXT | NULL | Hash del adjunto principal. |
 | `once` | INTEGER | CHECK 0/1, default 0 | Ver una vez. |
 | `edited` | INTEGER | CHECK 0/1, default 0 | Editado. |
+| `played_at` | INTEGER | nullable | Nota de voz **escuchada**: cuándo el destinatario le dio Play. No es el estado del mensaje (eso es `status`, con `read`/los tics azules): solo cambia la atenuación del reproductor del emisor. Persistido para que aunque el emisor recargue la recarga no pierda el dato. |
 | `crypto_version` | INTEGER | NOT NULL default 3 | 3 = sobre PCE3 (cifrado con la `auth_key` del autor, con cabecera interna y **firma Ed25519**). Es el único formato que el servidor lee: si encuentra una fila con otra versión, **arranca abortando** (antes servía historiales silenciosamente descartados). |
 | `crypto_group_id` | TEXT | NULL | Grupo criptográfico (para material E2E de grupos). |
 | `signature` | TEXT | NULL | Firma del remitente. |

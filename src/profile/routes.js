@@ -238,6 +238,19 @@ function postAccountChatSettings(req, res, url, data, actor) {
     return json(res, 200, { ok: true });
 }
 
+/* Empuja `keychange` a los contactos de la cuenta que acaba de regenerar su
+   clave de cifrado. La columna `contact` guarda la ID del contacto (no el
+   nombre): se resuelve contra la tabla de conectados y se avisa solo a los
+   que están en línea. Solo un aviso: el cliente lo pinta como mensaje del
+   sistema en la conversación. */
+function notificarCambioDeClave(usuario) {
+    for (const fila of Stmt.listContacts.iterate(usuario.id)) {
+        const contacto = users.get(fila.contact);
+        if (!contacto) continue; // sin conexión: nada que avisar
+        push(contacto, { type: 'keychange', from: usuario.username, ts: Date.now() });
+    }
+}
+
 async function postAccountRegenerateKey(req, res, url, data, actor) {
     // Regenerar la clave de cifrado de contenido del usuario. El contenido
     // se re-cifra con la clave nueva para no perder el historial, y
@@ -261,6 +274,13 @@ async function postAccountRegenerateKey(req, res, url, data, actor) {
         console.error('[regenerate-key] Fallo al re-cifrar el contenido:', error);
         return json(res, 500, { error: 'No se pudo regenerar la clave. Inténtalo de nuevo.' });
     }
+    /* Aviso a los contactos: el hilo sigue existiendo pero lo anterior ya no
+       se lee con la clave vieja, así que cada cliente pinta un mensaje del
+       sistema informativo («el código de seguridad cambió»). Es un aviso de
+       sesión: no se guarda nada en sus filas ni en su conversación. A quien
+       no esté conectado ahora no le queda pendiente: la información no
+       cambia el contenido de los mensajes. */
+    notificarCambioDeClave(req.authUser);
     return json(res, 200, { ok: true, keyId: result.keyId, reencrypted: result.reencrypted });
 }
 
