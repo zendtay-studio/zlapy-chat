@@ -99,7 +99,7 @@ const GRACE_PERIOD_MS = readInt('SUPERVISOR_STARTUP_MS', 30000);
 // Puerto inicial: sólo sirve hasta que el hijo anuncie el suyo en el banner.
 // `SUPERVISOR_HEALTH_PORT` permite fijarlo a mano; `PORT` es el valor normal
 // porque es el que lee el servidor de `.env`.
-const CONFIGURED_PORT = readInt('SUPERVISOR_HEALTH_PORT', readInt('PORT', 3000));
+const CONFIGURED_PORT = readInt('SUPERVISOR_HEALTH_PORT', readInt('PORT', 1820));
 // Umbral de caídas en caliente a partir del cual se deja una alerta clara.
 // El servicio NO se apaga: se sigue reintentando con el backoff máximo.
 const HOT_CRASH_THRESHOLD = readInt('SUPERVISOR_HOT_CRASH_THRESHOLD', 5);

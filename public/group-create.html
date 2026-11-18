@@ -52,6 +52,10 @@
             <rect x="5" y="10" width="14" height="10" rx="2"></rect>
             <path d="M8 10V7a4 4 0 0 1 8 0v3"></path>
         </symbol>
+        <symbol id="i-link" viewBox="0 0 24 24">
+            <path d="M10 13a5 5 0 0 0 7.1 0l2.5-2.5a5 5 0 0 0-7.1-7.1l-1.2 1.2"></path>
+            <path d="M14 11a5 5 0 0 0-7.1 0L4.4 13.5a5 5 0 0 0 7.1 7.1l1.2-1.2"></path>
+        </symbol>
         <symbol id="i-info" viewBox="0 0 24 24">
             <circle cx="12" cy="12" r="9"></circle>
             <path d="M12 11v5M12 8h.01"></path>
@@ -87,26 +91,16 @@
                         <input id="avatarInput" type="file" accept="image/*" tabindex="-1" hidden>
 
                         <div class="identity-fields">
-                            <input class="name-input" id="groupName" type="text" maxlength="40" placeholder="Nombre del grupo" aria-label="Nombre del grupo" autocomplete="off" spellcheck="true">
-                            <div class="under-name">
-                                <button class="text-action" id="descToggle" type="button" aria-expanded="false" aria-controls="descWrap">
-                                    <svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg>
-                                    <span>Añadir descripción</span>
-                                </button>
+                            <!-- El nombre crece con el texto: es un textarea de
+                                 una línea que se estira si el nombre ocupa
+                                 varias filas (como la descripción del perfil). -->
+                            <textarea class="name-input" id="groupName" rows="1" maxlength="40" placeholder="Nombre del grupo" aria-label="Nombre del grupo" autocomplete="off" spellcheck="true"></textarea>
+                            <div class="under-name solo">
                                 <span class="char-count" id="nameCount">0/40</span>
                             </div>
-                            <div class="under-name">
-                                <button class="text-action" id="customIdToggle" type="button" aria-expanded="false" aria-controls="customIdWrap">
-                                    <svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg>
-                                    <span>Poner ID personalizada</span>
-                                </button>
-                            </div>
-                            <div class="desc-wrap" id="customIdWrap" hidden>
-                                <input class="name-input" id="groupCustomId" type="text" maxlength="32" placeholder="identificadora (p. ej. equipo)" aria-label="ID personalizada del grupo" autocomplete="off" spellcheck="false">
-                                <span class="char-count" id="customIdCount">0/32</span>
-                                <p class="customIdHint">Sirve para compartir el grupo con un enlace corto (zlapy.app/g/tu-id). Opcional; si la dejas vacía, el grupo usa su identificadora interna.</p>
-                            </div>
-                            <div class="desc-wrap" id="descWrap" hidden>
+                            <!-- La descripción va siempre a la vista: era un campo
+                                 detrás de un «+» y los opcionales se ven poco. -->
+                            <div class="desc-wrap" id="descWrap">
                                 <textarea id="groupDesc" maxlength="500" rows="2" placeholder="¿De qué trata el grupo? (opcional)" aria-label="Descripción del grupo"></textarea>
                                 <span class="char-count" id="descCount">0/500</span>
                             </div>
@@ -116,6 +110,35 @@
                             </button>
                         </div>
                     </section>
+
+                    <!-- La ID personalizada es opcional y avanzada, así que va
+                         plegada igual que «Privacidad y permisos». Dentro, el
+                         campo crece con el texto y enseña el enlace REAL (con
+                         el host de esta instalación) mientras se escribe. -->
+                    <details class="advanced id-advanced" id="customIdDetails">
+                        <summary>
+                            <span class="adv-icon" aria-hidden="true">
+                                <svg class="icon"><use href="#i-link"></use></svg>
+                            </span>
+                            <span class="adv-copy">
+                                <b>ID personalizada</b>
+                                <small id="idSummary">Opcional · enlace corto para compartir</small>
+                            </span>
+                            <span class="chev" aria-hidden="true">
+                                <svg class="icon"><use href="#i-chevron"></use></svg>
+                            </span>
+                        </summary>
+                        <div class="adv-body">
+                            <div class="desc-wrap" id="customIdWrap">
+                                <textarea class="name-input id-input" id="groupCustomId" rows="1" maxlength="32" placeholder="identificadora (p. ej. equipo)" aria-label="ID personalizada del grupo" autocomplete="off" autocapitalize="none" spellcheck="false"></textarea>
+                                <div class="under-name">
+                                    <span class="char-count" id="customIdCount">0/32</span>
+                                    <span class="id-preview empty" id="idPreview" aria-live="polite"></span>
+                                </div>
+                                <p class="id-note" id="idNote">Sirve para compartir el grupo con un enlace corto. Opcional; si lo dejas vacío, el grupo usa su identificadora interna.</p>
+                            </div>
+                        </div>
+                    </details>
 
                     <section class="participants" id="participantsSection" aria-labelledby="participantsTitle">
                         <div class="section-head">
@@ -251,6 +274,7 @@
     <script src="/js/transport.js"></script>
     <script src="/js/avatar-editor.js"></script>
     <script src="/js/autogrow.js"></script>
+    <script src="/js/presence.js"></script>
     <script src="/js/group-create.js"></script>
 </body>
 </html>

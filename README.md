@@ -178,14 +178,14 @@ node server.js
 Al arrancar, el servidor imprime las URLs:
 
 ```
-✅ Zlapy (SQLite) en el puerto 3000
+✅ Zlapy (SQLite) en el puerto 1820
 
-   Esta PC:   http://localhost:3000
-   Tu red:    http://192.168.x.x:3000
+   Esta PC:   http://localhost:1820
+   Tu red:    http://192.168.x.x:1820
 
    También por HTTPS (necesario para cámara/micrófono en el móvil):
-               https://localhost:3000
-               https://192.168.x.x:3000   (acepta el aviso de certificado)
+               https://localhost:1820
+               https://192.168.x.x:1820   (acepta el aviso de certificado)
 ```
 
 > Ejecuta el servidor **en un solo sitio**: dos instancias se pelean el puerto
@@ -216,7 +216,7 @@ cp .env.example .env   # crea tu configuración local
 
 | Variable | Por defecto | Para qué sirve |
 | --- | ---: | --- |
-| `PORT` | `3000` | Puerto TCP donde escucha (http y https a la vez) |
+| `PORT` | `1820` | Puerto TCP donde escucha (http y https a la vez) |
 | `DATA_DIR` | `data` | Carpeta de las bases y los adjuntos (vacío = `data/` dentro del proyecto) |
 | `DB_USER` | vacío | Usuario del propietario: con `DB_PASSWORD` es la credencial de la que se deriva la llave maestra |
 | `DB_PASSWORD` | vacío | Contraseña del propietario (la llave maestra sale de derivarla con scrypt) |
@@ -315,7 +315,7 @@ observador puede robar la cookie de sesión y actuar como la cuenta; y un
 atacante activo puede cambiar la clave pública por la suya. Para proteger eso
 está TLS.
 
-Si el puerto 3000 está ocupado: `PORT=3001 npm start` (y ábrelo en el
+Si el puerto 1820 está ocupado: `PORT=3001 npm start` (y ábrelo en el
 firewall).
 
 ---
@@ -788,7 +788,7 @@ Para **restaurar**:
 2. Copia `zlapy.db` y `blob.db` del respaldo a la carpeta de datos (`DATA_DIR`,
    por defecto `data/`) y define la MISMA credencial (`DB_USER` + `DB_PASSWORD`) en el `.env`
    (la clave del respaldo).
-3. Arranca y comprueba `http://localhost:3000/healthz` → `{"ok":true,...}`.
+3. Arranca y comprueba `http://localhost:1820/healthz` → `{"ok":true,...}`.
 
 > Copiar solo el `.db` con el servidor corriendo **no** es un respaldo válido:
 > el WAL queda fuera. Usa siempre `npm run backup` (o `db.backup()`).

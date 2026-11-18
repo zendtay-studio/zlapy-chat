@@ -374,7 +374,7 @@ reiniciar el servidor.**
 
 | Variable | Por defecto | Qué hace | Rango válido |
 | --- | ---: | --- | --- |
-| `PORT` | `3000` | Puerto TCP donde escucha el servidor (http **y** https en el mismo puerto) | 1–65535 |
+| `PORT` | `1820` | Puerto TCP donde escucha el servidor (http **y** https en el mismo puerto) | 1–65535 |
 | `DATA_DIR` | `data` | Carpeta de `zlapy.db` y `zlapy-zlapy-blob.db`. Vacío = `data/` dentro del proyecto | Ruta (relativa al CWD) |
 | `DB_USER` | *(vacío)* | Usuario del propietario: con `DB_PASSWORD` forma la credencial de la que se deriva la llave maestra | Texto |
 | `DB_PASSWORD` | *(vacío)* | Contraseña del propietario (o usa `DB_PASSWORD_FILE` con la contraseña en un fichero `0600`) | Texto |
@@ -559,11 +559,11 @@ que el móvil pueda entrar.
 
 ```bash
 # ufw (Debian/Ubuntu)
-sudo ufw allow 3000/tcp
+sudo ufw allow 1820/tcp
 sudo ufw status
 
 # firewalld (Fedora)
-sudo firewall-cmd --permanent --add-port=3000/tcp
+sudo firewall-cmd --permanent --add-port=1820/tcp
 sudo firewall-cmd --reload
 ```
 
@@ -575,14 +575,14 @@ de Cloudflare (§11.3).
 Al arrancar, el servidor muestra sus URLs:
 
 ```
-✅ Zlapy (SQLite) en el puerto 3000
+✅ Zlapy (SQLite) en el puerto 1820
 
-   Esta PC:   http://localhost:3000
-   Tu red:    http://192.168.1.50:3000
+   Esta PC:   http://localhost:1820
+   Tu red:    http://192.168.1.50:1820
 
    HTTPS:
-               https://localhost:3000
-               https://192.168.1.50:3000
+               https://localhost:1820
+               https://192.168.1.50:1820
 ```
 
 El bloque de HTTPS solo aparece si existen `cert.pem` y `key.pem` en la raíz
@@ -720,7 +720,7 @@ chmod +x ~/.termux/boot/zlapy
    que el servidor responde:
 
 ```bash
-curl http://localhost:3000/healthz
+curl http://localhost:1820/healthz
 ```
 
 Notas:
@@ -740,7 +740,7 @@ Notas:
 ### 6.1 Health check
 
 ```bash
-curl http://localhost:3000/healthz
+curl http://localhost:1820/healthz
 ```
 
 Respuesta esperada (200):
@@ -765,12 +765,12 @@ Si la base no responde, el mismo endpoint devuelve **503**:
 Con HTTPS:
 
 ```bash
-curl -k https://localhost:3000/healthz
+curl -k https://localhost:1820/healthz
 ```
 
 ### 6.2 En el navegador
 
-1. Abre `http://localhost:3000` (en el PC) o `http://<IP-del-PC>:3000` (en el
+1. Abre `http://localhost:1820` (en el PC) o `http://<IP-del-PC>:1820` (en el
    móvil, misma WiFi).
 2. Pulsa **«Crear cuenta»**, elige un usuario (**3–24 caracteres**, minúsculas,
    números, `_`, `.` o `-`) y una contraseña (de **8 a 128** caracteres).
@@ -911,7 +911,7 @@ La credencial y las bases **siempre van juntas**: sin `DB_USER` +
 4. **Arranca y comprueba**:
    ```bash
    npm start
-   curl http://localhost:3000/healthz     # → {"ok":true,"schema":12,...}
+   curl http://localhost:1820/healthz     # → {"ok":true,"schema":12,...}
    ```
    Si el arranque falla con *"La credencial no corresponde a esta base de
    datos: el keycheck no descifra"*, es que el paso 3 no se hizo bien.
@@ -976,11 +976,11 @@ registro antes de tocarlo.
 
 | Síntoma | Causa | Solución |
 | --- | --- | --- |
-| `❌ Puerto 3000 ocupado. Usa PORT=3001 npm start` | `EADDRINUSE` en el despachador (`src/http/servers.js`): hay **otro Zlapy** (o el supervisor anterior) escuchando | Para el otro proceso (`systemctl stop zlapy`, `pm2 stop zlapy`) o cambia el puerto **en el `.env`** (`PORT=3001`) y reinicia. `PORT=3001 npm start` solo vale para esa ejecución puntual |
+| `❌ Puerto 1820 ocupado. Usa PORT=3001 npm start` | `EADDRINUSE` en el despachador (`src/http/servers.js`): hay **otro Zlapy** (o el supervisor anterior) escuchando | Para el otro proceso (`systemctl stop zlapy`, `pm2 stop zlapy`) o cambia el puerto **en el `.env`** (`PORT=3001`) y reinicia. `PORT=3001 npm start` solo vale para esa ejecución puntual |
 | El supervisor entra en bucle de «fallo de arranque» | El hijo muere antes de servir: casi siempre un error de configuración o de la base | Mira el error del hijo en la salida del supervisor; el mensaje concreto está unas líneas más arriba |
 | `CIRCUITO ABIERTO: 10 fallos de arranque consecutivos …` y el proceso sale con **código 70** | Se agotó `SUPERVISOR_MAX_RESTARTS` (10) porque el servidor **nunca llegó a servir** | **Corrige la causa y arranca a mano** (`node server.js` para ver el error completo). Con systemd y `Restart=always`, systemd lo reintentará: usa `Restart=on-failure` + `SuccessExitStatus=70` si quieres que se quede parado |
 | `CAÍDA EN CALIENTE (code=…, uptime=…) … El servicio no se queda apagado.` | El servidor ya servía y se ha caído. El supervisor reinicia **siempre** con el backoff topado y avisa a partir de 5 caídas | Mira el error del hijo (el supervisor reenvía su stdout/stderr tal cual). Suele ser un `uncaughtException` o una base inaccesible |
-| `sin latido del hijo desde hace 45s` / `salud fallida x3 …` | El proceso está **vivo pero colgado**: el event loop bloqueado (o la base no responde) | Comprueba a mano `curl http://localhost:3000/healthz`; si el puerto del `.env` no es el real, ajusta `SUPERVISOR_HEALTH_PORT` (el supervisor lo corrige solo con el banner, pero solo si el hijo llega a imprimirlo) |
+| `sin latido del hijo desde hace 45s` / `salud fallida x3 …` | El proceso está **vivo pero colgado**: el event loop bloqueado (o la base no responde) | Comprueba a mano `curl http://localhost:1820/healthz`; si el puerto del `.env` no es el real, ajusta `SUPERVISOR_HEALTH_PORT` (el supervisor lo corrige solo con el banner, pero solo si el hijo llega a imprimirlo) |
 | `Cannot open database because the directory does not exist` | La carpeta de datos no existe: SQLite **no crea directorios** | `mkdir -p data` (o `mkdir -p "$DATA_DIR"`); el directorio debe existir **antes** de arrancar |
 | `No se pudo desbloquear la base con la credencial del propietario` (salida 78) | `DB_USER`/`DB_PASSWORD` faltan en el `.env` o no son los de esta base (`src/crypto/owner-key.js`) | **Restaura la credencial del kit de recuperación en el `.env`** (no inventes una nueva: dejaría ilegibles todos los datos cifrados) |
 | `Formato de cifrado de la base no compatible (crypto_version=N)` / `Database crypto version is incompatible with this server.` | La base es de una versión anterior del formato de cifrado. El formato **no** se migra | Restaura la base desde `backups/` o arranca con una base nueva (mueve `data/` a otra parte) |
@@ -995,7 +995,7 @@ registro antes de tocarlo.
 | `No se encontró 'cloudflared' en el PATH.` | `cloudflared` no está instalado | Instálalo: <https://developers.cloudflare.com/cloudflared/install/> |
 | `Falta CLOUDFLARE_TUNNEL_TOKEN en .env` | El token del túnel no está en el `.env` | `CLOUDFLARE_TUNNEL_TOKEN=eyJ...` en el `.env` (panel de Cloudflare → Zero Trust → Networks → Tunnels) |
 | `No existe zty.yml. Cópialo desde el ejemplo:` | Falta la configuración del túnel | `cp zty.yml.example zty.yml` y edita tu dominio en `ingress` |
-| El túnel levanta pero nadie entra | La regla `ingress` de `zty.yml` apunta a un puerto que no es el del servidor, o el dominio no resuelve | Comprueba `service: http://localhost:3000` en `zty.yml` y que `PORT` coincide |
+| El túnel levanta pero nadie entra | La regla `ingress` de `zty.yml` apunta a un puerto que no es el del servidor, o el dominio no resuelve | Comprueba `service: http://localhost:1820` en `zty.yml` y que `PORT` coincide |
 | La **cámara o el micrófono** no funcionan en el móvil | `http://` no es contexto seguro | Usa **HTTPS** (§7) y acepta el certificado autofirmado |
 | Las **notificaciones push** no llegan | La Push API exige un origen **HTTPS**, un navegador con soporte de Push, permiso concedido y que el sistema operativo no limite la actividad en segundo plano | Sirve por HTTPS, activa las notificaciones en Ajustes y prueba el envío; el servidor registra los fallos en `[push] N/M notificaciones fallidas` |
 | El navegador insiste en HTTPS y `http://` ya no responde | HSTS: al visitar la versión HTTPS el servidor envía `Strict-Transport-Security: max-age=31536000` | Vuelve a servir los certificados (`cert.pem` + `key.pem`) o espera a que expire la caché HSTS del navegador |
@@ -1023,7 +1023,7 @@ El servidor ya las imprime al arrancar, en el bloque `Tu red:` del banner.
 ### 11.2 Por qué el móvil y el PC deben estar en la misma red
 
 - El servidor escucha en `0.0.0.0`, así que responde a cualquier IP que
-  llegue al puerto 3000.
+  llegue al puerto 1820.
 - El móvil tiene que **alcanzar esa IP**: misma WiFi/router, sin «aislamiento
   de clientes» activado en el router y sin un firewall que bloquee el puerto.
 - Desde fuera de tu red, la IP privada (`192.168.x.x`, `10.x.x.x`) **no
@@ -1033,7 +1033,7 @@ El servidor ya las imprime al arrancar, en el bloque `Tu red:` del banner.
 Comprueba desde el móvil (con la app de terminal o el navegador):
 
 ```
-http://192.168.1.50:3000/healthz
+http://192.168.1.50:1820/healthz
 ```
 
 Si no responde, el problema es de red (WiFi distinto, aislamiento del router,

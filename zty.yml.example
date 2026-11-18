@@ -37,7 +37,7 @@ ingress:
   # `hostname` captura cualquier dominio, y una sin `path` captura cualquier
   # ruta.
   - hostname: tunel.ejemplo.com
-    service: http://localhost:3000
+    service: http://localhost:1820
 
   # Catch-all obligatorio: sin esta ultima regla cloudflared se quejaria, y
   # ademas deja escrito que este tunel no es un proxy abierto. Cualquier

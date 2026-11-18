@@ -15,11 +15,22 @@
     <meta name="description" content="Chats, historias y llamadas. Rápido, privado y siempre contigo.">
     <link rel="icon" type="image/webp" href="/image/isotype-308.webp">
     <link rel="stylesheet" href="/css/fonts.css">
+    <!-- Versión de compilación: la MISMA que usa el service worker para su
+         caché. Se carga antes que todo para que Ajustes pueda leerla. -->
+    <script src="/js/build.js"></script>
     <script src="/js/markdown-chat.js"></script>
     <script src="/js/button-theme.js"></script>
     <!-- Etiquetas de los mensajes del sistema (Hoy/Ayer/Antier): se carga
          ANTES del script inline porque su renderAll() la usa al pintar. -->
     <script src="/js/system-messages.js"></script>
+    <!-- Escalera de la última conexión («Ult. vez…»): igual en el chat,
+         los grupos y la vista de perfil. -->
+    <script src="/js/presence.js"></script>
+    <!-- Orden y tandas de la fila de historias: primero los contactos, luego
+         las historias ajenas con un «+» para cargar más. -->
+    <script src="/js/story-row.js"></script>
+    <!-- Dirección del scroll: la fecha flotante solo sale al subir. -->
+    <script src="/js/fecha-flotante.js"></script>
 
     <meta property="og:title" content="Zlapy">
     <meta property="og:description" content="Chats, historias y llamadas. Rápido, privado y sin depender de terceros.">
@@ -441,6 +452,26 @@
             font-size: calc(var(--storyRing, 48px)*.43);
             font-weight: 300;
             border: none
+        }
+
+        /* «+» del final: no es «Añadir historia», es «cargar más». Mismo
+           lenguaje visual, anillo sólido en vez de discontinuo. */
+        .storyAv.more .ring {
+            background: transparent;
+            border: 2px solid #3a4550;
+            padding: 1px
+        }
+
+        .storyAv.more .in {
+            background: #1b2127;
+            color: var(--accent-readable);
+            font-size: calc(var(--storyRing, 48px)*.43);
+            font-weight: 300;
+            border: none
+        }
+
+        .storyAv.more:hover .ring {
+            border-color: var(--accent)
         }
 
         .storyName {
@@ -2787,7 +2818,7 @@
             color: var(--muted)
         }
 
-        /* La presencia ("Últ. vez 12 nov a las 04:01 p.m.") rompía el alto
+        /* La presencia ("Ult. vez hoy a las 04:01 p.m.") rompía el alto
            de la cabecera partiéndose en dos líneas. Ahora no se parte: si no
            cabe, el texto se desliza suave dentro de su ancho (ida y vuelta
            con `transform`, que el navegador puede compositar). La distancia
@@ -3056,7 +3087,7 @@
         /* Fecha FLOTANTE (estilo WhatsApp): se queda arriba mientras te
            desplazas por el historial y dice la fecha del primer mensaje
            visible; al cruzar de día se actualiza (Hoy → Ayer → Antier → día
-           de la semana → fecha) y se va sola a los 3 s de parar. No se pinta
+           de la semana → fecha) y se va sola a los 2 s de parar. No se pinta
            cuando el separador de fecha de la lista ya está a la vista.
            La caja mide CERO de alto y la píldora va en absoluto: no ocupa
            sitio en la lista, solo sobresale. `sticky` la deja clavada en el
@@ -10027,7 +10058,7 @@
             font-size: 13px
         }
 
-        /* Ajustes > Datos locales: mismos colores y piezas que Cuenta
+        /* Ajustes > Datos y almacenamiento: mismos colores y piezas que Cuenta
            (setRow, accountSectionHead, mBtn/peligro). Nada de colores
            nuevos: solo las variables del tema. */
         #settingsMain .localDataSection > .mBtn {
@@ -10525,22 +10556,60 @@
                 box-shadow: 0 0 0 7px color-mix(in srgb, var(--accent) 18%, transparent)
             }
 
-            /* El chat vuelve a ir a borde a borde (sin margen ni esquinas
-               redondeadas): la tarjeta flotante recortaba el papel tapiz y
-               en cada esquina asomaba el fondo de la pagina como una punta
-               clara que se leia como un borde blanco. */
+            /* Chat y paneles de información enmarcados, como en Ajustes:
+               margen exterior, radio 20 y sombra. En móvil las reglas de
+               :root.narrow / ≤768px los dejan a sangre. */
+            #chat {
+                margin: 10px 12px 10px 0;
+                border: 0;
+                border-radius: 20px;
+                box-shadow: 0 12px 32px #0003
+            }
+
+            #contactPanel.on,
+            #groupPanel.on,
+            #stickerCreatorLayer.on {
+                margin-block: 10px;
+                border: 0;
+                border-radius: 20px;
+                box-shadow: 0 12px 32px #0003
+            }
+
             #contactPanel,
             #groupPanel,
             #stickerCreatorLayer {
                 background: var(--surface)
             }
 
+            #contactPanel.on {
+                margin-left: 0;
+                margin-right: 12px
+            }
+
             /* Sin regla propia para .cpInner: el ancho lo deciden la regla
                base (400px) y el recorte de ≤1024px (320px). Aquí había una
                que reimpotía 400px sobre el recorte y el contenido se salía
                80px del panel entre 769 y 1024 px. */
+            #groupPanel.on {
+                margin-left: 0;
+                margin-right: 12px
+            }
+
+            #stickerCreatorLayer.on {
+                margin-left: 0;
+                margin-right: 12px
+            }
+
             #groupPanel .gpInner {
                 width: min(var(--info-width, 400px), 320px)
+            }
+
+            /* Con un panel abierto el chat deja hueco para su margen derecho,
+               en vez de quedar pegado al marco de la ventana. */
+            #chat:has(~ #contactPanel.on),
+            #chat:has(~ #groupPanel.on),
+            #chat:has(~ #stickerCreatorLayer.on) {
+                margin-right: 8px
             }
 
             #chat:has(.sheetPage.on) .sheetPage {
@@ -11398,6 +11467,10 @@
                es el tamaño de la página 1 (la que llega por WebSocket). */
             const CONTACTS_PAGE = 40;
             let contactsOffset = CONTACTS_PAGE, contactsMore = false, contactsTotal = 0, contactsCargando = false, contactsPaginaLen = 0, contactsQuery = '', contactsCargaToken = 0;
+            /* Nombres de contactos conocidos, independientes de la búsqueda y
+               de las páginas cargadas: la fila de historias no debe cambiar
+               de orden solo porque el buscador filtre la lista. */
+            let contactUsernames = new Set();
             let CHAT_TEXT_LIMITS = { dm: 10000, group: 15000, story: 140, description: 140, preview: 2500 };
             let MAX_GALLERY_UPLOAD_CHARS = 24000000;
             let MAX_GALLERY_ITEMS = 20;
@@ -11458,6 +11531,10 @@
             let mediaRec = null, recStream = null, recChunks = [], recInt = null, recStart = 0, recElapsedMs = 0, canceled = false, previewFinalizing = false;
             let previewBlob = null, previewAudio = null, previewUrl = '', previewSending = false, composerMode = 'normal';
             let onceMode = false, unread = Object.create(null), myStories = [], storyTimer = null, ws = null, wsHeartbeatTimer = null, wsReconnectTimer = null, wsRetry = 0, wsStableTimer = 0, contactRenderVersion = 0;
+            /* Tandas extra que el usuario ha pedido con el «+» al final de la
+               fila de historias. Solo afecta a las historias que NO son de
+               contactos; las de contactos se enseñan siempre enteras. */
+            let storiesRowExtra = 0;
             let managerStories = [], storiesMgrLoadVersion = 0;
             const mediaObjectUrls = new WeakMap();
             let imageGallery = [], imageGalleryIndex = 0, imageGalleryTransitionVersion = 0, imageGalleryAnimation = null;
@@ -13045,9 +13122,13 @@
                     contactsOffset = pagina.length;
                     contactsMore = masPaginas;
                     contactsTotal = Math.max(0, total - 1); // sin contarse a sí mismo
+                    rememberContactUsernames(pagina);
                     if (active && activeKind === 'dm') updateChatSub(active);
                     refreshProfiles();
                     renderContacts();
+                    /* La fila de historias separa contactos de ajenas: al
+                       llegar (o cambiar) la lista hay que rehacer el reparto. */
+                    renderStories();
                     return;
                 }
 
@@ -13769,18 +13850,13 @@
             function presenceText(c) {
                 if (!c) return '';
                 if (c.online) return 'en línea';
-                /* Sin «últ. vez»: se muestra el @usuario SIN la arroba. Si el
-                   @ está oculto para mí, no se revela: se dice que hace mucho
-                   tiempo que no se le ve, con el mismo formato que el resto. */
-                if (!c.lastSeen) return usuarioOcultoDe(c.username) ? 'Últ. vez hace mucho tiempo' : c.username;
-                const d = new Date(c.lastSeen), now = new Date();
-                const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-                const startThatDay = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-                const daysAgo = Math.round((startToday - startThatDay) / 86400000);
-                if (daysAgo === 0) return `Últ. vez hoy a las ${time}`;
-                if (daysAgo === 1) return `Últ. vez ayer a las ${time}`;
-                return `Últ. vez ${d.toLocaleDateString([], { day: 'numeric', month: 'short' })} a las ${time}`;
+                /* Sin «última vez»: se muestra el nombre de usuario SIN la
+                   arroba. Si además está oculto para mí, no se revela: se
+                   dice que hace mucho tiempo que no se le ve. */
+                if (!c.lastSeen) return usuarioOcultoDe(c.username)
+                    ? window.ZlapyPresence.MUCHO_TIEMPO
+                    : c.username;
+                return window.ZlapyPresence.lastSeenLabel(c.lastSeen) || c.username;
             }
             /* Escribe el subtítulo de la cabecera SIEMPRE por aquí: además
                del texto, mide si desborda y activa el deslizamiento. El
@@ -13856,22 +13932,42 @@
             }
 
             function renderStories() {
-                const byUser = Object.create(null);
-                for (const s of (myStories || [])) (byUser[s.from] = byUser[s.from] || []).push(s);
-                const fresh = u => (byUser[u] || []).filter(s => s.ts > (storySeenMap[u] || 0)).length;
-                const myP = (typeof profilesCache !== 'undefined' && profilesCache[me.username]) || {};
-                let html = `<div class="storyAv add" onclick="openStoriesPage()" title="Añadir historia"><div class="ring"><div class="in">+</div></div><span class="storyName">Añadir</span></div>`;
-                const others = Object.keys(byUser).filter(u => u !== me.username)
-                    .sort((a, b) => ((fresh(b) > 0) - (fresh(a) > 0)) || displayNameOf(a).localeCompare(displayNameOf(b)));
-                for (const u of others) {
+                const row = document.getElementById('storiesRow');
+                /* Reparto en un módulo aparte (probado en Node): contactos
+                   primero, luego las historias ajenas que entrega el servidor.
+                   Las de contactos van enteras; las ajenas, por tandas. */
+                const reparto = window.ZlapyStoryRow.layout({
+                    stories: myStories || [],
+                    contacts: contactUsernames,
+                    me: me.username,
+                    seen: storySeenMap,
+                    nameOf: displayNameOf
+                });
+                const fresh = u => reparto.freshByUser[u] || 0;
+                const storyUserHtml = u => {
                     const p = profilesCache[u] || {};
                     const name = p.name || u;
                     const n = fresh(u);
-                    html += `<div class="storyAv${n ? '' : ' seen'}" onclick="viewStory('${jsArg(u)}')" title="${escapeHtml(name)}"><div class="ring"><div class="in"><img src="${escapeHtml(p.avatar || avatarUrl(u, p.id))}" alt=""></div>${n ? `<span class="count">${n > 9 ? '9+' : n}</span>` : ''}</div><span class="storyName">${escapeHtml(name)}</span></div>`;
-                }
-                const mine = byUser[me.username] || [];
+                    return `<div class="storyAv${n ? '' : ' seen'}" onclick="viewStory('${jsArg(u)}')" title="${escapeHtml(name)}"><div class="ring"><div class="in"><img src="${escapeHtml(p.avatar || avatarUrl(u, p.id))}" alt=""></div>${n ? `<span class="count">${n > 9 ? '9+' : n}</span>` : ''}</div><span class="storyName">${escapeHtml(name)}</span></div>`;
+                };
+                const myP = (typeof profilesCache !== 'undefined' && profilesCache[me.username]) || {};
+                let html = `<div class="storyAv add" onclick="openStoriesPage()" title="Añadir historia"><div class="ring"><div class="in">+</div></div><span class="storyName">Añadir</span></div>`;
+                for (const u of reparto.contacts) html += storyUserHtml(u);
+                const mine = reparto.mine;
                 if (mine.length) html += `<div class="storyAv${fresh(me.username) ? '' : ' seen'}" onclick="viewStory(me.username)" title="Ver tus historias"><div class="ring"><div class="in"><img src="${escapeHtml(myP.avatar || avatarUrl(me.username, me.id))}" alt=""></div>${mine.length > 9 ? `<span class="count">9+</span>` : `<span class="count">${mine.length}</span>`}</div><span class="storyName">Tú</span></div>`;
-                document.getElementById('storiesRow').innerHTML = html;
+                const tanda = window.ZlapyStoryRow.page(reparto.server, storiesRowExtra);
+                for (const u of tanda.visible) html += storyUserHtml(u);
+                if (tanda.hidden > 0) html += `<div class="storyAv more" role="button" tabindex="0" onclick="showMoreStories()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();showMoreStories();}" title="Cargar más historias" aria-label="Cargar más historias"><div class="ring"><div class="in">+</div></div><span class="storyName">Más</span></div>`;
+                const prevLeft = row.scrollLeft;
+                row.innerHTML = html;
+                row.scrollLeft = prevLeft;
+            }
+            /* «+» del final: una tanda más de historias ajenas. Las de los
+               contactos no dependen de esto. */
+            function showMoreStories() {
+                const api = window.ZlapyStoryRow;
+                storiesRowExtra += api && api.PAGE ? api.PAGE : 8;
+                renderStories();
             }
             let groupCreateRouteFrame = null;
             let groupCreateAfterClose = null;
@@ -15579,6 +15675,19 @@
             /* Carga una página de contactos del servidor. Con append=false se
                reemplaza lo cargado (arranque o búsqueda nueva); con true se
                añade la siguiente página (scroll al final de la lista). */
+            /* La fila de historias clasifica por «es contacto o no». Esa
+               pertenencia se recuerda aparte de `contacts` para que filtrar
+               con el buscador (que reemplaza `contacts` por los resultados)
+               no degrade a un contacto a «historia ajena». */
+            function rememberContactUsernames(lista) {
+                for (const item of (lista || [])) {
+                    const u = typeof item === 'string' ? item : item && item.username;
+                    if (u && u !== me.username) contactUsernames.add(u);
+                }
+            }
+            function forgetContactUsername(username) {
+                contactUsernames.delete(username);
+            }
             async function cargarContactosPagina(append = false, query) {
                 if (query !== undefined) contactsQuery = query || '';
                 if (!append) { contactsOffset = 0; contactsPaginaLen = 0; }
@@ -15603,7 +15712,11 @@
                     contactsOffset = (typeof data.offset === 'number' ? data.offset : contactsOffset) + page.length;
                     contactsMore = !!data.more;
                     contactsTotal = typeof data.total === 'number' ? data.total : 0;
+                    if (!contactsQuery) rememberContactUsernames(page);
                     renderContacts();
+                    /* Las páginas siguientes pueden traer contactos con
+                       historia: se reclasifican sin esperar a otro repintado. */
+                    renderStories();
                 } catch { }
                 finally { if (token === contactsCargaToken) contactsCargando = false; }
             }
@@ -15758,8 +15871,12 @@
                 const key = activeKind === 'group' && activeGroup ? activeGroup.id : active;
                 requestAnimationFrame(() => {
                     const currentKey = activeKind === 'group' && activeGroup ? activeGroup.id : active;
-                    if (version === chatOpenVersion && key === currentKey && document.body.classList.contains('chat-open'))
+                    if (version === chatOpenVersion && key === currentKey && document.body.classList.contains('chat-open')) {
                         el.scrollTop = el.scrollHeight;
+                        /* Se marca la posición de referencia: desde aquí la
+                           fecha flotante solo saldrá si se sigue BAJANDO. */
+                        fechaFlotTop = el.scrollTop;
+                    }
                 });
             }
 
@@ -16093,7 +16210,11 @@
                     const result = await response.json();
                     if (!response.ok) throw new Error(result.error || 'HTTP ' + response.status);
                     contacts = contacts.filter(contact => contact.username !== username);
+                    forgetContactUsername(username);
                     renderContacts();
+                    /* Deja de ser contacto: su historia pasa al tramo del
+                       servidor, con su «+» si hace falta. */
+                    renderStories();
                     toast('Contacto eliminado; el historial se conservó');
                 } catch (error) {
                     console.error('[contacts] No se pudo eliminar el contacto:', error);
@@ -16191,13 +16312,21 @@
 
             /* Fecha flotante: con cada desplazamiento se recalcula (con retardo
                de frame para no hacerlo por píxel) y se rearma el temporizador
-               de 3 s que la esconde. Los recolocamientos programáticos del
-               scroll (cargar mensajes antiguos) no la muestran. */
+               de 2 s que la esconde. Aparece SOLO al subir, adentrándose en el
+               pasado; en cuanto se baja hacia lo reciente se esconde. Los
+               recolocamientos programáticos del scroll (cargar mensajes
+               antiguos) no la muestran. */
             document.getElementById('msgs').addEventListener('scroll', () => {
                 if (fechaFlotRaf) return;
                 fechaFlotRaf = requestAnimationFrame(() => {
                     fechaFlotRaf = 0;
                     if (performance.now() < fechaFlotSilencio) { ocultarFechaFlotante(); return; }
+                    const box = document.getElementById('msgs');
+                    const previo = fechaFlotTop;
+                    fechaFlotTop = box.scrollTop;
+                    /* `null` = aún no hay dirección de referencia (chat recién
+                       abierto o recién vuelto al fondo): no se inventa una. */
+                    if (!window.ZlapyFechaFlotante.haciaArriba(previo, box.scrollTop)) { ocultarFechaFlotante(); return; }
                     actualizarFechaFlotante();
                 });
             }, { passive: true });
@@ -17979,7 +18108,7 @@
                 return `<div class="systemMsg${sep}" role="status" data-ts="${Number(m.ts) || 0}"><span>${escapeHtml(m.text || '')}</span></div>`;
             }
             /* ───── Fecha flotante (barra de arriba al desplazarse) ───── */
-            let fechaFlotTimer = 0, fechaFlotRaf = 0, fechaFlotSilencio = 0;
+            let fechaFlotTimer = 0, fechaFlotRaf = 0, fechaFlotSilencio = 0, fechaFlotTop = null;
             function ensureFechaFlotante() {
                 const el = document.getElementById('msgs');
                 if (!el) return null;
@@ -18031,7 +18160,7 @@
                 if (span.textContent !== etiqueta) span.textContent = etiqueta;
                 pill.classList.add('on');
                 clearTimeout(fechaFlotTimer);
-                fechaFlotTimer = setTimeout(ocultarFechaFlotante, 3000);
+                fechaFlotTimer = setTimeout(ocultarFechaFlotante, 2000);
             }
             const MIC_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" fill="#ef5350"><path d="M12 14a3 3 0 003-3V5a3 3 0 00-6 0v6a3 3 0 003 3zm5-3a5 5 0 01-10 0H5a7 7 0 006 6.92V21h2v-3.08A7 7 0 0019 11h-2z"/></svg>';
             function paintTypingBubble() {
@@ -18076,8 +18205,12 @@
                 indicator.innerHTML = activity;
                 messages.appendChild(indicator);
                 if (wasAtBottom) requestAnimationFrame(() => {
-                    if (indicator.isConnected && indicator.parentElement === messages)
+                    if (indicator.isConnected && indicator.parentElement === messages) {
                         messages.scrollTop = messages.scrollHeight;
+                        /* Se reancla la referencia: la fecha flotante solo
+                           saldrá si el usuario sigue BAJANDO desde aquí. */
+                        fechaFlotTop = messages.scrollTop;
+                    }
                 });
             }
             function setTyping(who, on, groupId) {
@@ -22146,8 +22279,12 @@
             let settingsPriv = null;
             let settingsPrivNobody = false;
             let privSaveT = null;
-            const APP_BUILD_VERSION = 34;
-            const APP_BUILD_DATE = '8 nov 2026';
+            /* La versión y la fecha vienen de /js/build.js, la MISMA fuente
+               que el nombre de la caché del service worker (`zlapy-v202`):
+               lo que ves en Información técnica es exactamente lo que hay
+               cacheado, sin dos números que se desincronicen. */
+            const APP_BUILD_VERSION = String(window.ZLAPY_BUILD || '0');
+            const APP_BUILD_DATE = String(window.ZLAPY_BUILD_DATE || '—');
             function appBrowserInfo() {
                 const ua = navigator.userAgent || '';
                 const brands = navigator.userAgentData && navigator.userAgentData.brands;
@@ -22249,6 +22386,7 @@
                 cuenta: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="8" cy="14" r="3.5"/><path d="M10.5 11.5L20 4M15 4h5v5"/></svg>',
                 priv: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg>',
                 chats: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5h16v11H9l-5 4V5z"/></svg>',
+                apariencia: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3a9 9 0 100 18c1.3 0 2-.9 2-1.8 0-1.6-1.3-1.9-1.3-3.2 0-1 .8-1.8 1.9-1.8H17a4 4 0 004-4c0-4-4-7.2-9-7.2z"/><circle cx="7.6" cy="11.4" r="1.1" fill="currentColor" stroke="none"/><circle cx="10.2" cy="7.8" r="1.1" fill="currentColor" stroke="none"/><circle cx="14.6" cy="7.6" r="1.1" fill="currentColor" stroke="none"/></svg>',
                 media: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="6" width="12" height="12" rx="2.5"/><path d="M15 11l6-3.5v9L15 13z"/></svg>',
                 notif: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 9a6 6 0 0112 0c0 5 2 6 2 6H4s2-1 2-6zM10 20a2 2 0 004 0"/></svg>',
                 foto: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="8" r="3.5"/><path d="M4 20c0-3.9 3.6-6 8-6s8 2.1 8 6"/></svg>',
@@ -22259,6 +22397,7 @@
                 mensajes: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5h16v11H9l-5 4V5z"/></svg>',
                 online: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></svg>',
                 datos: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><ellipse cx="12" cy="5.5" rx="7.5" ry="2.8"/><path d="M4.5 5.5v6.2c0 1.6 3.4 2.8 7.5 2.8s7.5-1.2 7.5-2.8V5.5"/><path d="M4.5 11.7V18c0 1.6 3.4 2.8 7.5 2.8s7.5-1.2 7.5-2.8v-6.3"/></svg>',
+                version: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5"/><circle cx="12" cy="8" r="1" fill="currentColor" stroke="none"/></svg>',
                 compartir: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M10 9V5l-7 7 7 7v-4c5 0 8.5 1.6 11 5-1-5-4-10-11-11z"/></svg>'
             };
             const WALLS = [
@@ -22747,14 +22886,20 @@
                    hub iba al main (vista de inicio), ya no toca pintarlo:
                    paintSettings habría repintado la sección. */
                 if (el.id !== 'settingsHub' && settingsSection !== 'hub') return;
+                /* Orden estilo WhatsApp: primero la persona y su cuenta, después
+                   cómo se comporta el chat (comportamiento → aspecto), luego los
+                   avisos, el equipo, el almacenamiento y por último los datos
+                   técnicos. Cada fila lleva su propio asunto: nada de «Chats»
+                   metiendo fondo y colores dentro. */
                 const rows = [
                     ['perfil', 'Perfil', 'Nombre, foto del perfil, nombre de usuario'],
                     ['cuenta', 'Cuenta', 'Tus cuentas conectadas y seguridad'],
-                    ['priv', 'Privacidad', 'Ajustes de privacidad y contactos bloqueados'],
-                    ['chats', 'Chats', 'Estilo, fondo, ajustes del chat'],
-                    ['media', 'Video y voz', 'Cámara, micrófono y altavoces'],
+                    ['priv', 'Privacidad y seguridad', 'Quién te ve y contactos bloqueados'],
+                    ['chats', 'Chats', 'Reacciones, audios y ediciones'],
+                    ['apariencia', 'Apariencia', 'Fondo, temas, colores y tamaño del texto'],
                     ['notif', 'Notificaciones', 'Avisos, sonidos y diagnóstico'],
-                    ['datos', 'Datos locales', 'Caché, almacenamiento y limpieza'],
+                    ['media', 'Video y voz', 'Cámara, micrófono, altavoces y espejo'],
+                    ['datos', 'Datos y almacenamiento', 'Caché, almacenamiento y limpieza'],
                     ['version', 'Información técnica', 'Aplicación, navegador y servidor']
                 ];
                 el.innerHTML =
@@ -22832,7 +22977,11 @@
                 const split = window.innerWidth > 768 && settingsSection !== 'hub';
                 sh.classList.toggle('split', split);
                 document.getElementById('settingsTitle').textContent = settingsSection === 'hub' ? 'Ajustes' :
-                    { perfil: 'Perfil', cuenta: 'Cuenta', chats: 'Chats', media: 'Video y voz', notif: 'Notificaciones', priv: 'Privacidad', datos: 'Datos locales', version: 'Información técnica' }[settingsSection] || 'Ajustes';
+                    {
+                        perfil: 'Perfil', cuenta: 'Cuenta', priv: 'Privacidad y seguridad',
+                        chats: 'Chats', apariencia: 'Apariencia', notif: 'Notificaciones',
+                        media: 'Video y voz', datos: 'Datos y almacenamiento', version: 'Información técnica'
+                    }[settingsSection] || 'Ajustes';
                 if (settingsSection === 'hub') {
                     await renderSettingsHub(main, hub);
                     return;
@@ -22947,13 +23096,10 @@
                     if (settingsSection === 'cuenta' && main.querySelector('.linkedAccountList')) saveLinkedAccounts(latestAccounts);
                     return;
                 }
-                if (settingsSection === 'chats') {
+                if (settingsSection === 'apariencia') {
                     await chatAppearanceSync;
-                    if (!sh.classList.contains('on') || settingsSection !== 'chats') return;
+                    if (!sh.classList.contains('on') || settingsSection !== 'apariencia') return;
                     const appearance = getChatAppearance();
-                    const ap = autoPlayNextOn();
-                    const er = editHighlightOn();
-                    const rxPrefs = reactionPrefs();
                     const currentTheme = next => CHAT_COLOR_THEMES.findIndex(theme =>
                         ['sender', 'senderText', 'receiver', 'receiverText'].every(key =>
                             theme[key].toLowerCase() === next[key].toLowerCase()));
@@ -23002,20 +23148,6 @@
         <label><span class="chatAppearanceColorRow"><span>Tamaño actual</span><span class="chatAppearanceValue" id="chatFontSizeValue">${appearance.fontSize}px</span></span><input class="chatAppearanceRange" type="range" id="chatFontSize" min="12" max="22" step="1" value="${appearance.fontSize}" aria-label="Tamaño del texto del chat"></label>
         <button class="mBtn sec" type="button" id="resetChatFontSize">Restablecer tamaño del texto</button>
       </div>
-      <div class="switchRow"><div class="meta"><b>Auto play del siguiente audio</b><span>Al terminar una nota de voz, se reproduce la que sigue (de quien sea)</span></div><button class="tgl${ap ? ' on' : ''}" id="swAutoPlay"></button></div>
-        <div class="switchRow"><div class="meta"><b>Modo espejo de mi cámara</b><span>En las videollamadas, mi vista previa se muestra como en un espejo (desactivado, se ve el bruto de la cámara)</span></div><button class="tgl${callMirrorOn() ? ' on' : ''}" id="swCamEspejo" type="button" aria-pressed="${callMirrorOn()}" aria-label="Modo espejo de mi cámara"></button></div>
-        <div class="switchRow"><div class="meta"><b>Resaltar ediciones</b><span>Al editar un texto, las palabras añadidas llevan un resalte; apagado, se ve solo el texto final</span></div><button class="tgl${er ? ' on' : ''}" id="swEditResalte" type="button" aria-pressed="${er}" aria-label="Resaltar ediciones"></button></div>
-        <div class="chatAppearanceSubhead">Reacciones rápidas</div>
-        <div class="switchRow"><div class="meta"><b>Barra de reacciones al doble toque</b><span>Muestra tus 6 reacciones sobre el mensaje; apagado, el doble toque aplica una reacción al instante sin ninguna interfaz</span></div><button class="tgl${rxPrefs.dobleTap === 'menu' ? ' on' : ''}" id="swRxDt" type="button" aria-pressed="${rxPrefs.dobleTap === 'menu'}" aria-label="Barra de reacciones al doble toque"></button></div>
-        <div class="rxChoiceRow" id="rxInstantRow" role="group" aria-label="Reacción del doble toque instantáneo"${rxPrefs.dobleTap === 'instant' ? '' : ' hidden'}>
-          <button class="rxChoice${rxPrefs.instantMode === 'most_used' ? ' on' : ''}" data-rx-mode="most_used" type="button">La más usada</button>
-          <button class="rxChoice${rxPrefs.instantMode === 'default' ? ' on' : ''}" data-rx-mode="default" type="button">Predeterminada (la 1ª que fijaste)</button>
-        </div>
-        <div class="chatAppearanceHint">Tus 6 reacciones: las de la barra del doble toque y las del Pop Menu. Toca una para cambiarla con el selector de emojis y usa las flechas para fijar tu orden base: la primera es la predeterminada. En la barra y el menú se muestran primero las más usadas, por puntos, como los strickers (todo local).</div>
-        <div class="rxSlots">${rxPrefs.emojis.map((emoji, i) => `<div class="rxSlot"><button class="rxSlotEmoji" data-rx-i="${i}" type="button" aria-label="Reacción ${i + 1}">${escapeHtml(emoji)}</button><span class="rxSlotArrows"><button type="button" data-rx-move="${i},-1" aria-label="Mover la reacción ${i + 1} a la izquierda"${i === 0 ? ' disabled' : ''}><svg viewBox="0 0 24 24"><path d="m14 6-6 6 6 6"/></svg></button><button type="button" data-rx-move="${i},1" aria-label="Mover la reacción ${i + 1} a la derecha"${i === 5 ? ' disabled' : ''}><svg viewBox="0 0 24 24"><path d="m10 6 6 6-6 6"/></svg></button></span></div>`).join('')}</div>
-        <div id="rxEpi"><div id="rxEpiHead"><input id="rxEpiSearch" type="text" placeholder="Buscar emojis" autocomplete="off" aria-label="Buscar emojis"><button class="btn" id="rxEpiClose" type="button" title="Cerrar selector" aria-label="Cerrar selector"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div><div id="rxEpiPicker" class="emojiPickerEmbedded"></div></div>
-        <div class="rxPreviewNote"><div class="rxPreview" aria-hidden="true">${rxPrefs.emojis.map(emoji => `<span>${escapeHtml(emoji)}</span>`).join('')}</div><span class="chatAppearanceHint">Así se ven en la barra y en el Pop Menu; el orden de la vista previa es el orden real.</span></div>
-        <button class="mBtn sec" type="button" id="rxReset">Restablecer reacciones</button>
     </div>`;
                     const chatPreview = document.getElementById('chatAppearancePreview');
                     const updatePreviews = next => {
@@ -23169,13 +23301,29 @@
                         updatePreviews(next);
                     };
                     updatePreviews(appearance);
+                    return;
+                }
+                if (settingsSection === 'chats') {
+                    const ap = autoPlayNextOn();
+                    const er = editHighlightOn();
+                    const rxPrefs = reactionPrefs();
+                    main.innerHTML = `<div class="settingsSectionContent">
+      <div class="switchRow"><div class="meta"><b>Auto play del siguiente audio</b><span>Al terminar una nota de voz, se reproduce la que sigue (de quien sea)</span></div><button class="tgl${ap ? ' on' : ''}" id="swAutoPlay"></button></div>
+        <div class="switchRow"><div class="meta"><b>Resaltar ediciones</b><span>Al editar un texto, las palabras añadidas llevan un resalte; apagado, se ve solo el texto final</span></div><button class="tgl${er ? ' on' : ''}" id="swEditResalte" type="button" aria-pressed="${er}" aria-label="Resaltar ediciones"></button></div>
+        <div class="chatAppearanceSubhead">Reacciones rápidas</div>
+        <div class="switchRow"><div class="meta"><b>Barra de reacciones al doble toque</b><span>Muestra tus 6 reacciones sobre el mensaje; apagado, el doble toque aplica una reacción al instante sin ninguna interfaz</span></div><button class="tgl${rxPrefs.dobleTap === 'menu' ? ' on' : ''}" id="swRxDt" type="button" aria-pressed="${rxPrefs.dobleTap === 'menu'}" aria-label="Barra de reacciones al doble toque"></button></div>
+        <div class="rxChoiceRow" id="rxInstantRow" role="group" aria-label="Reacción del doble toque instantáneo"${rxPrefs.dobleTap === 'instant' ? '' : ' hidden'}>
+          <button class="rxChoice${rxPrefs.instantMode === 'most_used' ? ' on' : ''}" data-rx-mode="most_used" type="button">La más usada</button>
+          <button class="rxChoice${rxPrefs.instantMode === 'default' ? ' on' : ''}" data-rx-mode="default" type="button">Predeterminada (la 1ª que fijaste)</button>
+        </div>
+        <div class="chatAppearanceHint">Tus 6 reacciones: las de la barra del doble toque y las del Pop Menu. Toca una para cambiarla con el selector de emojis y usa las flechas para fijar tu orden base: la primera es la predeterminada. En la barra y el menú se muestran primero las más usadas, por puntos, como los strickers (todo local).</div>
+        <div class="rxSlots">${rxPrefs.emojis.map((emoji, i) => `<div class="rxSlot"><button class="rxSlotEmoji" data-rx-i="${i}" type="button" aria-label="Reacción ${i + 1}">${escapeHtml(emoji)}</button><span class="rxSlotArrows"><button type="button" data-rx-move="${i},-1" aria-label="Mover la reacción ${i + 1} a la izquierda"${i === 0 ? ' disabled' : ''}><svg viewBox="0 0 24 24"><path d="m14 6-6 6 6 6"/></svg></button><button type="button" data-rx-move="${i},1" aria-label="Mover la reacción ${i + 1} a la derecha"${i === 5 ? ' disabled' : ''}><svg viewBox="0 0 24 24"><path d="m10 6 6 6-6 6"/></svg></button></span></div>`).join('')}</div>
+        <div id="rxEpi"><div id="rxEpiHead"><input id="rxEpiSearch" type="text" placeholder="Buscar emojis" autocomplete="off" aria-label="Buscar emojis"><button class="btn" id="rxEpiClose" type="button" title="Cerrar selector" aria-label="Cerrar selector"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div><div id="rxEpiPicker" class="emojiPickerEmbedded"></div></div>
+        <div class="rxPreviewNote"><div class="rxPreview" aria-hidden="true">${rxPrefs.emojis.map(emoji => `<span>${escapeHtml(emoji)}</span>`).join('')}</div><span class="chatAppearanceHint">Así se ven en la barra y en el Pop Menu; el orden de la vista previa es el orden real.</span></div>
+        <button class="mBtn sec" type="button" id="rxReset">Restablecer reacciones</button>
+    </div>`;
                     document.getElementById('swAutoPlay').onclick = e => {
                         setUserSetting('autoplay_audio', e.target.classList.contains('on') ? '0' : '1');
-                        paintSettings();
-                    };
-                    document.getElementById('swCamEspejo').onclick = e => {
-                        setUserSetting('espejo_llamada', e.target.classList.contains('on') ? '0' : '1');
-                        aplicarEspejoLlamada();
                         paintSettings();
                     };
                     /* Resalte de ediciones: se decide AL PINTAR cada burbuja,
@@ -23239,12 +23387,20 @@
                 }
                 if (settingsSection === 'media') {
                     main.innerHTML =
-                        `<div class="settingsSectionContent"><div class="testCard"><b style="color:#e9edef">Micrófono</b><div class="meter"><div id="micMeter"></div></div><button class="mBtn sec" id="tMic">Probar micrófono</button></div>
-      <div class="testCard"><b style="color:#e9edef">Cámara</b><video id="camPrev" autoplay playsinline muted></video><button class="mBtn sec" id="tCam">Probar cámara</button></div>
-      <div class="testCard"><b style="color:#e9edef">Altavoz / bocina</b><div class="sub">Suena por la salida actual. En llamada puedes cambiar a bocina interna.</div><button class="mBtn sec" id="tSpk">Probar altavoz</button></div></div>`;
+                        `<div class="settingsSectionContent">
+       <div class="setHead accountSectionHead"><b>Cámara y micrófono</b><span>Comprueba que se te ve y se te oye bien antes de una llamada.</span></div>
+       <div class="switchRow"><div class="meta"><b>Modo espejo de mi cámara</b><span>En las videollamadas, mi vista previa se muestra como en un espejo (desactivado, se ve el bruto de la cámara)</span></div><button class="tgl${callMirrorOn() ? ' on' : ''}" id="swCamEspejo" type="button" aria-pressed="${callMirrorOn()}" aria-label="Modo espejo de mi cámara"></button></div>
+       <div class="testCard"><b style="color:#e9edef">Micrófono</b><div class="meter"><div id="micMeter"></div></div><button class="mBtn sec" id="tMic">Probar micrófono</button></div>
+       <div class="testCard"><b style="color:#e9edef">Cámara</b><video id="camPrev" autoplay playsinline muted></video><button class="mBtn sec" id="tCam">Probar cámara</button></div>
+       <div class="testCard"><b style="color:#e9edef">Altavoz / bocina</b><div class="sub">Suena por la salida actual. En llamada puedes cambiar a bocina interna.</div><button class="mBtn sec" id="tSpk">Probar altavoz</button></div></div>`;
                     document.getElementById('tMic').onclick = testMic;
                     document.getElementById('tCam').onclick = testCam;
                     document.getElementById('tSpk').onclick = () => { try { beep(); } catch { } toast('¿Lo escuchaste?'); };
+                    document.getElementById('swCamEspejo').onclick = e => {
+                        setUserSetting('espejo_llamada', e.target.classList.contains('on') ? '0' : '1');
+                        aplicarEspejoLlamada();
+                        paintSettings();
+                    };
                     return;
                 }
                 if (settingsSection === 'notif') {
@@ -23360,7 +23516,7 @@
                     return;
                 }
             }
-            /* ---- Datos locales (Ajustes > Datos locales) ----
+            /* ---- Datos y almacenamiento (Ajustes > Datos y almacenamiento) ----
                Mide lo que la app guarda en el dispositivo (caché sin
                conexión, localStorage, sessionStorage, cookies visibles y
                RAM) y permite limpiarlo por categorías. La cookie de sesión
@@ -23394,7 +23550,7 @@
                 const main = document.getElementById('settingsMain');
                 main.innerHTML =
                     `<div class="settingsSectionContent localDataSection">
-            <div class="setRow"><div class="pic">${SET_ICON.datos}</div><div class="meta"><b>Datos locales</b><span>Lo que esta app guarda en este dispositivo. Limpiarlo no cierra tu sesión: la cookie de sesión es del navegador y no se toca.</span></div></div>
+            <div class="setRow"><div class="pic">${SET_ICON.datos}</div><div class="meta"><b>Datos y almacenamiento</b><span>Lo que esta app guarda en este dispositivo. Limpiarlo no cierra tu sesión: la cookie de sesión es del navegador y no se toca.</span></div></div>
             <div class="ldTotal"><div class="ldBar"><div id="ldBarFill"></div></div><b id="ldTotal">Consultando…</b><span id="ldQuota"></span></div>
             <div class="setHead accountSectionHead"><b>Guardado por categoría</b><span>Caché sin conexión, almacenamiento del navegador y memoria de esta pestaña.</span></div>
             <div class="ldTiles" id="ldTiles">Consultando…</div>

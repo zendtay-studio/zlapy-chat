@@ -2,7 +2,7 @@
 
 Documentación de la API HTTP + WebSocket del servidor de Zlapy (Node.js + SQLite).
 
-El servidor expone un único puerto (por defecto `3000`, variable `PORT`) que sirve a la vez
+El servidor expone un único puerto (por defecto `1820`, variable `PORT`) que sirve a la vez
 la API REST, la SPA estática de `public/` y el endpoint WebSocket `/ws`. Por defecto los
 cuerpos viajan como JSON en claro; opcionalmente pueden ir dentro de un sobre cifrado
 (véase §1.9) y los frames WebSocket también pueden cifrarse (véase §4.7). Los adjuntos y el

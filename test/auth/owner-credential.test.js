@@ -18,8 +18,8 @@ function maqueta(t) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'owner-cli-'));
     t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
     const envPath = path.join(dir, '.env');
-    fs.writeFileSync(envPath, 'PORT=3000\nOTRA=se-queda\n');
-    fs.writeFileSync(path.join(dir, '.env.example'), 'PORT=3000\n');
+    fs.writeFileSync(envPath, 'PORT=1820\nOTRA=se-queda\n');
+    fs.writeFileSync(path.join(dir, '.env.example'), 'PORT=1820\n');
     const dbPath = path.join(dir, 'zlapy.db');
     const blobPath = path.join(dir, 'blob.db');
     return { dir, envPath, dbPath, blobPath };

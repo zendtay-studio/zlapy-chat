@@ -193,16 +193,8 @@
         if (!contact) return '';
         if (contact.online) return 'en línea';
         if (!contact.lastSeen) return '';
-        const date = new Date(contact.lastSeen);
-        if (!Number.isFinite(date.getTime())) return '';
-        const now = new Date();
-        const time = date.toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' });
-        const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-        const startThatDay = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
-        const daysAgo = Math.round((startToday - startThatDay) / 86400000);
-        if (daysAgo === 0) return `Últ. vez hoy a las ${time}`;
-        if (daysAgo === 1) return `Últ. vez ayer a las ${time}`;
-        return `Últ. vez ${date.toLocaleDateString('es', { day: 'numeric', month: 'short' })} a las ${time}`;
+        /* Misma escalera que el chat (js/presence.js). */
+        return window.ZlapyPresence.lastSeenLabel(contact.lastSeen);
     }
 
     function createdText(timestamp) {

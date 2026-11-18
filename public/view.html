@@ -259,6 +259,7 @@
   <script src="/js/interaction-guard.js" defer></script>
   <script src="/js/transport-crypto.js"></script>
   <script src="/js/transport.js"></script>
+  <script src="/js/presence.js"></script>
   <script>
     /* Aplica el acento cacheado del usuario antes de pintar para que no parpadee */
     try {
@@ -337,7 +338,10 @@
       document.getElementById('viewName').textContent = p.name || target;
       document.getElementById('viewUsername').textContent = '@' + (p.username || target);
       const presence = document.getElementById('viewPresence');
-      presence.textContent = p.online === true ? 'en línea' : p.online === false && p.lastSeen ? `Últ. vez ${new Date(p.lastSeen).toLocaleString()}` : 'Presencia no disponible';
+      presence.textContent = p.online === true ? 'en línea'
+        : p.online === false && p.lastSeen
+          ? (window.ZlapyPresence.lastSeenLabel(p.lastSeen) || 'Presencia no disponible')
+          : 'Presencia no disponible';
       if (p.online === true) presence.style.color = 'var(--accent)';
       const av = document.getElementById('viewAvatar');
       if (p.permisos && p.permisos.verFoto === false) {

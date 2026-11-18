@@ -1518,7 +1518,7 @@ en una red local.
 
 ### 11.1 Qué problema resuelve
 
-Por defecto el servidor no usa TLS: el cliente abre `http://192.168.x.x:3000`.
+Por defecto el servidor no usa TLS: el cliente abre `http://192.168.x.x:1820`.
 Sin ninguna protección, cualquier dispositivo de la red que pueda ver el
 tráfico lee las contraseñas del login y los mensajes. La capa de transporte
 añade un sobre cifrado a nivel de aplicación con estas propiedades:

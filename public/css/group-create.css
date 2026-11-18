@@ -308,11 +308,24 @@
             outline: 0;
             background: transparent;
             color: var(--text);
+            font-family: inherit;
             font-size: 19px;
             font-weight: 500;
             letter-spacing: .1px;
             line-height: 1.3;
-            transition: border-color .16s ease
+            transition: border-color .16s ease;
+            resize: none;
+            overflow-y: hidden;
+            overflow-wrap: anywhere;
+        }
+
+        /* La ID personalizada va en la misma caja que la descripción, así que
+           baja el cuerpo de letra para que no grite. */
+        .id-input {
+            font-size: 15px;
+            font-weight: 400;
+            letter-spacing: .2px;
+            padding-top: 2px
         }
 
         .name-input::placeholder {
@@ -334,6 +347,11 @@
             justify-content: space-between;
             gap: 10px;
             padding-top: 9px
+        }
+
+        /* Fila que solo lleva el contador: se pega a la derecha. */
+        .under-name.solo {
+            justify-content: flex-end
         }
 
         .text-action {
@@ -399,6 +417,38 @@
             position: absolute;
             right: 11px;
             bottom: 6px
+        }
+
+        /* Vista previa del enlace corto: el enlace se ARMA mientras se
+           escribe, así se ve lo que se va a compartir. */
+        .id-preview {
+            color: var(--muted-2);
+            font-size: 11px;
+            font-variant-numeric: tabular-nums;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap
+        }
+
+        /* Con ID escrita, el enlace se lee: es lo que se va a compartir. */
+        .id-preview:not(.empty):not(.bad) {
+            color: var(--accent-readable);
+            font-weight: 550
+        }
+
+        .id-preview.bad {
+            color: #e57a86
+        }
+
+        .id-note {
+            margin: 6px 0 0;
+            color: var(--muted-2);
+            font-size: 11px;
+            line-height: 1.45
+        }
+
+        .id-note.bad {
+            color: #e57a86
         }
 
         .participants {
@@ -834,6 +884,13 @@
             background: var(--panel)
         }
 
+        /* El acordeón de la ID personalizada se sienta como el de «Privacidad
+           y permisos», solo que antes de los participantes: es información del
+           grupo, no de quienes entran. */
+        .id-advanced[open] summary small {
+            color: var(--muted)
+        }
+
         .advanced summary {
             display: flex;
             align-items: center;
@@ -1196,6 +1253,7 @@
                 grid-template-rows: auto auto 1fr;
                 grid-template-areas:
                     "identity participants"
+                    "customId participants"
                     "advanced participants"
                     "footnote participants";
                 align-items: start;
@@ -1296,6 +1354,11 @@
 
             .advanced {
                 grid-area: advanced;
+                margin: 0
+            }
+
+            .id-advanced {
+                grid-area: customId;
                 margin: 0
             }
 

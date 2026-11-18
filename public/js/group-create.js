@@ -58,13 +58,13 @@
         advNote: $('advNote'),
         name: $('groupName'),
         nameCount: $('nameCount'),
-        descToggle: $('descToggle'),
-        descWrap: $('descWrap'),
         desc: $('groupDesc'),
         customId: $('groupCustomId'),
-        customIdWrap: $('customIdWrap'),
-        customIdToggle: $('customIdToggle'),
+        customIdDetails: $('customIdDetails'),
         customIdCount: $('customIdCount'),
+        idPreview: $('idPreview'),
+        idSummary: $('idSummary'),
+        idNote: $('idNote'),
         descCount: $('descCount'),
         avatarBtn: $('avatarBtn'),
         avatarInput: $('avatarInput'),
@@ -137,15 +137,9 @@
         if (!contact) return 'Sin conexión';
         if (contact.online) return 'en línea';
         if (!contact.lastSeen) return 'Sin conexión';
-        const date = new Date(contact.lastSeen);
-        const now = new Date();
-        const time = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-        const startThatDay = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
-        const daysAgo = Math.round((startToday - startThatDay) / 86400000);
-        if (daysAgo === 0) return `Últ. vez hoy a las ${time}`;
-        if (daysAgo === 1) return `Últ. vez ayer a las ${time}`;
-        return `Últ. vez ${date.toLocaleDateString([], { day: 'numeric', month: 'short' })} a las ${time}`;
+        /* Misma escalera que el chat (js/presence.js): un solo texto que
+           mantener para toda la app. */
+        return window.ZlapyPresence.lastSeenLabel(contact.lastSeen) || 'Sin conexión';
     }
 
     function showToast(message, icon = 'info') {
@@ -304,30 +298,59 @@
         updateSummary();
     }
 
-    function syncDescriptionToggle() {
-        const open = !refs.descWrap.hidden;
-        const hasText = Boolean(refs.desc.value.trim());
-        const icon = open ? 'minus' : hasText ? 'pencil' : 'plus';
-        const label = open ? 'Ocultar descripción' : hasText ? 'Editar descripción' : 'Añadir descripción';
-        refs.descToggle.setAttribute('aria-expanded', String(open));
-        refs.descToggle.innerHTML = `<svg class="icon" aria-hidden="true"><use href="#i-${icon}"></use></svg><span>${label}</span>`;
+    function syncDescription() {
+        refs.descCount.textContent = `${refs.desc.value.length}/500`;
     }
 
-    function syncCustomIdToggle() {
-        const openCustom = !refs.customIdWrap.hidden;
-        const hasCustom = Boolean(refs.customId.value.trim());
-        refs.customIdToggle.setAttribute('aria-expanded', String(openCustom));
-        refs.customIdToggle.innerHTML = `<svg class="icon" aria-hidden="true"><use href="#i-${openCustom ? 'minus' : hasCustom ? 'pencil' : 'plus'}"></use></svg><span>${openCustom ? 'Ocultar ID personalizada' : hasCustom ? 'Editar ID personalizada' : 'Poner ID personalizada'}</span>`;
-        refs.customIdCount.textContent = `${refs.customId.value.length}/32`;
+    /* Contadores y alturas de los tres campos de texto. Se llama al escribir,
+       al cargar un grupo y al arrancar la página. */
+    function updateFields() {
+        refs.nameCount.textContent = `${refs.name.value.length}/40`;
+        syncDescription();
+        syncCustomId();
+        const grow = window.ZlapyAutoGrow;
+        if (!grow) return;
+        /* Auto-grow se engancha al evento `input`; al cargar valores por
+           código hay que recalcular el alto aparte. */
+        for (const campo of [refs.name, refs.desc, refs.customId]) {
+            if (campo && typeof campo._grow === 'function') campo._grow();
+        }
     }
 
-    function bindCustomIdToggle() {
-        refs.customIdToggle.addEventListener('click', () => {
-            refs.customIdWrap.hidden = !refs.customIdWrap.hidden;
-            syncCustomIdToggle();
-            if (!refs.customIdWrap.hidden) refs.customId.focus();
-        });
-        refs.customId.addEventListener('input', syncCustomIdToggle);
+    /* La ID se escribe en un textarea de una línea que crece. Mientras se teclea
+       se normaliza (minúsculas, sin acentos ni símbolos), se cuenta y se ARMA
+       el enlace real, con el host de esta instalación, que es lo que de verdad
+       se comparte. */
+    function syncCustomId() {
+        const idApi = window.ZlapyGroupId;
+        const valor = refs.customId.value;
+        if (idApi) {
+            const limpio = idApi.normalizarId(valor);
+            if (limpio !== valor) {
+                refs.customId.value = limpio;
+                refs.customId.setSelectionRange(limpio.length, limpio.length);
+            }
+        }
+        const texto = idApi ? idApi.normalizarId(valor) : String(valor || '');
+        const vacio = !texto;
+        const bien = !vacio && (!idApi || idApi.idValida(texto));
+        refs.customIdCount.textContent = `${texto.length}/32`;
+        refs.idPreview.classList.toggle('empty', vacio);
+        refs.idPreview.classList.toggle('bad', !vacio && !bien);
+        /* El enlace se arma con `location.origin`: cada instalación cuelga de
+           su propio host y un dominio inventado no abriría nada. */
+        refs.idPreview.textContent = idApi
+            ? idApi.enlaceCorto(vacio ? 'tu-id' : texto)
+            : (location.origin + '/?open=group=' + texto);
+        const aviso = vacio ? '' : (idApi ? idApi.problemaId(texto) : '');
+        refs.idNote.textContent = vacio
+            ? 'Sirve para compartir el grupo con un enlace corto. Opcional; si lo dejas vacío, el grupo usa su identificadora interna.'
+            : (aviso || 'Al compartir el grupo se usará ese enlace.');
+        refs.idNote.classList.toggle('bad', Boolean(aviso));
+        /* El resumen del acordeón cuenta lo que hay dentro sin abrirlo. */
+        refs.idSummary.textContent = vacio
+            ? 'Opcional · enlace corto para compartir'
+            : (bien ? texto : 'Revisa la ID: aún no es válida');
     }
 
     function renderPreferences() {
@@ -583,11 +606,11 @@
 
             refs.name.value = group.name || '';
             refs.desc.value = group.description || '';
-            refs.descCount.textContent = `${refs.desc.value.length}/500`;
-            if (refs.desc.value.trim()) refs.descWrap.hidden = false;
             refs.customId.value = group.customId || '';
-            if (refs.customId.value.trim()) refs.customIdWrap.hidden = false;
-            syncCustomIdToggle();
+            updateFields();
+            /* Un grupo que ya tiene ID personalizada la trae fijada: el
+               acordeón se abre para que se vea (y se pueda cambiar). */
+            if (refs.customId.value.trim()) refs.customIdDetails.open = true;
 
             state.avatar = group.avatar || '';
             if (state.avatar) {
@@ -718,25 +741,25 @@
 
     refs.name.addEventListener('input', updateSummary);
     refs.name.addEventListener('keydown', event => {
+        /* Enter crea el grupo (como en un campo de una línea); Mayús+Enter
+           deja meter un salto de línea de verdad. */
         if (event.key === 'Enter') {
             event.preventDefault();
             if (canCreate()) submitGroup();
         }
     });
 
-    refs.descToggle.addEventListener('click', () => {
-        const open = refs.descWrap.hidden;
-        refs.descWrap.hidden = !open;
-        syncDescriptionToggle();
-        if (open) refs.desc.focus();
-    });
+    refs.desc.addEventListener('input', updateFields);
+    refs.customId.addEventListener('input', updateFields);
 
-    refs.desc.addEventListener('input', () => {
-        refs.descCount.textContent = `${refs.desc.value.length}/500`;
-        syncDescriptionToggle();
-    });
-    // La descripcion crece con su contenido, tambien al cargar.
-    if (window.ZlapyAutoGrow) ZlapyAutoGrow.grow(refs.desc, { minHeight: 64, maxHeight: 260 });
+    /* Los tres campos crecen con su contenido, también al cargar: el nombre
+       y la ID para que no queden cortados, la descripción para no dejar un
+       hueco grande cuando aún no hay nada escrito. */
+    if (window.ZlapyAutoGrow) {
+        ZlapyAutoGrow.grow(refs.name, { minHeight: 46, maxHeight: 150 });
+        ZlapyAutoGrow.grow(refs.desc, { minHeight: 64, maxHeight: 260 });
+        ZlapyAutoGrow.grow(refs.customId, { minHeight: 46, maxHeight: 120 });
+    }
 
     refs.search.addEventListener('input', () => {
         state.query = refs.search.value;
@@ -793,15 +816,12 @@
     document.addEventListener('contextmenu', event => event.preventDefault());
 
     refs.descCount.textContent = '0/500';
-    bindCustomIdToggle();
-    syncCustomIdToggle();
     renderPreferences();
     if (editMode) {
-        syncDescriptionToggle();
         bootEdit();
     } else {
         renderAll();
-        syncDescriptionToggle();
+        updateFields();
         boot();
     }
 })();

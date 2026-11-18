@@ -20,7 +20,7 @@
  * así `test/local-data.test.js` las ejecuta contra almacenes de mentira
  * sin necesidad de un navegador.
  *
- * Uso desde la sección Ajustes > Datos locales (index.html):
+ * Uso desde la sección Ajustes > Datos y almacenamiento (index.html):
  *   const ZL = window.ZlapyLocalData;
  *   const reporte = await ZL.collectReport(contexto);
  *   const resumen = await ZL.cleanLocalData(seleccion, contexto);

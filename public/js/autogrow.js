@@ -22,6 +22,10 @@
             textarea.style.overflowY = needed > max ? 'auto' : 'hidden';
         };
         textarea.addEventListener('input', apply);
+        /* Guardada aparte para quien rellena el campo por código (cargar un
+           grupo, restaurar un borrador) y necesita recalcular el alto sin
+           depender de un evento `input`. */
+        textarea._grow = apply;
         apply();
         return apply;
     }

@@ -1096,6 +1096,34 @@ admins aprueban (`approveJoin`) o rechazan (`rejectJoin`, que empuja
 `STORY_TTL_MS` = 86 400 000 ms (24 h) por defecto
 (`src/config.js:27`). `liveStories()` filtra por `now - s.ts < TTL`.
 
+**Fila de historias del cliente**: `public/js/story-row.js` reparte la lista
+visible en tres tramos —historias propias, de **contactos** y ajenas (el resto
+que entrega el servidor)— y ordena cada tramo por no vistas y luego por
+nombre. Las de contactos se pintan enteras y primero; las ajenas se enseñan
+en tandas de 8 y un «+» al final carga la siguiente (`page()`), de modo que
+la fila no crece con todas las historias de golpe.
+
+La pertenencia «es contacto» se recuerda aparte de la lista visible
+(`contactUsernames`, un `Set`): así filtrar la lista con el buscador —que
+reemplaza `contacts` por los resultados— no degrada a un contacto a «historia
+ajena». El reparto se rehace cuando cambian los contactos (nueva página del
+servidor, contacto eliminado) y al publicarse o caducar una historia.
+
+**ID personalizada del grupo** (`public/js/group-id.js`): al crear o editar un
+grupo, el campo normaliza lo que se teclea (minúsculas, sin acentos ni
+símbolos, 3–32 caracteres, sin el prefijo reservado `g_`) y muestra el enlace
+corto REAL —`location.origin` + `/?open=group:<id>`— mientras se escribe, no un
+dominio inventado. El servidor resuelve esa ID (`resolveGroup`,
+`src/groups/store.js:142`) y `?open=group:<id>` abre el grupo; quien decide si
+la ID vale es `src/shared/validation.js`, y el cliente solo avisa antes de
+enviar.
+
+**Fecha flotante** (`public/js/fecha-flotante.js`): la píldora que dice el día
+que se está leyendo solo aparece cuando el desplazamiento va HACIA ARRIBA
+(hacia el pasado). Bajar hacia lo reciente la esconde: ahí los mensajes son de
+hoy y la píldora solo estorba. Sin posición previa (chat recién abierto o scroll recolocado
+por el programa al cargar mensajes viejos) no hay dirección que interpretar.
+
 **Metadato en vez de lista completa** (`pushStoryMeta`, `src/realtime/notify.js`):
 un like, una vista o una edición reenviaban antes **todas** las historias a
 **todos** los conectados (con el medio dentro: O(usuarios × historias ×
@@ -1362,6 +1390,7 @@ cierra **solo esa conexión** (close 1011) sin tumbar el proceso
 | Heartbeat | Cada 15 s se destruyen los sockets sin datos en los últimos **90 s**. |
 | Lista de usuarios | `userList(viewerId)` devuelve el propio usuario + sus contactos, excluyendo a quienes lo han bloqueado. |
 | Difusión | `broadcastUsersAround(uuid)` avisa al usuario, a sus contactos y a quienes lo tienen como contacto. |
+| Texto en el cliente | `public/js/presence.js` (`lastSeenLabel`) convierte `lastSeen` en «Ult. vez hoy a las HH:MM», «ayer a las HH:MM», «recientemente» (2–6 días), «hace unas semanas» (7–34) o «hace mucho tiempo» (35+ y cuando la privacidad oculta la marca). La abreviatura es a propósito: el subtítulo de la lista tiene que caber en una fila estrecha. |
 
 Tareas periódicas adicionales del WebSocket:
 

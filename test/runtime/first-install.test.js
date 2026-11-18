@@ -25,12 +25,12 @@ function tempDir(t, prefix) {
 test('el .env se crea a partir del .env.example cuando no existe', t => {
     const directory = tempDir(t, 'zlapy-env-');
     const envPath = path.join(directory, '.env');
-    fs.writeFileSync(path.join(directory, '.env.example'), 'PORT=3000\nDB_USER=\nDB_PASSWORD=\n');
+    fs.writeFileSync(path.join(directory, '.env.example'), 'PORT=1820\nDB_USER=\nDB_PASSWORD=\n');
 
     assert.equal(ensureEnvFile(envPath, path.join(directory, '.env.example')), true);
 
     const contents = fs.readFileSync(envPath, 'utf8');
-    assert.match(contents, /^PORT=3000$/m);
+    assert.match(contents, /^PORT=1820$/m);
     /* La credencial del propietario se GENERA aleatoria: el "usuario" no
        es un nombre, es un dato secreto más (de DB_USER + DB_PASSWORD sale
        la llave maestra). Nunca un nombre ni el hueco vacío del ejemplo. */
@@ -45,7 +45,7 @@ test('un .env existente nunca se sobrescribe', t => {
     const directory = tempDir(t, 'zlapy-env-');
     const envPath = path.join(directory, '.env');
     fs.writeFileSync(envPath, 'PORT=9999\n');
-    fs.writeFileSync(path.join(directory, '.env.example'), 'PORT=3000\n');
+    fs.writeFileSync(path.join(directory, '.env.example'), 'PORT=1820\n');
 
     assert.equal(ensureEnvFile(envPath, path.join(directory, '.env.example')), false);
     assert.match(fs.readFileSync(envPath, 'utf8'), /^PORT=9999$/m);
