@@ -194,7 +194,7 @@ CREATE TABLE IF NOT EXISTS groups (
     created_at         INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_groups_visibility ON groups(visibility);
-/* ID personalizada del grupo: única entre los grupos que la tienen (una
+/* ID personalizado del grupo: única entre los grupos que la tienen (una
    cadena vacía no compite). Sirve para enlaces cortos del tipo
    /?open=group:<custom_id>, además del id interno. */
 CREATE UNIQUE INDEX IF NOT EXISTS idx_groups_custom_id ON groups(custom_id) WHERE custom_id != '';
@@ -554,7 +554,7 @@ function applySchema(db) {
     // una instalación v10 aún no la tiene → ALTER primero, índice después.
     if (tableExists(db, 'calls') && !tableColumns(db, 'calls').has('peer_hash'))
         db.exec('ALTER TABLE calls ADD COLUMN peer_hash TEXT');
-    // v14: `groups.custom_id` (ID personalizada para enlaces cortos).
+    // v14: `groups.custom_id` (ID personalizado para enlaces cortos).
     if (tableExists(db, 'groups') && !tableColumns(db, 'groups').has('custom_id'))
         db.exec("ALTER TABLE groups ADD COLUMN custom_id TEXT NOT NULL DEFAULT ''");
     // v15: `messages.played_at` (nota de voz ESCUCHADA por el destinatario).

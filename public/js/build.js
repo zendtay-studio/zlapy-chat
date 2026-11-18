@@ -12,5 +12,5 @@
  * `self` es la ventana en la página y el ámbito global en el worker, así que
  * el mismo archivo sirve en los dos sin envoltorios ni módulos.
  */
-self.ZLAPY_BUILD = '208';
+self.ZLAPY_BUILD = '210';
 self.ZLAPY_BUILD_DATE = '18 nov 2026';

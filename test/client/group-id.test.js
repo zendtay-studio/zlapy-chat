@@ -1,4 +1,4 @@
-// ID personalizada del grupo: se normaliza mientras se escribe, se valida
+// ID personalizado del grupo: se normaliza mientras se escribe, se valida
 // con las reglas DEL SERVIDOR y el enlace de vista previa se arma con el host
 // real de la instalación (no con un dominio inventado).
 'use strict';
@@ -69,10 +69,42 @@ test('sin host explícito se usa el origen de la página', () => {
 
 test('el acordeón del grupo usa el host, no zlapy.app', () => {
     const html = leer('public/group-create.html');
-    assert.match(html, /id="customIdDetails"/, 'la ID va en su propio acordeón');
-    assert.match(html, /class="advanced id-advanced"/, 'plegada como «Privacidad y permisos»');
+    assert.match(html, /id="customIdDetails"/, 'el ID va en su propio acordeón');
+    assert.match(html, /class="advanced id-advanced"/, 'plegado como «Privacidad y permisos»');
     assert.doesNotMatch(html, /zlapy\.app/, 'no queda un dominio inventado en el HTML');
     const js = leer('public/js/group-create.js');
     assert.match(js, /idApi\.enlaceCorto\(/, 'la vista previa sale del módulo (host real)');
     assert.doesNotMatch(js, /zlapy\.app/, 'ni en el JS');
+});
+
+test('la tarjeta ordena avatar, nombre y descripción sin adornos de más', () => {
+    const html = leer('public/group-create.html');
+    assert.match(html, /class="identity-top"/, 'avatar y nombre comparten la primera fila');
+    assert.doesNotMatch(html, /id="setPhotoBtn"|Establecer foto/, 'no hay una segunda acción de foto debajo del nombre');
+    assert.match(html, /class="identity-description" id="descWrap"/, 'la descripción va a todo el ancho, sin caja interior');
+    assert.match(html, /placeholder="Descripción \(opcional\)"/);
+    assert.doesNotMatch(html, /class="desc-wrap" id="descWrap"/, 'la descripción ya no parece un campo secundario encerrado');
+    const js = leer('public/js/group-create.js');
+    assert.doesNotMatch(js, /setPhotoBtn/, 'no queda cableado del botón retirado');
+    assert.match(js, /refs\.avatarBtn\.addEventListener\('click', \(\) => refs\.avatarInput\.click\(\)\)/,
+        'la cámara del avatar sigue abriendo el selector de foto');
+    const css = leer('public/css/group-create.css');
+    const nombre = css.slice(css.indexOf('.name-input {'), css.indexOf('.name-input::placeholder'));
+    assert.doesNotMatch(nombre, /border-bottom/, 'el nombre no tiene subrayado ni una raya que se curva al final');
+    assert.match(css, /\.identity \{[^}]*background: transparent/, 'la identidad no prolonga el color del toolbar');
+});
+
+test('toda la interfaz habla de ID personalizado, no personalizada', () => {
+    const html = leer('public/group-create.html');
+    assert.match(html, /<b>ID personalizado<\/b>/);
+    assert.match(html, /aria-label="ID personalizado del grupo"/);
+    assert.doesNotMatch(html, /ID personalizada|identificadora/);
+    const js = leer('public/js/group-create.js');
+    assert.doesNotMatch(js, /ID personalizada|identificadora/);
+    for (const archivo of ['src/groups/routes.js', 'src/http/router.js']) {
+        const servidor = leer(archivo);
+        assert.doesNotMatch(servidor, /ID personalizada/, `${archivo} tampoco conserva el femenino`);
+        assert.match(servidor, /El ID personalizado admite/);
+        assert.match(servidor, /Ese ID personalizado ya está en uso/);
+    }
 });

@@ -1,4 +1,4 @@
-// ID personalizada de grupo: dirección pública para enlaces cortos
+// ID personalizado de grupo: dirección pública para enlaces cortos
 // (p. ej. /?join=equipo&code=…). No es el permiso —el código de
 // invitación sigue siendo la puerta— sino la dirección. El servidor
 // resuelve igual por id interna o por la personalizada.
@@ -13,7 +13,7 @@ async function cuenta(srv, nombre) {
     return user;
 }
 
-test('crear con ID personalizada: se guarda, se resuelve y es única', async () => {
+test('crear con ID personalizado: se guarda, se resuelve y es única', async () => {
     const srv = await startServer();
     try {
         const ana = await cuenta(srv, 'gcid1');
@@ -43,7 +43,7 @@ test('crear con ID personalizada: se guarda, se resuelve y es única', async () 
     } finally { await stop(srv); }
 });
 
-test('la ID personalizada se puede cambiar y quitarla la deja libre', async () => {
+test('el ID personalizado se puede cambiar y quitarla la deja libre', async () => {
     const srv = await startServer();
     try {
         const ana = await cuenta(srv, 'gcid2');

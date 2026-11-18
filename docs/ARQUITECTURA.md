@@ -1109,7 +1109,7 @@ reemplaza `contacts` por los resultados— no degrada a un contacto a «historia
 ajena». El reparto se rehace cuando cambian los contactos (nueva página del
 servidor, contacto eliminado) y al publicarse o caducar una historia.
 
-**ID personalizada del grupo** (`public/js/group-id.js`): al crear o editar un
+**ID personalizado del grupo** (`public/js/group-id.js`): al crear o editar un
 grupo, el campo normaliza lo que se teclea (minúsculas, sin acentos ni
 símbolos, 3–32 caracteres, sin el prefijo reservado `g_`) y muestra el enlace
 corto REAL —`location.origin` + `/?open=group:<id>`— mientras se escribe, no un

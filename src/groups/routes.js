@@ -109,11 +109,11 @@ function getGroupsDiscover(req, res, url, data, actor) {
 
 function postGroups(req, res, url, data, actor) {
     const { name, members, description, avatar, visibility, joinPolicy, writePolicy, addPolicy, editPolicy, mentionAllPolicy, contentPolicy, id: requestedId, customId: requestedCustomId } = data;
-    /* ID personalizada (dirección pública de enlaces cortos): validación y
+    /* ID personalizado (dirección pública de enlaces cortos): validación y
        unicidad aquí para dar un 409 con texto, no un fallo de índice. */
     const customId = typeof requestedCustomId === 'string' ? requestedCustomId.trim().toLowerCase() : '';
-    if (customId && !validGroupCustomId(customId)) return json(res, 400, { error: 'La ID personalizada admite 3-32 letras minúsculas, números, guiones y guiones bajos (sin empezar por g_).' });
-    if (customId && Stmt.getGroupByCustom.get(customId)) return json(res, 409, { error: 'Esa ID personalizada ya está en uso.' });
+    if (customId && !validGroupCustomId(customId)) return json(res, 400, { error: 'El ID personalizado admite 3-32 letras minúsculas, números, guiones y guiones bajos (sin empezar por g_).' });
+    if (customId && Stmt.getGroupByCustom.get(customId)) return json(res, 409, { error: 'Ese ID personalizado ya está en uso.' });
     if (typeof name !== 'string' || !name.trim() || name.length > 40) return json(res, 400, { error: 'Nombre inválido.' });
     /* Los miembros pueden llegar con el alias opaco (UUID) si su @usuario
        está oculto: resolveAccount lo acepta solo para relaciones

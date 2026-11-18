@@ -344,7 +344,7 @@
             : (location.origin + '/?open=group=' + texto);
         const aviso = vacio ? '' : (idApi ? idApi.problemaId(texto) : '');
         refs.idNote.textContent = vacio
-            ? 'Sirve para compartir el grupo con un enlace corto. Opcional; si lo dejas vacío, el grupo usa su identificadora interna.'
+            ? 'Sirve para compartir el grupo con un enlace corto. Opcional; si lo dejas vacío, el grupo usa su identificador interno.'
             : (aviso || 'Al compartir el grupo se usará ese enlace.');
         refs.idNote.classList.toggle('bad', Boolean(aviso));
         /* El resumen del acordeón cuenta lo que hay dentro sin abrirlo. */
@@ -608,7 +608,7 @@
             refs.desc.value = group.description || '';
             refs.customId.value = group.customId || '';
             updateFields();
-            /* Un grupo que ya tiene ID personalizada la trae fijada: el
+            /* Un grupo que ya tiene ID personalizado la trae fijada: el
                acordeón se abre para que se vea (y se pueda cambiar). */
             if (refs.customId.value.trim()) refs.customIdDetails.open = true;
 

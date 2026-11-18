@@ -79,40 +79,44 @@
 
                 <div class="content" id="content">
                     <section class="identity" aria-label="Identidad del grupo">
-                        <button class="avatar" id="avatarBtn" type="button" aria-label="Añadir foto del grupo" title="Añadir foto del grupo">
-                            <span class="avatar-art" id="avatarDefault">
-                                <svg class="icon" aria-hidden="true"><use href="#i-users"></use></svg>
-                            </span>
-                            <img class="avatar-img" id="avatarImg" alt="Foto del grupo" hidden>
-                            <span class="camera-badge" aria-hidden="true">
-                                <svg class="icon"><use href="#i-camera"></use></svg>
-                            </span>
-                        </button>
-                        <input id="avatarInput" type="file" accept="image/*" tabindex="-1" hidden>
-
-                        <div class="identity-fields">
-                            <!-- El nombre crece con el texto: es un textarea de
-                                 una línea que se estira si el nombre ocupa
-                                 varias filas (como la descripción del perfil). -->
-                            <textarea class="name-input" id="groupName" rows="1" maxlength="40" placeholder="Nombre del grupo" aria-label="Nombre del grupo" autocomplete="off" spellcheck="true"></textarea>
-                            <div class="under-name solo">
-                                <span class="char-count" id="nameCount">0/40</span>
-                            </div>
-                            <!-- La descripción va siempre a la vista: era un campo
-                                 detrás de un «+» y los opcionales se ven poco. -->
-                            <div class="desc-wrap" id="descWrap">
-                                <textarea id="groupDesc" maxlength="500" rows="2" placeholder="¿De qué trata el grupo? (opcional)" aria-label="Descripción del grupo"></textarea>
-                                <span class="char-count" id="descCount">0/500</span>
-                            </div>
-                            <button class="text-action photo-remove" id="removeAvatarBtn" type="button" hidden>
-                                <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
-                                <span>Quitar foto</span>
+                        <div class="identity-top">
+                            <button class="avatar" id="avatarBtn" type="button" aria-label="Añadir foto del grupo" title="Añadir foto del grupo">
+                                <span class="avatar-art" id="avatarDefault">
+                                    <svg class="icon" aria-hidden="true"><use href="#i-users"></use></svg>
+                                </span>
+                                <img class="avatar-img" id="avatarImg" alt="Foto del grupo" hidden>
+                                <span class="camera-badge" aria-hidden="true">
+                                    <svg class="icon"><use href="#i-camera"></use></svg>
+                                </span>
                             </button>
+                            <input id="avatarInput" type="file" accept="image/*" tabindex="-1" hidden>
+
+                            <div class="identity-fields">
+                                <!-- Nombre grande, sin caja ni subrayado.
+                                     Crece si hace falta. -->
+                                <textarea class="name-input" id="groupName" rows="1" maxlength="40" placeholder="Nombre del grupo" aria-label="Nombre del grupo" autocomplete="off" spellcheck="true"></textarea>
+                                <div class="under-name solo">
+                                    <span class="char-count" id="nameCount">0/40</span>
+                                </div>
+                                <div class="photo-actions">
+                                    <button class="text-action photo-remove" id="removeAvatarBtn" type="button" hidden>
+                                        <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
+                                        <span>Quitar foto</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Descripción a todo el ancho, sin caja interior: el
+                             campo siempre visible crece con su contenido. -->
+                        <div class="identity-description" id="descWrap">
+                            <textarea id="groupDesc" maxlength="500" rows="2" placeholder="Descripción (opcional)" aria-label="Descripción del grupo"></textarea>
+                            <span class="char-count" id="descCount">0/500</span>
                         </div>
                     </section>
 
-                    <!-- La ID personalizada es opcional y avanzada, así que va
-                         plegada igual que «Privacidad y permisos». Dentro, el
+                    <!-- El ID personalizado es opcional y avanzado, así que va
+                         plegado igual que «Privacidad y permisos». Dentro, el
                          campo crece con el texto y enseña el enlace REAL (con
                          el host de esta instalación) mientras se escribe. -->
                     <details class="advanced id-advanced" id="customIdDetails">
@@ -121,7 +125,7 @@
                                 <svg class="icon"><use href="#i-link"></use></svg>
                             </span>
                             <span class="adv-copy">
-                                <b>ID personalizada</b>
+                                <b>ID personalizado</b>
                                 <small id="idSummary">Opcional · enlace corto para compartir</small>
                             </span>
                             <span class="chev" aria-hidden="true">
@@ -130,12 +134,12 @@
                         </summary>
                         <div class="adv-body">
                             <div class="desc-wrap" id="customIdWrap">
-                                <textarea class="name-input id-input" id="groupCustomId" rows="1" maxlength="32" placeholder="identificadora (p. ej. equipo)" aria-label="ID personalizada del grupo" autocomplete="off" autocapitalize="none" spellcheck="false"></textarea>
+                                <textarea class="name-input id-input" id="groupCustomId" rows="1" maxlength="32" placeholder="identificador (p. ej. equipo)" aria-label="ID personalizado del grupo" autocomplete="off" autocapitalize="none" spellcheck="false"></textarea>
                                 <div class="under-name">
                                     <span class="char-count" id="customIdCount">0/32</span>
                                     <span class="id-preview empty" id="idPreview" aria-live="polite"></span>
                                 </div>
-                                <p class="id-note" id="idNote">Sirve para compartir el grupo con un enlace corto. Opcional; si lo dejas vacío, el grupo usa su identificadora interna.</p>
+                                <p class="id-note" id="idNote">Sirve para compartir el grupo con un enlace corto. Opcional; si lo dejas vacío, el grupo usa su identificador interno.</p>
                             </div>
                         </div>
                     </details>

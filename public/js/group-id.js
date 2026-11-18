@@ -1,4 +1,4 @@
-/* ID personalizada del grupo: normalizar mientras se escribe y derivar el
+/* ID personalizado del grupo: normalizar mientras se escribe y derivar el
  * enlace corto que se muestra como vista previa.
  *
  * Las reglas son las DEL SERVIDOR (`src/shared/validation.js`:
@@ -36,7 +36,7 @@
 
     /**
      * ¿Es una ID personalizable válida? Vacío no es válido, pero es LEGAL:
-     * el grupo se queda con su identificadora interna.
+     * el grupo se queda con su identificador interno.
      */
     function idValida(valor) {
         const limpio = normalizarId(valor);

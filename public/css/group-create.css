@@ -215,11 +215,19 @@
 
         .identity {
             display: flex;
+            flex-direction: column;
+            align-items: stretch;
+            padding: 22px 20px 16px;
+            background: transparent;
+            border-bottom: 1px solid var(--line)
+        }
+
+        /* Avatar y nombre en la primera fila, como en la edición de Telegram. */
+        .identity-top {
+            display: flex;
             align-items: flex-start;
             gap: 16px;
-            padding: 22px 20px 16px;
-            background: var(--panel);
-            border-bottom: 1px solid var(--line)
+            width: 100%
         }
 
         .avatar {
@@ -299,11 +307,59 @@
             flex-direction: column
         }
 
+        .photo-actions {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 14px;
+            padding-top: 6px
+        }
+
+        .photo-actions .photo-remove {
+            margin-top: 0
+        }
+
+        /* La descripción ocupa todo el ancho de la tarjeta y no mete otra
+           caja dentro: solo una separación suave respecto al nombre. */
+        .identity-description {
+            position: relative;
+            width: 100%;
+            margin-top: 12px;
+            padding-top: 8px;
+            border-top: 1px solid var(--line)
+        }
+
+        .identity-description textarea {
+            display: block;
+            width: 100%;
+            min-height: 54px;
+            max-height: 260px;
+            padding: 4px 0 18px;
+            border: 0;
+            outline: 0;
+            resize: none;
+            background: transparent;
+            color: var(--text);
+            font-family: inherit;
+            font-size: 14px;
+            line-height: 1.45;
+            overflow-wrap: anywhere
+        }
+
+        .identity-description textarea::placeholder {
+            color: var(--muted-2)
+        }
+
+        .identity-description .char-count {
+            position: absolute;
+            right: 0;
+            bottom: 5px
+        }
+
         .name-input {
             width: 100%;
             padding: 6px 0 9px;
             border: 0;
-            border-bottom: 1px solid var(--line-strong);
             border-radius: 0;
             outline: 0;
             background: transparent;
@@ -319,8 +375,8 @@
             overflow-wrap: anywhere;
         }
 
-        /* La ID personalizada va en la misma caja que la descripción, así que
-           baja el cuerpo de letra para que no grite. */
+        /* El ID personalizado va en una caja aparte, así que baja el cuerpo
+           de letra para que no compita con el nombre del grupo. */
         .id-input {
             font-size: 15px;
             font-weight: 400;
@@ -337,8 +393,7 @@
         .name-input:focus-visible {
             outline: none;
             outline-offset: 0;
-            box-shadow: none;
-            border-bottom-color: var(--accent)
+            box-shadow: none
         }
 
         .under-name {
@@ -884,7 +939,7 @@
             background: var(--panel)
         }
 
-        /* El acordeón de la ID personalizada se sienta como el de «Privacidad
+        /* El acordeón del ID personalizado se sienta como el de «Privacidad
            y permisos», solo que antes de los participantes: es información del
            grupo, no de quienes entran. */
         .id-advanced[open] summary small {
@@ -1266,12 +1321,11 @@
             .identity {
                 grid-area: identity;
                 flex-direction: column;
-                align-items: center;
-                gap: 14px;
+                align-items: stretch;
                 padding: 24px 22px;
                 border: 1px solid var(--line);
                 border-radius: 16px;
-                text-align: center
+                text-align: left
             }
 
             .identity .avatar {
@@ -1286,7 +1340,7 @@
             .name-input {
                 padding-top: 2px;
                 font-size: 21px;
-                text-align: center
+                text-align: left
             }
 
             .under-name {
@@ -1419,9 +1473,8 @@
 
             body.edit-mode .identity {
                 width: 100%;
-                flex-direction: row;
-                align-items: center;
-                gap: 22px;
+                flex-direction: column;
+                align-items: stretch;
                 padding: 24px;
                 text-align: left
             }

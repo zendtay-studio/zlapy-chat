@@ -55,7 +55,7 @@ function normalizeGroup(g) {
         if (!policies.includes(g.contentPolicy[kind])) g.contentPolicy[kind] = 'all';
     g.joinRequests = Array.isArray(g.joinRequests) ? g.joinRequests : [];
     g.keyboxes = Array.isArray(g.keyboxes) ? g.keyboxes : [];
-    /* ID personalizada (dirección pública, p. ej. «equipo»): se guarda EN
+    /* ID personalizado (dirección pública, p. ej. «equipo»): se guarda EN
        CLARO a propósito —el índice único y la resolución por enlace corto
        necesitan buscarla tal cual— y solo la válida el backend (3-32
        [a-z0-9_-], sin el prefijo «g_» reservado a las ids internas). */
@@ -184,7 +184,7 @@ function writeGroupMeta(g) {
     const avatarRef = storeImage(typeof normalized.avatar === 'string' ? normalized.avatar : '',
         { userId: quotaOwner || undefined })
         || (prevRow ? prevRow.avatar_ref : '');
-    /* La ID personalizada se PRESERVA si el payload no la trae (los
+    /* El ID personalizado se PRESERVA si el payload no lo trae (los
        editores que no la tocan no deben borrarla); `customIdSet` marca
        que viene de un flujo que SÍ la edita, y entonces manda su valor
        —incluso vacío, que es la forma de quitarla. */
@@ -288,7 +288,7 @@ const pub = (g, viewerId = '') => {
            directamente en un grupo privado), así que fuera del grupo no viaja
            nunca: la lista /groups la borra y pub(g) sin visor no lo lleva. */
         inviteCode: viewerId && g.memberIds.includes(viewerId) ? g.inviteCode : undefined,
-        /* La ID personalizada es una dirección pública (como el nombre):
+        /* El ID personalizado es una dirección pública (como el nombre):
            viaja siempre para que los enlaces cortos se puedan construir. */
         customId: g.customId || '',
         keybox: (viewerId && (g.keyboxes || []).find(b => byName(b.recipient)?.id === viewerId)) || null

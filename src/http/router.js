@@ -877,16 +877,16 @@ const handleRequest = (req, res) => {
                         if (typeof data.rename !== 'string' || !data.rename.trim() || data.rename.length > 40) return json(res, 400, { error: 'Nombre inválido.' });
                         g.name = data.rename.trim();
                     }
-                    /* ID personalizada: la dirección pública de enlaces cortos.
+                    /* ID personalizado: la dirección pública de enlaces cortos.
                        Se valida aquí (y la unicidad la garante el índice) para
                        devolver un 409 con texto en vez de un fallo opaco. Un
                        cambio de ID se comunica a los miembros con el grupo ya
                        actualizado (su lista y sus enlaces la re-leen). */
                     if (Object.prototype.hasOwnProperty.call(data, 'customId')) {
                         const nextId = typeof data.customId === 'string' ? data.customId.trim().toLowerCase() : '';
-                        if (nextId && !validGroupCustomId(nextId)) return json(res, 400, { error: 'La ID personalizada admite 3-32 letras minúsculas, números, guiones y guiones bajos (sin empezar por g_).' });
+                        if (nextId && !validGroupCustomId(nextId)) return json(res, 400, { error: 'El ID personalizado admite 3-32 letras minúsculas, números, guiones y guiones bajos (sin empezar por g_).' });
                         const ocupada = Stmt.getGroupByCustom.get(nextId);
-                        if (ocupada && ocupada.id !== g.id) return json(res, 409, { error: 'Esa ID personalizada ya está en uso.' });
+                        if (ocupada && ocupada.id !== g.id) return json(res, 409, { error: 'Ese ID personalizado ya está en uso.' });
                         g.customId = nextId;
                         /* Marca explícita: sin ella, writeGroupMeta no podría
                            distinguir «no la toco» de «la quito a propósito». */
