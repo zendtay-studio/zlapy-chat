@@ -37,8 +37,12 @@ test('el avatar de push es público y el normal exige sesión', async () => {
         assert.match(pushSvg.headers.get('cache-control') || '', /public/);
         assert.match(await pushSvg.text(), /<svg/);
 
+        // Una cuenta inexistente también recibe 200 con su propio identicon:
+        // ni el estado ni el contenido dicen si existe (oráculo cerrado).
         const nadie = await fetch(srv.base + '/avatar/push/noexiste.svg');
-        assert.equal(nadie.status, 404);
+        assert.equal(nadie.status, 200);
+        assert.match(nadie.headers.get('content-type') || '', /image\/svg/);
+        assert.match(await nadie.text(), /<svg/);
 
         // La ruta normal NO es pública: no se filtra presencia ni datos.
         const normal = await fetch(srv.base + '/avatar/ana.svg');
@@ -69,8 +73,11 @@ test('el icono de grupo en push también es público (antes daba 401 y no salía
         assert.match(icono.headers.get('cache-control') || '', /public/);
         assert.match(await icono.text(), /<svg/);
 
-        // Un id inventado: 404 (nada que adivinar ni enumerar).
-        assert.equal((await fetch(srv.base + '/avatar/push/g_inventado.svg')).status, 404);
+        // Un id inventado también devuelve 200 con su identicon de grupo:
+        // no se distingue de uno real, así que no hay oráculo de existencia.
+        const inventado = await fetch(srv.base + '/avatar/push/g_inventado.svg');
+        assert.equal(inventado.status, 200);
+        assert.match(await inventado.text(), /<svg/);
 
         /* La ruta normal sigue exigiendo sesión: las push ya no la usan,
            así que el servicio de push nunca más recibe un 401. */

@@ -64,4 +64,20 @@ function createDefaultGroupAvatarSvg(groupId) {
 </svg>`;
 }
 
-module.exports = { createDefaultAvatarSvg, createDefaultGroupAvatarSvg };
+module.exports = { createDefaultAvatarSvg, createDefaultGroupAvatarSvg, opaquePublicId };
+
+/* Identificador opaco para el avatar PÚBLICO de una cuenta que no existe.
+   /avatar/push/<usuario>.svg es pública a propósito (el servicio de push la
+   descarga sin cookies). Antes respondía 404 cuando la cuenta no existía y
+   200 cuando sí: un oráculo de enumeración de cuentas sin sesión.
+
+   Ahora SIEMPRE se devuelve un identicon: el real si la cuenta existe y este
+   si no. Se deriva con HMAC del identificador pedido y la llave maestra, así
+   que es determinista (estable entre peticiones) pero impredecible para quien
+   no tiene la llave. El dibujo resultante es indistinguible del de una cuenta
+   real: ni el código de estado ni el contenido revelan si existe. */
+function opaquePublicId(identifier, secret) {
+    return crypto.createHmac('sha256', secret)
+        .update('avatar-publico:' + String(identifier || '').toLowerCase())
+        .digest('hex');
+}

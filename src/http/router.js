@@ -29,6 +29,7 @@ const { Stmt } = require('../db/statements.js');
 const { pruneBlobHashes, removeBlobAccess, tx } = require('../db/transactions.js');
 const { getGroups, getGroupsDiscover, getGroupsRequests, postGroups } = require('../groups/routes.js');
 const { AuthKeyUnreadableError } = require('../crypto/user-auth-keys.js');
+const { masterKey } = require('../crypto/setup.js');
 const { deleteGroupSummary, groupBrief, groupLastEntry, groupMessageForViewer, groupPolicies, groupSummaryFor, initializeGroupSummary, invalidateGroupPubCache, lastGroupMessage, pub, readGroup, resolveGroup, sharesGroup, updateGroupMessageSummaries, writeGroupMeta, writeGroupSummary } = require('../groups/store.js');
 const { mimeMap, rejectRateLimitedMessage, safeDecodeSegment } = require('./helpers.js');
 const { cspFor, json, securityHeaders } = require('./responses.js');
@@ -39,7 +40,7 @@ const { getAccountChatSettings, getNotes, getProfile, postAccountChatSettings, p
 const { postPushSubscribe, postPushTest, postPushUnsubscribe } = require('../push/routes.js');
 const { VAPID, notifyUser, avatarPushGroupUrl, avatarPushUrl, pushBody, pushNameOf } = require('../push/vapid.js');
 const { push, pushName, pushRawName, userList, userListPage, USER_LIST_PAGE, USER_LIST_PAGE_MAX } = require('../realtime/notify.js');
-const { createDefaultAvatarSvg, createDefaultGroupAvatarSvg } = require('../shared/avatar.js');
+const { createDefaultAvatarSvg, createDefaultGroupAvatarSvg, opaquePublicId } = require('../shared/avatar.js');
 const { storeGallery, validateGallery } = require('../shared/gallery.js');
 const { MESSAGE_LIMITS, characterCount } = require('../shared/limits.js');
 const { resolvePublicFile, PUBLIC_EXTENSIONS } = require('../shared/static-path.js');
@@ -115,15 +116,21 @@ const handleRequest = (req, res) => {
         /* Grupo (id g_…): MISMA ruta pública con su identicon geométrico.
            La foto de grupo viaja cifrada igual que la de persona, así que
            aquí también va el identicon. */
-        const grupo = !cuenta && pushUser && pushUser.startsWith('g_') ? readGroup(pushUser) : null;
-        if (!cuenta && !grupo) return json(res, 404, { error: 'avatar not found' });
+        const esGrupo = !!pushUser && pushUser.startsWith('g_');
+        const grupo = !cuenta && esGrupo ? readGroup(pushUser) : null;
+        /* Ni el estado ni el contenido dicen si la cuenta existe: siempre hay
+           un identicon. Para una inexistente se deriva uno con HMAC de la
+           llave maestra, con la misma forma y también determinista. El
+           prefijo g_ decide el diseño (escudo de grupo o pixeles de persona)
+           tanto si el grupo existe como si no. */
+        const idPublico = grupo ? grupo.id : (cuenta ? cuenta.id : opaquePublicId(pushUser, masterKey.export()));
         res.writeHead(200, {
             'Content-Type': 'image/svg+xml; charset=utf-8',
             'Cache-Control': 'public, max-age=300',
             'X-Content-Type-Options': 'nosniff',
             ...securityHeaders
         });
-        return res.end(grupo ? createDefaultGroupAvatarSvg(grupo.id) : createDefaultAvatarSvg(cuenta.id));
+        return res.end(esGrupo ? createDefaultGroupAvatarSvg(idPublico) : createDefaultAvatarSvg(idPublico));
     }
     /* Miniatura PÚBLICA de la foto de perfil (icono de las push): la URL
        lleva un token de 24 bytes no adivinable — sin él no se puede
