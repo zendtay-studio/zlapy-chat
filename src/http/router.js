@@ -17,7 +17,7 @@ const { getAuthSession, getKey, postAuthAccountRemove, postAuthAddAccount, postA
 const { getCalls, postCallLog } = require('../calls/routes.js');
 const { blobAvailableTo, blobHashOk, blobQuotaOk, invalidateBlobQuota, storeBlob } = require('../chat/media.js');
 const { rejectRateLimited } = require('../http/helpers.js');
-const { groupCreateLimiter } = require('../http/rate-limit.js');
+const { groupCreateLimiter, apiLimiter, publicApiLimiter, authLimiter } = require('../http/rate-limit.js');
 const { withMentions } = require('../chat/mentions.js');
 const { unarchiveForIncoming } = require('../chat/prefs.js');
 const { deleteMessageById, filterForViewer, readMessagePage, resolveReply, rowToMessage, updateStoredMessage } = require('../chat/messages.js');
@@ -45,7 +45,7 @@ const { storeGallery, validateGallery } = require('../shared/gallery.js');
 const { MESSAGE_LIMITS, characterCount } = require('../shared/limits.js');
 const { resolvePublicFile, PUBLIC_EXTENSIONS } = require('../shared/static-path.js');
 const { normalizeContactData, normalizePollData } = require('../shared/types.js');
-const { clampStr, localStickerHash, validAvatar, validGroupCustomId, validMessageId, validMime, validStickerData } = require('../shared/validation.js');
+const { clampStr, clientIp, localStickerHash, validAvatar, validGroupCustomId, validMessageId, validMime, validStickerData } = require('../shared/validation.js');
 const { blockedSet, groupCache, profiles, stories, users } = require('../state.js');
 const { getGiphySearch, getLegacyDefaultSticker, getStickerBlob, getStickerDiscover, getStickers, postCreateSticker, postStickers } = require('../stickers/routes.js');
 const { getStories, postStory, postStoryLike } = require('../stories/routes.js');
@@ -97,6 +97,30 @@ const handleRequest = (req, res) => {
     res.setHeader('Content-Security-Policy', cspFor(req.headers.host));
     if (requestEncrypted(req))
         res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    /* Cota de frecuencia por ruta:
+       - Autenticación: la más estricta (RATE_LIMIT_AUTH_PER_MINUTE, por IP),
+         y encima los frenos de fuerza bruta que ya tenía.
+       - Resto de la API: base por cuenta autenticada (RATE_LIMIT_API_PER_MINUTE)
+         o por IP sin sesión (RATE_LIMIT_PUBLIC_PER_MINUTE).
+       Los estáticos de public/ y el paquete de stickers por defecto no se
+       limitan aquí: son lecturas baratas con caché, y la pestaña de stickers
+       carga decenas de imágenes de golpe. */
+    const publicPage = req.method === 'GET' && (url.pathname === '/config' || url.pathname === '/' || PUBLIC_EXTENSIONS.has(path.extname(url.pathname).toLowerCase()));
+    const publicAuthPost = req.method === 'POST' && ['/auth/register', '/auth/login', '/auth/logout', '/auth/switch'].includes(url.pathname);
+    const authUser = sessionUser(req);
+    const esAuth = url.pathname === '/auth/add-account' ||
+        (req.method === 'POST' && ['/auth/login', '/auth/register', '/auth/logout', '/auth/switch'].includes(url.pathname));
+    if (esAuth) {
+        if (rejectRateLimited(res, authLimiter, 'ip:' + clientIp(req), CONFIG.rateLimits.auth, 'intentos de autenticación por minuto')) return;
+    } else {
+        const esEstatico = publicPage && !/^\/(avatar|blob|stickers\/blob)\//.test(url.pathname);
+        if (!esEstatico) {
+            const limiter = authUser ? apiLimiter : publicApiLimiter;
+            const clave = authUser ? 'u:' + authUser.id : 'ip:' + clientIp(req);
+            const tope = authUser ? CONFIG.rateLimits.api : CONFIG.rateLimits.public;
+            if (rejectRateLimited(res, limiter, clave, tope, 'peticiones por minuto')) return;
+        }
+    }
     if (req.method === 'GET' && url.pathname === '/config')
         return getConfig(req, res, url, data, actor);
 
@@ -185,9 +209,6 @@ const handleRequest = (req, res) => {
     if (req.method === 'GET' && url.pathname === '/auth/session') return getAuthSession(req, res, url, data, actor);
     if (req.method === 'GET' && url.pathname === '/push/vapid') return json(res, 200, { publicKey: VAPID.publicKey });
 
-    const publicPage = req.method === 'GET' && (url.pathname === '/config' || url.pathname === '/' || PUBLIC_EXTENSIONS.has(path.extname(url.pathname).toLowerCase()));
-    const publicAuthPost = req.method === 'POST' && ['/auth/register', '/auth/login', '/auth/logout', '/auth/switch'].includes(url.pathname);
-    const authUser = sessionUser(req);
     if (!authUser && !publicPage && !publicAuthPost) return json(res, 401, { error: 'authentication required' });
     /* Modo degradado (FORCE_TLS pedido pero sin cert.pem/key.pem): los inicios
        de sesión, registro y cambio de cuenta SOLO desde el propio equipo.

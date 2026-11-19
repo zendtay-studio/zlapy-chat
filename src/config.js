@@ -46,8 +46,8 @@ const DEFAULTS = Object.freeze({
     CHAT_PAGE_CACHE_MAX_BYTES: 64 * 1024 * 1024
 });
 
-function integerSetting(env, name, min, max) {
-    const raw = env[name] === undefined || env[name] === '' ? DEFAULTS[name] : env[name];
+function integerSetting(env, name, min, max, fallback = DEFAULTS[name]) {
+    const raw = env[name] === undefined || env[name] === '' ? fallback : env[name];
     const normalized = String(raw).trim();
     if (!/^\d+$/.test(normalized)) throw new Error(`${name} must be an integer.`);
     const value = Number(normalized);
@@ -55,6 +55,31 @@ function integerSetting(env, name, min, max) {
         throw new Error(`${name} must be between ${min} and ${max}.`);
     return value;
 }
+
+/* Límites de frecuencia por defecto (peticiones por minuto). Cada uno se
+   puede cambiar desde .env con su variable RATE_LIMIT_<NOMBRE>_PER_MINUTE;
+   el nombre se deriva del de aquí (api → RATE_LIMIT_API_PER_MINUTE).
+   La cota base cubre TODAS las rutas de API; las de autenticación llevan una
+   más estricta (60/min) y encima sus propios frenos de fuerza bruta. */
+const RATE_LIMIT_DEFAULTS = Object.freeze({
+    api: 600,            // base por cuenta autenticada (10/s)
+    public: 300,         // base por IP sin sesión (5/s)
+    auth: 60,            // login/registro/cambio/cierre de cuenta, por IP (1/s)
+    giphy: 30,
+    stickerCreate: 10,
+    profile: 10,
+    keyRegen: 5,
+    story: 15,
+    storyView: 60,
+    contact: 20,
+    groupCreate: 10,
+    callOffer: 5,
+    chatPrefs: 20,
+    passwordCheck: 5,
+    receipt: 120,
+    reaction: 120,
+    keyUpload: 30
+});
 
 function loadConfig(env = process.env) {
     /* Nombre de la base principal: se calcula primero porque el de los
@@ -113,6 +138,13 @@ function loadConfig(env = process.env) {
        que la sesión normal sería un límite que no limita nada. */
     if (settings.authPlainSessionTtlMs > settings.authSessionTtlMs)
         throw new Error('AUTH_PLAIN_SESSION_TTL_MS cannot exceed AUTH_SESSION_TTL_MS.');
+    /* Límites de frecuencia: cada valor de RATE_LIMIT_DEFAULTS tiene su
+       variable en .env (RATE_LIMIT_<NOMBRE>_PER_MINUTE). La base de API y la
+       de auth son las que luego aplican http/router.js y rate-limit.js. */
+    settings.rateLimits = Object.freeze(Object.fromEntries(Object.entries(RATE_LIMIT_DEFAULTS).map(([name, fallback]) => {
+        const envName = 'RATE_LIMIT_' + name.replace(/[A-Z]/g, c => '_' + c).toUpperCase() + '_PER_MINUTE';
+        return [name, integerSetting(env, envName, 1, 1_000_000, fallback)];
+    })));
     return Object.freeze(settings);
 }
 
@@ -166,6 +198,17 @@ function ensureEnvFile(envPath = ENV_PATH, examplePath = ENV_EXAMPLE_PATH) {
     return true;
 }
 const envCreated = ensureEnvFile();
+
+/* Actualización ADITIVA de la configuración existente: si una versión nueva de
+   `.env.example` trae variables (y sus comentarios) que el `.env` real no
+   tiene, se añaden ANTES de cargar dotenv. Los valores y textos que el usuario
+   ya tenía no se tocan; solo se incorpora lo que falta. */
+if (fs.existsSync(ENV_EXAMPLE_PATH)) {
+    const { syncEnvFile } = require('../ops/config/sync-env-example.js');
+    const envSync = syncEnvFile(ENV_PATH, ENV_EXAMPLE_PATH);
+    if (envSync.added.length)
+        console.log(`[config] Se añadieron al .env ${envSync.added.length} variables de .env.example: ${envSync.added.join(', ')}`);
+}
 
 // Carga el `.env` de la raiz del proyecto: el servidor y los scripts de
 // operacion parten de la misma configuracion. Las variables ya presentes en el

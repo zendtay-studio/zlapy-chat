@@ -385,6 +385,9 @@ reiniciar el servidor.**
 | `PROFILE_DESCRIPTION_CHAR_LIMIT` | `140` | Máx. caracteres de la descripción del perfil | 1–100 000 |
 | `MESSAGE_RATE_LIMIT` | `30` | Mensajes máximos por ventana, por cuenta | 1–1 000 000 |
 | `MESSAGE_RATE_WINDOW_MS` | `60000` | Tamaño de la ventana del límite (60 000 = 1 min) | 1–31 536 000 000 |
+| `RATE_LIMIT_API_PER_MINUTE` | `600` | Cota base de la API por cuenta autenticada | 1–1 000 000 |
+| `RATE_LIMIT_PUBLIC_PER_MINUTE` | `300` | Cota base pública por IP sin sesión | 1–1 000 000 |
+| `RATE_LIMIT_AUTH_PER_MINUTE` | `60` | Cota de autenticación, más estricta que el resto | 1–1 000 000 |
 | `MAX_AUDIO_DURATION_MS` | `60000` | Duración máxima de una nota de voz (60 000 = 1 min) | 1 000–3 600 000 |
 | `MAX_HTTP_BODY_BYTES` | `33554432` | Tamaño máximo del cuerpo de una petición (32 MiB) | 1 024–1 073 741 824 |
 | `MAX_MESSAGE_DATA_CHARS` | `24000000` | Máx. caracteres de datos multimedia cifrados por mensaje | ≤ `MAX_HTTP_BODY_BYTES` |
