@@ -63,7 +63,7 @@ test('un sticker creado sin publicar se ve en el grupo por los demás integrante
         // Y puede DESCARGARLO: aquí es donde se rompería si no se repartiera el
         // acceso al blob entre los integrantes.
         const visto = await fetch(srv.base + sticker, {
-            headers: { Cookie: `chatlocal_session=${encodeURIComponent(beto.cookie)}` }
+            headers: { Cookie: `zlapy_session=${encodeURIComponent(beto.cookie)}` }
         });
         assert.equal(visto.status, 200, 'otro integrante debe poder ver el sticker');
         assert.equal(visto.headers.get('content-type'), 'image/webp');
@@ -92,7 +92,7 @@ test('un no integrante no puede descargar el sticker del grupo', async () => {
 
         // Cira no está en el grupo: el blob sigue siendo privado.
         const ajeno = await fetch(srv.base + sticker, {
-            headers: { Cookie: `chatlocal_session=${encodeURIComponent(cira.cookie)}` }
+            headers: { Cookie: `zlapy_session=${encodeURIComponent(cira.cookie)}` }
         });
         assert.equal(ajeno.status, 404, 'quien no es integrante no descarga el sticker');
     } finally { await stop(srv); }

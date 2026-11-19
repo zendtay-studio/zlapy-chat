@@ -129,7 +129,7 @@ test('websocket frames open in both directions and reject foreign frames', () =>
 async function encryptedApi(base, publicKey, method, pathname, body, cookie) {
     const envelope = T.encrypt(method, pathname, JSON.stringify(body), publicKey);
     const headers = { ...envelope.headers, Origin: base, 'Sec-Fetch-Site': 'same-origin' };
-    if (cookie) headers.Cookie = `chatlocal_session=${encodeURIComponent(cookie)}`;
+    if (cookie) headers.Cookie = `zlapy_session=${encodeURIComponent(cookie)}`;
     const response = await fetch(base + pathname, { method, headers, body: envelope.body });
     const setCookie = response.headers.get('set-cookie') || '';
     const sealed = response.headers.get('X-Zlapy-Enc');
@@ -143,7 +143,7 @@ async function encryptedApi(base, publicKey, method, pathname, body, cookie) {
 }
 
 const cookieFrom = setCookie => {
-    const match = /chatlocal_session=([^;]+)/.exec(setCookie || '');
+    const match = /zlapy_session=([^;]+)/.exec(setCookie || '');
     return match ? decodeURIComponent(match[1]) : '';
 };
 
@@ -227,7 +227,7 @@ test('a plain request still works and a broken envelope is rejected', async () =
         // Sobre dirigido a otra ruta (con sesión, para que llegue al cuerpo).
         const moved = await fetch(server.base + '/receipt', {
             method: 'POST',
-            headers: { ...headers, Cookie: `chatlocal_session=${encodeURIComponent(plain.cookie)}` },
+            headers: { ...headers, Cookie: `zlapy_session=${encodeURIComponent(plain.cookie)}` },
             body: envelope.body
         });
         assert.equal(moved.status, 400);

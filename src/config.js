@@ -23,7 +23,7 @@ const DEFAULTS = Object.freeze({
     CHAT_PAGE_CACHE_TTL_MS: 10_000,
     CHAT_PAGE_CACHE_MAX: 20,
     SQLITE_CACHE_SIZE_KB: 64_000,
-    SQLITE_BUSY_TIMEOUT_MS: 5_000,
+    SQLITE_BUSY_TIMEOUT_MS: 15_000,
     STORY_TTL_MS: 24 * 60 * 60 * 1000,
     AUTH_SESSION_TTL_MS: 30 * 24 * 60 * 60 * 1000,
     /* Vida de la sesión emitida por HTTP en claro desde otra máquina:

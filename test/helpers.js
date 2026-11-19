@@ -52,66 +52,121 @@ function freePort() {
     });
 }
 
-/* Arranca un servidor de prueba. options.dataDir permite reusar una base
-   (para probar reinicios). Devuelve { child, base, port, dataDir }. */
-async function startServer(options = {}) {
-    const port = await freePort();
-    const dataDir = options.dataDir || fs.mkdtempSync(path.join(os.tmpdir(), 'zlapy-test-'));
+/* Un solo intento. La identidad del arranque viene del mensaje IPC `ready`
+   del PROPIO hijo, nunca de un 200 que pueda devolver otro ocupante. */
+async function startServerOnce(options, port, dataDir) {
     const stickerPackDir = options.env && Object.prototype.hasOwnProperty.call(options.env, 'BBOT_STICKER_PACK_DIR')
         ? options.env.BBOT_STICKER_PACK_DIR
         : process.env.BBOT_STICKER_PACK_DIR || getGeneratedStickerPackDir();
     const child = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
-        /* FORCE_TLS=false por defecto: las pruebas hablan HTTP contra una
-           instancia local y desechable. Un test puede PASAR POR ENCIMA (p. ej.
-           para el repliegue sin certificados) con options.env. */
         env: {
             ...process.env,
             PORT: String(port),
             DATA_DIR: dataDir,
             FORCE_TLS: 'false',
             BIND_HOST: 'auto',
-            /* La llave maestra se DERIVA de la credencial del propietario: el
-               servidor de prueba necesita una. En una base nueva la inicializa
-               con ella (como haría la instalación real con su .env). */
             DB_USER: TEST_CREDENTIAL.user,
             DB_PASSWORD: TEST_CREDENTIAL.password,
-            /* Nombres de base FIJOS en las pruebas: el .env de la
-               instalación real podría llevar otros y los tests leen la base
-               por su ruta (dataDir/zlapy.db). */
             DB_NAME: 'zlapy',
             BLOB_DB_NAME: 'blob',
             BBOT_STICKER_PACK_DIR: stickerPackDir,
             ...(options.env || {})
         },
-        stdio: ['ignore', 'pipe', 'pipe']
+        // IPC permite distinguir el ready real incluso si otro proceso ocupa
+        // el puerto y responde 200 o deja el sondeo HTTP colgado.
+        stdio: ['ignore', 'pipe', 'pipe', 'ipc']
     });
+    if (typeof options.onChild === 'function') options.onChild(child);
     let log = '';
-    child.stdout.on('data', d => { log += d; });
-    child.stderr.on('data', d => { log += d; });
+    let startupTimer = null;
     const base = `http://127.0.0.1:${port}`;
-    let ready = false;
-    for (let i = 0; i < 3000; i++) {
-        if (child.exitCode !== null)
-            throw new Error(`el servidor de prueba murió al arrancar:\n${log.slice(-2000)}`);
-        try {
-            const r = await fetch(`${base}/healthz`);
-            if (r.ok) { ready = true; break; }
-        } catch { }
-        await new Promise(r => setTimeout(r, 100));
-    }
-    if (child.exitCode !== null)
-        throw new Error(`el servidor de prueba no arrancó:\n${log.slice(-2000)}`);
-    if (!ready) throw new Error(`el servidor de prueba no estuvo listo a tiempo:\n${log.slice(-2000)}`);
-    return {
-        child, base, port, dataDir,
-        ownsDataDir: !options.dataDir,
-        get log() { return log; }
+    const portConflict = () => new RegExp(`Puerto ${port} ocupado\\b`).test(log);
+    const onLog = data => {
+        log += data;
+        if (portConflict()) {
+            const error = new Error(`Puerto ${port} ocupado durante el arranque de prueba.`);
+            error.code = 'EADDRINUSE';
+            rejectStartup(error);
+        }
     };
+    let rejectStartup;
+    const failure = new Promise((resolve, reject) => { rejectStartup = reject; });
+    const ready = new Promise(resolve => {
+        child.on('message', message => {
+            if (message && message.t === 'ready' && message.port === port) resolve();
+        });
+    });
+    child.once('error', rejectStartup);
+    child.once('exit', (code, signal) => {
+        const error = new Error(`el servidor de prueba no arrancó (${code ?? signal ?? 'desconocido'}):\n${log.slice(-2000)}`);
+        if (portConflict()) error.code = 'EADDRINUSE';
+        rejectStartup(error);
+    });
+    child.stdout.on('data', onLog);
+    child.stderr.on('data', onLog);
+    startupTimer = setTimeout(() => {
+        const error = new Error(`el servidor de prueba no estuvo listo a tiempo:\n${log.slice(-2000)}`);
+        if (portConflict()) error.code = 'EADDRINUSE';
+        rejectStartup(error);
+    }, 300_000);
+
+    try {
+        await Promise.race([ready, failure]);
+        /* Con cobertura y cientos de hijos en paralelo, 5 s puede no bastar
+           incluso después del ready IPC. Sigue acotado, pero sin falso fallo
+           por saturación del runner. */
+        const response = await fetch(`${base}/healthz`, { signal: AbortSignal.timeout(30_000) });
+        if (!response.ok) throw new Error(`healthz respondió ${response.status} tras el ready IPC del hijo.`);
+        return {
+            child, base, port, dataDir,
+            ownsDataDir: !options.dataDir,
+            get log() { return log; }
+        };
+    } catch (error) {
+        // Espera la salida (con escalado en stop) antes de borrar o reintentar.
+        try { await stop({ child, ownsDataDir: false, dataDir }); } catch { }
+        throw error;
+    } finally {
+        if (startupTimer) clearTimeout(startupTimer);
+    }
+}
+
+/* Arranca un servidor de prueba. options.dataDir permite reusar una base
+   (para probar reinicios). Devuelve { child, base, port, dataDir }. */
+async function startServer(options = {}) {
+    let lastError = null;
+    for (let attempt = 0; attempt < 6; attempt++) {
+        const ownsDataDir = !options.dataDir;
+        const dataDir = options.dataDir || fs.mkdtempSync(path.join(os.tmpdir(), 'zlapy-test-'));
+        let succeeded = false;
+        try {
+            const explicitPort = options.env && options.env.PORT !== undefined;
+            const port = explicitPort ? Number(options.env.PORT) : await freePort();
+            const result = await startServerOnce(options, port, dataDir);
+            succeeded = true;
+            return result;
+        } catch (error) {
+            lastError = error;
+            /* Solo reintenta un conflicto del puerto EFECTIVO y elegido por el
+               helper. Un PORT explícito u otro error falla sin recursión. */
+            const retry = error.code === 'EADDRINUSE' &&
+                !(options.env && options.env.PORT !== undefined) && attempt < 5;
+            if (!retry) throw error;
+        } finally {
+            // startServerOnce ya esperó la salida del hijo antes de llegar aquí.
+            if (!succeeded && ownsDataDir) {
+                try { fs.rmSync(dataDir, { recursive: true, force: true }); } catch { }
+            }
+        }
+    }
+    throw lastError;
 }
 
 function stop(server) {
     return new Promise(resolve => {
+        let killTimer = null;
         const cleanup = () => {
+            if (killTimer) clearTimeout(killTimer);
             // Solo se borra el DATA_DIR si esta instancia lo creó: un test que
             // reutiliza la base (p. ej. para probar reinicios) la conserva.
             if (server.ownsDataDir) {
@@ -119,17 +174,18 @@ function stop(server) {
             }
             resolve();
         };
-        if (server.child.exitCode !== null) return cleanup();
+        const exited = server.child.exitCode !== null || server.child.signalCode !== null;
+        if (exited) return cleanup();
         server.child.once('exit', cleanup);
         server.child.kill('SIGTERM');
-        setTimeout(() => { try { server.child.kill('SIGKILL'); } catch { } }, 5000);
+        killTimer = setTimeout(() => { try { server.child.kill('SIGKILL'); } catch { } }, 5000);
     });
 }
 
 /* Petición HTTP con cookie de sesión y cabeceras anti-CSRF del mismo origen. */
 async function api(base, method, pathname, body, cookie) {
     const headers = { 'Content-Type': 'application/json', 'Origin': base, 'Sec-Fetch-Site': 'same-origin' };
-    if (cookie) headers.Cookie = `chatlocal_session=${encodeURIComponent(cookie)}`;
+    if (cookie) headers.Cookie = `zlapy_session=${encodeURIComponent(cookie)}`;
     const res = await fetch(base + pathname, {
         method,
         headers,
@@ -143,7 +199,7 @@ async function api(base, method, pathname, body, cookie) {
 }
 
 const sessionCookieFrom = setCookie => {
-    const match = /chatlocal_session=([^;]+)/.exec(setCookie || '');
+    const match = /zlapy_session=([^;]+)/.exec(setCookie || '');
     return match ? decodeURIComponent(match[1]) : '';
 };
 
@@ -187,7 +243,7 @@ class WsClient {
             const sock = net.connect(this.port, '127.0.0.1', () => {
                 sock.write(`GET /ws HTTP/1.1\r\nHost: 127.0.0.1:${this.port}\r\nUpgrade: websocket\r\n` +
                     `Connection: Upgrade\r\nSec-WebSocket-Key: ${key}\r\nSec-WebSocket-Version: 13\r\n` +
-                    `Origin: http://127.0.0.1:${this.port}\r\nCookie: chatlocal_session=${encodeURIComponent(this.cookie)}\r\n\r\n`);
+                    `Origin: http://127.0.0.1:${this.port}\r\nCookie: zlapy_session=${encodeURIComponent(this.cookie)}\r\n\r\n`);
             });
             this.socket = sock;
             const failTimer = setTimeout(() => reject(new Error('timeout en handshake WS')), 5000);

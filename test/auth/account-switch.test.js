@@ -59,18 +59,18 @@ test('cambiar de cuenta y volver funciona sin pedir contraseña', async () => {
         const betoId = betoRes.json.user.id;
         const anaJar = jarFrom(anaRes.setCookie);
         const betoJar = jarFrom(betoRes.setCookie);
-        const cookieAna = `chatlocal_account_${anaId}`;
-        const cookieBeto = `chatlocal_account_${betoId}`;
+        const cookieAna = `zlapy_account_${anaId}`;
+        const cookieBeto = `zlapy_account_${betoId}`;
 
         // La cookie de cuenta lleva su PROPIA sesión: si compartiera token con
         // la principal, el cambio de cuenta mataría la cuenta conectada.
         assert.ok(anaJar[cookieAna], 'al iniciar sesión se abre la cookie de cuenta');
-        assert.notEqual(anaJar[cookieAna], anaJar.chatlocal_session,
+        assert.notEqual(anaJar[cookieAna], anaJar.zlapy_session,
             'la cookie de cuenta usa una sesión distinta de la principal');
 
         // El navegador guarda las dos cuentas conectadas.
         const jar = {
-            chatlocal_session: anaJar.chatlocal_session,
+            zlapy_session: anaJar.zlapy_session,
             [cookieAna]: anaJar[cookieAna],
             [cookieBeto]: betoJar[cookieBeto]
         };
@@ -137,7 +137,7 @@ test('cambiar a una cuenta existente sin su cookie pide volver a iniciar sesión
         assert.notEqual(cambio.json.gone, true, 'no debe marcarse como eliminada');
 
         // Con la cookie de la cuenta enlazada, el cambio sí funciona.
-        const cuentaCookie = new RegExp(`chatlocal_account_${betoId}=([^;]+)`).exec(add.setCookie || '');
+        const cuentaCookie = new RegExp(`zlapy_account_${betoId}=([^;]+)`).exec(add.setCookie || '');
         assert.ok(cuentaCookie, 'add-account debe devolver la cookie de la cuenta');
         const ok = await fetch(`${srv.base}/auth/switch`, {
             method: 'POST',
@@ -145,7 +145,7 @@ test('cambiar a una cuenta existente sin su cookie pide volver a iniciar sesión
                 'Content-Type': 'application/json',
                 Origin: srv.base,
                 'Sec-Fetch-Site': 'same-origin',
-                Cookie: `chatlocal_session=${encodeURIComponent(ana.cookie)}; chatlocal_account_${betoId}=${encodeURIComponent(decodeURIComponent(cuentaCookie[1]))}`
+                Cookie: `zlapy_session=${encodeURIComponent(ana.cookie)}; zlapy_account_${betoId}=${encodeURIComponent(decodeURIComponent(cuentaCookie[1]))}`
             },
             body: JSON.stringify({ accountId: betoId })
         });

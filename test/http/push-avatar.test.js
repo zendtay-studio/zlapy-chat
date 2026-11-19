@@ -9,7 +9,7 @@ const test = require('node:test');
 const { startServer, stop, api, register } = require('../helpers.js');
 
 const avatar = async (base, ruta, cookie) => {
-    const headers = cookie ? { Cookie: `chatlocal_session=${encodeURIComponent(cookie)}` } : {};
+    const headers = cookie ? { Cookie: `zlapy_session=${encodeURIComponent(cookie)}` } : {};
     const r = await fetch(base + ruta, { headers });
     return { status: r.status, tipo: r.headers.get('content-type') || '', svg: await r.text() };
 };

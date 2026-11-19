@@ -166,8 +166,10 @@ function cookieValue(req, name) {
     if (!entry) return '';
     try { return decodeURIComponent(entry.slice(prefix.length)); } catch { return ''; }
 }
-const sessionCookie = (req, name = 'chatlocal_session') => cookieValue(req, name);
-const accountCookieName = userId => 'chatlocal_account_' + userId;
+const SESSION_COOKIE_NAME = 'zlapy_session';
+const ACCOUNT_COOKIE_PREFIX = 'zlapy_account_';
+const sessionCookie = (req, name = SESSION_COOKIE_NAME) => cookieValue(req, name);
+const accountCookieName = userId => ACCOUNT_COOKIE_PREFIX + userId;
 /* Cookies de cuentas vinculadas presentes en este navegador (add-account). */
 function accountCookies(req) {
     const raw = req.headers.cookie || '';
@@ -177,7 +179,7 @@ function accountCookies(req) {
         const eq = entry.indexOf('=');
         if (eq <= 0) continue;
         const name = entry.slice(0, eq);
-        if (!name.startsWith('chatlocal_account_')) continue;
+        if (!name.startsWith(ACCOUNT_COOKIE_PREFIX)) continue;
         let value = '';
         try { value = decodeURIComponent(entry.slice(eq + 1)); } catch { value = entry.slice(eq + 1); }
         if (value) out.push([name, value]);
@@ -222,7 +224,7 @@ function isLoopbackPeer(req) {
 }
 function setSessionCookie(res, req, token, ttlMs = TOKEN_TTL_MS) {
     const secure = cookieSecure(req);
-    appendCookie(res, `chatlocal_session=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${ttlEnSegundos(ttlMs)}${secure ? '; Secure' : ''}`);
+    appendCookie(res, `${SESSION_COOKIE_NAME}=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${ttlEnSegundos(ttlMs)}${secure ? '; Secure' : ''}`);
 }
 function setAccountSessionCookie(res, req, userId, token, ttlMs = TOKEN_TTL_MS) {
     const secure = cookieSecure(req);
@@ -232,7 +234,7 @@ function clearCookie(res, req, name) {
     const secure = cookieSecure(req);
     appendCookie(res, `${name}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secure ? '; Secure' : ''}`);
 }
-const clearSessionCookie = (res, req) => clearCookie(res, req, 'chatlocal_session');
+const clearSessionCookie = (res, req) => clearCookie(res, req, SESSION_COOKIE_NAME);
 
 /* Rota el `rid` de la cuenta: todos los tokens emitidos antes dejan de
    validar (el checksum descuadra), incluidos los de otros dispositivos.
@@ -284,6 +286,8 @@ function originAllowed(req) {
    gestionan los tokens firmados y sus cookies. */
 
 module.exports = {
+    SESSION_COOKIE_NAME,
+    ACCOUNT_COOKIE_PREFIX,
     TOKEN_ISSUER,
     TOKEN_TTL_MS,
     decodeToken,

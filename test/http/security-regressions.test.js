@@ -164,7 +164,7 @@ test('referenciar el hash de un adjunto ajeno no da acceso a él (IDOR de adjunt
         const steal = await api(srv.base, 'POST', '/send', { to: 'beto', kind: 'image', hash, mime: 'image/png' }, caco.cookie);
         assert.equal(steal.status, 400, 'referenciar un adjunto ajeno debe rechazarse');
 
-        const read = await fetch(`${srv.base}/blob/${hash}`, { headers: { Cookie: `chatlocal_session=${encodeURIComponent(caco.cookie)}` } });
+        const read = await fetch(`${srv.base}/blob/${hash}`, { headers: { Cookie: `zlapy_session=${encodeURIComponent(caco.cookie)}` } });
         assert.equal(read.status, 404, 'no debe poder leer el adjunto ajeno');
     } finally { await stop(srv); }
 });

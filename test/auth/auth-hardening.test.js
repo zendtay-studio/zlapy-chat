@@ -37,7 +37,7 @@ test('regenerar la clave es transaccional: o todo o nada (V-08)', () => {
     // medias). Se comprueba la estructura del código, no el fallo inyectado.
     const fs = require('fs');
     const src = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'users', 'store.js'), 'utf8');
-    assert.match(src, /return db\.transaction\(\(\) => regenerateAuthKeyInner\(userId\)\)\(\)/,
+    assert.match(src, /db\.transaction\(\(\) => regenerateAuthKeyInner\(userId, previous, newKey\)\)/,
         'la regeneración debe ir dentro de una transacción');
 });
 
@@ -77,7 +77,7 @@ test('al cambiar de cuenta la sesión saliente sobrevive en otros dispositivos (
 
         /* Cambiar de cuenta: el servidor lee la cookie de la cuenta enlazada,
            igual que el navegador. */
-        const cuentaCookie = new RegExp(`chatlocal_account_${add.json.user.id}=([^;]+)`).exec(add.setCookie || '');
+        const cuentaCookie = new RegExp(`zlapy_account_${add.json.user.id}=([^;]+)`).exec(add.setCookie || '');
         assert.ok(cuentaCookie, 'add-account debe devolver la cookie de la cuenta nueva');
         const cambio = await fetch(`${srv.base}/auth/switch`, {
             method: 'POST',
@@ -85,7 +85,7 @@ test('al cambiar de cuenta la sesión saliente sobrevive en otros dispositivos (
                 'Content-Type': 'application/json',
                 Origin: srv.base,
                 'Sec-Fetch-Site': 'same-origin',
-                Cookie: `chatlocal_session=${encodeURIComponent(tokenAntes)}; chatlocal_account_${add.json.user.id}=${encodeURIComponent(decodeURIComponent(cuentaCookie[1]))}`
+                Cookie: `zlapy_session=${encodeURIComponent(tokenAntes)}; zlapy_account_${add.json.user.id}=${encodeURIComponent(decodeURIComponent(cuentaCookie[1]))}`
             },
             body: JSON.stringify({ accountId: add.json.user.id })
         });
@@ -161,7 +161,7 @@ test('vaciar varios chats no deja blobs huérfanos (V-07/V-16)', async () => {
 
         // El adjunto deja de estar accesible y no ocupa disco.
         const blob = await fetch(`${srv.base}/blob/${hash}`, {
-            headers: { Cookie: `chatlocal_session=${encodeURIComponent(beto.cookie)}` }
+            headers: { Cookie: `zlapy_session=${encodeURIComponent(beto.cookie)}` }
         });
         assert.equal(blob.status, 404, 'el adjunto del chat borrado no debe seguir descargable');
         const db = new Database(path.join(srv.dataDir, 'blob.db'), { readonly: true });

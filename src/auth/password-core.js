@@ -1,6 +1,6 @@
 'use strict';
 /**
- * Verificación yderivación de las contraseñas de cuenta (implementación pura).
+ * Verificación y derivación de las contraseñas de cuenta (implementación pura).
  *
  * Este módulo NO se usa directamente desde el servidor: vive dentro del
  * worker de contraseñas (`password-worker.js`) para que el coste de bcrypt no

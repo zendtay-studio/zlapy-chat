@@ -72,6 +72,7 @@ function logPushSend(username, sub, result, ms) {
     if (pushLog.length > PUSH_LOG_MAX) pushLog.shift();
 }
 const recentPushLog = () => pushLog.slice(-20).reverse();
+const PUSH_FETCH_TIMEOUT_MS = 5000;
 
 async function pushTo(sub, payloadObj) {
     try {
@@ -108,7 +109,11 @@ async function pushTo(sub, payloadObj) {
                móvil dormido más de eso perdía el aviso aunque el envío
                hubiera salido aceptado con 201. */
             headers: { 'TTL': '3600', 'Content-Encoding': 'aes128gcm', 'Urgency': 'high', 'Authorization': vapidAuth(sub.endpoint), 'Content-Type': 'application/octet-stream' },
-            body
+            body,
+            // El servicio de push es externo: sin esta señal, una conexión que
+            // nunca responde retenía notifyUser (y sus envíos siguientes) para
+            // siempre. La señal también cancela la lectura del cuerpo.
+            signal: AbortSignal.timeout(PUSH_FETCH_TIMEOUT_MS)
         });
         const responseBody = r.ok ? '' : (await r.text()).slice(0, 300);
         return { status: r.status, error: responseBody || undefined };

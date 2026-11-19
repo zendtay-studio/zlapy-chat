@@ -25415,11 +25415,9 @@
                     const managerSummary = document.getElementById('mgrSummaryText');
                     if (managerSummary) managerSummary.textContent = `Desaparecen ${displayDuration(STORY_TTL_MS)} después de publicarlas.`;
                     const session = await response.json();
-                    if (session.gone && session.accountId) {
-                        // La cuenta activa ya no existe en el servidor: se quita sola.
-                        forgetAccount(session.accountId);
-                        console.info('[account] La cuenta activa ya no existe; se quitó de la lista.');
-                    }
+                    // Las cuentas guardadas localmente se gestionan desde el
+                    // panel. Una respuesta anónima nunca las elimina por UUID:
+                    // eso convertiría /auth/session en un oráculo de cuentas.
                     // Sin sesión no hay app: la pantalla de acceso es otra pagina.
                     if (!session.authenticated) { location.replace('/login.html'); return; }
                     me = session.user;

@@ -11,7 +11,7 @@ const crypto = require('crypto');
 const { accountCookieName, clearCookie, clearSessionCookie, createSession, rotateRid } = require('../auth/sessions.js');
 const { hashPassword, verifyPassword } = require('../auth/password.js');
 const { propagateUsernameChange } = require('../chat/mentions.js');
-const { decryptForUser, messageCrypto } = require('../crypto/setup.js');
+const { authKeys, decryptForUser, messageCrypto } = require('../crypto/setup.js');
 const { ctxProfile } = require('../crypto/aad.js');
 const { Stmt } = require('../db/statements.js');
 const { pruneBlobHashes, tx } = require('../db/transactions.js');
@@ -254,7 +254,7 @@ function notificarCambioDeClave(usuario) {
 async function postAccountRegenerateKey(req, res, url, data, actor) {
     // Regenerar la clave de cifrado de contenido del usuario. El contenido
     // se re-cifra con la clave nueva para no perder el historial, y
-    // la clave de firma tambien se rehace.
+    // la clave de firma también se rehace.
     // EXIGE CONTRASEÑA: con solo la cookie de sesión, un XSS o una cookie
     // robada bastaban para dejar el historial de la víctima inaccesible. Es la
     // misma regla que borrar la cuenta o cambiar el nombre.
@@ -307,8 +307,12 @@ async function postAccountDelete(req, res, url, data, actor) {
     clearSessionCookie(res, req);
     clearCookie(res, req, accountCookieName(deletedId));
     // 2) La pertenencia a grupos se resuelve en la transacción (removed).
-    // 3) Borrado en cascada: una sola transacción, todo o nada.
+    // 3) Borrado en cascada: una sola transacción, todo o nada. Se conserva
+    //    la clave anterior para podar su sesión SOLO después del commit; si
+    //    hay rollback, la cuenta y sus contadores siguen intactos.
+    const deletedAuthKey = authKeys.authKeyRecord(deletedId);
     const removed = tx.deleteAccount(deletedId, who);
+    authKeys.forgetAuthKey(deletedId, deletedAuthKey);
     pruneBlobHashes(removed.hashes || []);
     for (const gid of [...(removed.groupsRemoved || []), ...(removed.groupsTouched || [])]) { groupCache.delete(gid); invalidateGroupPubCache(gid); }
     // 4) Fuera de la RAM (usuarios, perfiles, resúmenes, colas…).

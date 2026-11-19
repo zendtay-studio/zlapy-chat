@@ -63,68 +63,9 @@ const accountFromValue = (value, viewer) => {
     return resolveAccount(value, viewer) || null;
 };
 
-const handleRequest = (req, res) => {
-    let url;
-    let actor = '';
-    let data = null;
-    try { url = new URL(req.url, 'http://x'); }
-    catch { res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' }); return res.end('bad request'); }
-    if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
-    // Forzado de TLS: con FORCE_TLS activo y certificados disponibles, toda
-    // petición en claro se redirige a HTTPS antes de tocar nada (ni siquiera
-    // las rutas públicas), de modo que las credenciales y la cookie de sesión
-    // nunca viajen sin cifrar. `requestEncrypted` ya cubre el caso del proxy
-    // de confianza que termina TLS, así que no se entra en bucle.
-    if (tlsState.forceTls && !requestEncrypted(req) && url.pathname !== '/healthz') {
-        const host = req.headers.host;
-        /* M2: la redirección solo se arma con un Host PROPIO (loopback,
-           literal IP o los de TLS_HOSTS). Un Host manipulado convertiría este
-           301 en un rebote a un dominio ajeno, con el camino de la sesión
-           por delante. `no-store`: una redirección no debe quedar en la
-           caché de navegador ni de proxy. */
-        if (host && hostAllowed(host)) {
-            res.writeHead(301, {
-                'Location': `https://${host}${req.url}`,
-                'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
-                'Cache-Control': 'no-store',
-                ...securityHeaders
-            });
-            return res.end();
-        }
-    }
-    // CSP por petición (el host propio forma parte de connect-src) y HSTS
-    // siempre que la conexión sea (o vaya a ser) cifrada.
-    res.setHeader('Content-Security-Policy', cspFor(req.headers.host));
-    if (requestEncrypted(req))
-        res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-    /* Cota de frecuencia por ruta:
-       - Autenticación: la más estricta (RATE_LIMIT_AUTH_PER_MINUTE, por IP),
-         y encima los frenos de fuerza bruta que ya tenía.
-       - Resto de la API: base por cuenta autenticada (RATE_LIMIT_API_PER_MINUTE)
-         o por IP sin sesión (RATE_LIMIT_PUBLIC_PER_MINUTE).
-       Los estáticos de public/ y el paquete de stickers por defecto no se
-       limitan aquí: son lecturas baratas con caché, y la pestaña de stickers
-       carga decenas de imágenes de golpe. */
-    const publicPage = req.method === 'GET' && (url.pathname === '/config' || url.pathname === '/' || PUBLIC_EXTENSIONS.has(path.extname(url.pathname).toLowerCase()));
-    const publicAuthPost = req.method === 'POST' && ['/auth/register', '/auth/login', '/auth/logout', '/auth/switch'].includes(url.pathname);
-    const authUser = sessionUser(req);
-    const esAuth = url.pathname === '/auth/add-account' ||
-        (req.method === 'POST' && ['/auth/login', '/auth/register', '/auth/logout', '/auth/switch'].includes(url.pathname));
-    if (esAuth) {
-        if (rejectRateLimited(res, authLimiter, 'ip:' + clientIp(req), CONFIG.rateLimits.auth, 'intentos de autenticación por minuto')) return;
-    } else if (url.pathname !== '/healthz') {
-        /* /healthz NUNCA se limita: el supervisor lo sondea cada segundo y
-           cuenta cualquier 4xx como «servicio caído», así que un 429 por
-           cuota reiniciaría un servicio que está sano. */
-        const esEstatico = PUBLIC_EXTENSIONS.has(path.extname(url.pathname).toLowerCase())
-            && !/^\/(avatar|blob|stickers\/blob)\//.test(url.pathname);
-        if (!esEstatico) {
-            const limiter = authUser ? apiLimiter : publicApiLimiter;
-            const clave = authUser ? 'u:' + authUser.id : 'ip:' + clientIp(req);
-            const tope = authUser ? CONFIG.rateLimits.api : CONFIG.rateLimits.public;
-            if (rejectRateLimited(res, limiter, clave, tope, 'peticiones por minuto')) return;
-        }
-    }
+const ROUTE_NOT_HANDLED = Symbol('routeNotHandled');
+
+const handlePublicRoutes = (req, res, url, data, actor) => {
     if (req.method === 'GET' && url.pathname === '/config')
         return getConfig(req, res, url, data, actor);
 
@@ -213,20 +154,10 @@ const handleRequest = (req, res) => {
     if (req.method === 'GET' && url.pathname === '/auth/session') return getAuthSession(req, res, url, data, actor);
     if (req.method === 'GET' && url.pathname === '/push/vapid') return json(res, 200, { publicKey: VAPID.publicKey });
 
-    if (!authUser && !publicPage && !publicAuthPost) return json(res, 401, { error: 'authentication required' });
-    /* Modo degradado (FORCE_TLS pedido pero sin cert.pem/key.pem): los inicios
-       de sesión, registro y cambio de cuenta SOLO desde el propio equipo.
-       A la red local no se le entregan cookies de sesión por HTTP en claro:
-       es justo el riesgo que FORCE_TLS quería cerrar (SECOA-B-001) y las
-       pruebas del repliegue corren por loopback, así que siguen pasando. */
-    if (publicAuthPost && tlsState.degradedNoCert && !isLoopbackPeer(req))
-        return json(res, 503, { error: 'HTTPS requerido: instala cert.pem/key.pem o arranca con FORCE_TLS=false para uso HTTP.' });
-    if (req.method !== 'GET' && req.method !== 'POST') return json(res, 405, { error: 'method not allowed' });
-    if (req.method === 'POST' && (!originAllowed(req) || req.headers['sec-fetch-site'] === 'cross-site'))
-        return json(res, 403, { error: 'cross-origin request rejected' });
-    req.authUser = authUser;
-    actor = authUser ? authUser.username : '';
+    return ROUTE_NOT_HANDLED;
+};
 
+const handleGetRoutes = (req, res, url, data, actor) => {
     // GET
     // Proxy de stickers: la clave de GIPHY se queda en el servidor.
     if (req.method === 'GET' && url.pathname === '/giphy/search') return getGiphySearch(req, res, url, data, actor);
@@ -241,8 +172,10 @@ const handleRequest = (req, res) => {
         const rawLimit = url.searchParams.get('limit');
         const rawOffset = url.searchParams.get('offset');
         const q = (url.searchParams.get('q') || '').slice(0, 64);
-        if (rawLimit === null && rawOffset === null && !q)
-            return json(res, 200, { users: userList(req.authUser.id), more: false, total: userList(req.authUser.id).length });
+        if (rawLimit === null && rawOffset === null && !q) {
+            const allUsers = userList(req.authUser.id);
+            return json(res, 200, { users: allUsers, more: false, total: allUsers.length });
+        }
         if (rawLimit !== null && !/^\d{1,6}$/.test(rawLimit)) return json(res, 400, { error: 'limit inválido' });
         if (rawOffset !== null && !/^\d{1,7}$/.test(rawOffset)) return json(res, 400, { error: 'offset inválido' });
         const limit = Math.min(USER_LIST_PAGE_MAX, Math.max(1, Number(rawLimit || USER_LIST_PAGE)));
@@ -338,156 +271,224 @@ const handleRequest = (req, res) => {
     if (req.method === 'GET' && url.pathname === '/profile') return getProfile(req, res, url, data, actor);
     if (req.method === 'GET' && url.pathname === '/notes') return getNotes(req, res, url, data, actor);
 
-    // POST
-    if (req.method === 'POST') {
-        const chunks = [];
-        let bytes = 0;
-        let oversized = false;
-        // Límite de cuerpo por ruta: las rutas de autenticación solo llevan
-        // usuario y contraseña, así que no tienen por qué aceptar 32 MB (ni
-        // pagar el coste de parsearlos).
-        const SMALL_BODY_ROUTES = new Set(['/auth/register', '/auth/login', '/auth/add-account', '/auth/switch', '/auth/logout', '/auth/account/remove']);
-        /* M3: /key solo lleva una clave pública: 64 KB en vez de los
-           megabytes del límite general. Así un cuerpo manipulado no se
-           parsea ni se arrastra por el descifrado. */
-        const bodyLimit = url.pathname === '/key' ? 64 * 1024
-            : SMALL_BODY_ROUTES.has(url.pathname) ? 8 * 1024 : CONFIG.maxHttpBodyBytes;
-        if (Number(req.headers['content-length']) > bodyLimit) {
-            json(res, 413, { error: 'Contenido demasiado grande.' });
-            req.resume();
-            return;
+    return ROUTE_NOT_HANDLED;
+};
+
+const handleGroupMessage = (req, res, g, id, isAdmin, actor, data) => {
+    if (data.message) {
+        if (typeof data.message !== 'object' || Array.isArray(data.message)) return json(res, 400, { error: 'Mensaje inválido.' });
+        const source = data.message;
+        const kind = typeof source.kind === 'string' ? source.kind : '';
+        if (!Object.prototype.hasOwnProperty.call(groupPolicies, kind)) return json(res, 400, { error: 'Tipo inválido.' });
+        const policy = kind === 'text' ? g.writePolicy : g.contentPolicy[kind];
+        if (policy === 'off') return json(res, 403, { error: 'Desactivado.' });
+        if (!isAdmin && (g.writePolicy === 'admins' || policy === 'admins')) return json(res, 403, { error: 'Solo admins.' });
+        if (typeof source.data !== 'string' || source.data.length > CONFIG.maxMessageDataChars) return json(res, 400, { error: 'Contenido inválido.' });
+        if (kind === 'text' && characterCount(source.data, MESSAGE_LIMITS.groupMessageCharacters) > MESSAGE_LIMITS.groupMessageCharacters)
+            return json(res, 400, { error: `Los mensajes de grupo admiten hasta ${MESSAGE_LIMITS.groupMessageCharacters} caracteres.` });
+        if (rejectRateLimitedMessage(res, req.authUser.id)) return;
+        /* Validar sin escribir: los blobs se guardan al final, cuando
+           el mensaje ya está aceptado (antes una galería rechazada
+           dejaba adjuntos huérfanos ocupando disco). */
+        const gallery = source.gallery === undefined ? [] : validateGallery(req.authUser, source.gallery, blobAvailableTo);
+        if (source.gallery !== undefined && (!gallery || kind !== 'image')) return json(res, 400, { error: 'Galería inválida.' });
+        if (['image', 'video', 'audio', 'file'].includes(kind) && !source.hash && !gallery.length) return json(res, 400, { error: 'Falta hash.' });
+        if (kind === 'sticker' && !validStickerData(source.data)) return json(res, 400, { error: 'Sticker inválido.' });
+        const stickerBlobHash = kind === 'sticker' ? localStickerHash(source.data) : '';
+        if (stickerBlobHash &&
+            ((typeof source.hash === 'string' && source.hash.toLowerCase() !== stickerBlobHash) ||
+                !blobAvailableTo(req.authUser, stickerBlobHash)))
+            return json(res, 400, { error: 'Sticker no disponible.' });
+        if (kind === 'contact') {
+            const contact = normalizeContactData(source.data, name => resolveAccount(name, req.authUser));
+            if (!contact) return json(res, 400, { error: 'Contacto inválido.' });
+            source.data = JSON.stringify(contact);
+        } else if (kind === 'poll') {
+            const poll = normalizePollData(source.data);
+            if (!poll) return json(res, 400, { error: 'Encuesta inválida.' });
+            source.data = JSON.stringify(poll);
         }
-        req.on('data', c => {
-            bytes += c.length;
-            if (bytes > bodyLimit) {
-                oversized = true;
-                chunks.length = 0;
-                return;
-            }
-            if (!oversized) chunks.push(c);
-        });
-        req.on('end', async () => {
-            try {
-            if (oversized) return json(res, 413, { error: 'Contenido demasiado grande.' });
-            const rawBody = Buffer.concat(chunks);
-            let data;
-            if (isEncrypted(req)) {
-                // El cuerpo llega cifrado: se descifra antes de interpretarlo y
-                // la respuesta se devuelve cifrada con la misma clave.
-                const opened = openRequest(req, url, rawBody);
-                if (opened.error) return json(res, 400, { error: opened.error });
-                data = opened.data;
-                sealResponse(res, opened.session);
+        let mentions = [], mentionLabels = {};
+        if (kind === 'text') {
+            const mentioned = new Set();
+            const allMatch = /(^|\s)@(all|todos)\b/i.test(source.data);
+            if (allMatch) {
+                if (g.mentionAllPolicy === 'admins' && !isAdmin) return json(res, 403, { error: 'Solo admins.' });
+                for (const u of g.members) {
+                    if (u === actor) continue;
+                    const id2 = byName(u)?.id;
+                    if (id2) { mentioned.add(id2); mentionLabels[id2] = u; }
+                }
             } else {
-                /* Un POST sin cuerpo es una petición vacía, no un error: se
-                   interpreta como {}. Antes el JSON.parse('') devolvía 400 antes
-                   de ejecutar la ruta, y un logout sin cuerpo dejaba la sesión
-                   abierta con un mensaje que no decía nada. */
-                const text = rawBody.toString('utf8');
-                if (!text.trim()) data = {};
-                else {
-                    try { data = JSON.parse(text); } catch { return json(res, 400, { error: 'Cuerpo JSON inválido.' }); }
-                    if (!data || typeof data !== 'object') return json(res, 400, { error: 'El cuerpo debe ser un objeto JSON.' });
+                for (const match of source.data.matchAll(/@([a-zA-Z0-9_.-]{3,24})/g)) {
+                    const u = match[1].toLowerCase();
+                    const member = g.members.find(c => c.toLowerCase() === u);
+                    const id2 = member && byName(member)?.id;
+                    if (id2) { mentioned.add(id2); mentionLabels[id2] = member; }
                 }
             }
-
-    if (url.pathname === '/key') return postKey(req, res, url, data, actor);
-
-            if (/^\/groups\/[^/]+\/groupkey$/.test(url.pathname)) {
-                const gid = safeDecodeSegment(url.pathname.split('/')[2]);
-                if (gid === null) return json(res, 400, { error: 'id inválido' });
-                if (!/^[a-zA-Z0-9_-]{1,80}$/.test(gid)) return json(res, 400, { error: 'id inválido' });
-                const g = resolveGroup(gid);
-                if (!g) return json(res, 404, { error: 'no existe' });
-                if (!g.memberIds.includes(req.authUser.id)) return json(res, 403, { error: 'no eres miembro' });
-                const recipients = Array.isArray(data.recipients) ? data.recipients : [];
-                if (!g.keyboxes) g.keyboxes = [];
-                for (const box of recipients) {
-                    if (!box || typeof box.recipient !== 'string' || !g.members.includes(box.recipient)) continue;
-                    if (typeof box.iv !== 'string' || box.iv.length > 512 || typeof box.ct !== 'string' || box.ct.length > 16384) continue;
-                    // El autor del keybox es siempre quien lo sube: un miembro
-                    // no puede firmar keyboxes a nombre de otro.
-                    box.by = req.authUser.username;
-                    const idx = g.keyboxes.findIndex(b => b.recipient === box.recipient);
-                    // Un miembro solo puede escribir SU propio slot; los
-                    // admins pueden reescribir cualquiera.
-                    const actorIsAdmin = g.admins.some(name => byName(name)?.id === req.authUser.id);
-                    if (idx >= 0 && g.keyboxes[idx].by !== box.by && !actorIsAdmin) continue;
-                    const entry = { recipient: box.recipient, by: box.by, iv: box.iv, ct: box.ct, ts: Date.now() };
-                    if (idx >= 0) g.keyboxes[idx] = entry; else g.keyboxes.push(entry);
-                }
-                writeGroupMeta(g);
-                return json(res, 200, { ok: true });
+            mentioned.delete(req.authUser.id);
+            mentions = [...mentioned];
+        }
+        let messageData = gallery.length ? '' : source.data;
+        let pendingHash = typeof source.hash === 'string' ? source.hash.toLowerCase() : stickerBlobHash;
+        if (pendingHash) {
+            if (!blobHashOk(pendingHash)) return json(res, 400, { error: 'Hash inválido.' });
+            // Referenciar un adjunto ya existente exige tener acceso a él.
+            if (!messageData && !blobAvailableTo(req.authUser, pendingHash)) return json(res, 400, { error: 'Archivo no disponible.' });
+        }
+        /* Cuota de almacenamiento y, solo entonces, la escritura. */
+        const bytesNuevos = (messageData && pendingHash && !stickerBlobHash ? Buffer.byteLength(messageData) : 0) +
+            gallery.reduce((total, item) => total + (item.data ? Buffer.byteLength(item.data) : 0), 0);
+        if (bytesNuevos > 0 && !blobQuotaOk(req.authUser.id, bytesNuevos))
+            return json(res, 413, { error: 'Has alcanzado el límite de almacenamiento de adjuntos.' });
+        if (pendingHash && messageData && !stickerBlobHash && !storeBlob(pendingHash, messageData))
+            return json(res, 400, { error: 'Archivo inválido.' });
+        if (gallery.length && !storeGallery(gallery, storeBlob))
+            return json(res, 400, { error: 'Galería inválida.' });
+        // El espacio acaba de crecer: fuera de la caché de cuota.
+        invalidateBlobQuota(req.authUser.id);
+        if (pendingHash) {
+            source.hash = pendingHash;
+            if (!stickerBlobHash) messageData = '';
+        }
+        const msg = {
+            id: validMessageId(source.id) ? source.id : crypto.randomUUID(),
+            fromId: req.authUser.id,
+            kind, data: messageData, hash: typeof source.hash === 'string' ? source.hash.toLowerCase() : '', gallery,
+            once: !!source.once,
+            name: kind === 'image' ? '' : clampStr(source.name, 180),
+            mime: validMime(source.mime) ? source.mime.slice(0, 120) : '',
+            caption: typeof source.caption === 'string' ? source.caption.slice(0, 2000) : '',
+            reply: resolveReply(source.reply, 'group:' + id, req.authUser),
+            ts: Date.now(), mentions, mentionLabels,
+            enc: typeof source.enc === 'string' && (source.enc === 'e2' || source.enc === 'g2') ? source.enc : ''
+        };
+        tx.sendMessage(msg, 'group:' + id, g.cryptoId);
+        // Mensaje nuevo = la conversación reaparece.
+        Stmt.deleteChatDeletion.run('group:' + id, req.authUser.id);
+        updateGroupMessageSummaries(g, msg, req.authUser.id);
+        const decorated = withMentions(decorateForClient(msg));
+        /* El @usuario oculto tampoco viaja en el mensaje: si el
+           remitente, el autor citado o algún mencionado lo oculta
+           para alguien, el payload se personaliza con su alias
+           opaco. Sin nadie oculto se serializa UNA vez, como
+           antes; el push web solo se envía a los desconectados. */
+        const nombres = [
+            decorated.from,
+            decorated.reply && decorated.reply.from,
+            ...(decorated.mentionUsers || []).map(u => u && u.username)
+        ].filter(Boolean);
+        const personalizar = nombres.some(name => {
+            const owner = profiles[name];
+            if (!owner) return true;
+            if (privacyFor(owner).usuario.mode !== 'server') return true;
+            /* Quien bloqueó a alguien tampoco le muestra su @. */
+            const bloqueados = blockedSet.get(name);
+            return !!(bloqueados && bloqueados.size);
+        });
+        const rawGroupMessage = personalizar ? '' :
+            JSON.stringify({ type: 'group-message', groupId: id, message: decorated });
+        const payloadFor = name => personalizar
+            ? JSON.stringify({ type: 'group-message', groupId: id, message: groupMessageForViewer(decorated, name) })
+            : rawGroupMessage;
+        for (const m of g.members) {
+            pushRawName(m, payloadFor(m));
+            if (m !== actor) {
+                const memberAcc = byName(m);
+                // Mensaje nuevo = el chat vuelve a la lista, salvo
+                // que el miembro conserve archivados sus chats.
+                if (memberAcc) unarchiveForIncoming(m, memberAcc.id, 'group:' + id);
+                if (memberAcc && (!memberAcc.online || wantsAlwaysPush(m)))
+                    /* Título = nombre del grupo; cuerpo = «Remitente: texto» (o el tipo de
+                   adjunto); icono = el avatar del grupo (su ruta
+                   ya es pública); al tocar, abre el grupo. */
+                    void notifyUser(m, {
+                        title: g.name,
+                        body: `${pushNameOf(actor)}: ${pushBody(kind, msg.data, msg.caption)}`,
+                        tag: 'grp-' + id,
+                        icon: avatarPushGroupUrl(g.id),
+                        url: '/?open=' + encodeURIComponent('group:' + g.id)
+                    });
             }
+        }
+        return json(res, 200, { ok: true, message: groupMessageForViewer(decorated, actor) });
+    }
+    return ROUTE_NOT_HANDLED;
+};
 
-    // ---- Auth ----
-    if (url.pathname === '/auth/register') return postAuthRegister(req, res, url, data, actor);
-    if (url.pathname === '/auth/login') return postAuthLogin(req, res, url, data, actor);
-    if (url.pathname === '/auth/add-account') return postAuthAddAccount(req, res, url, data, actor);
-    if (url.pathname === '/auth/switch') return postAuthSwitch(req, res, url, data, actor);
-    if (url.pathname === '/auth/account/remove') return postAuthAccountRemove(req, res, url, data, actor);
-    if (url.pathname === '/auth/logout') return postAuthLogout(req, res, url, data, actor);
+const handleGroupSettings = (req, res, g, isAdmin, data, notifyGroup) => {
+    const settingsKeys = ['rename', 'description', 'avatar', 'customId', 'visibility', 'joinPolicy', 'writePolicy', 'addPolicy', 'editPolicy', 'mentionAllPolicy', 'contentPolicy'];
+    /* Ajustes que deciden QUIÉN entra, QUIÉN edita, QUIÉN escribe
+       o QUIÉN ve el grupo: reservados a admins aunque editPolicy
+       sea 'all'. Con el guard antiguo, cualquier miembro con
+       editPolicy=all ponía el grupo en público + joinPolicy=open
+       (SECOA-A-002); sin writePolicy/contentPolicy aquí, el mismo
+       miembro podía SILENCIAR a los no-admins (writePolicy='admins')
+       o desactivar los medios sin ser admin (SECOA-N-02). */
+    const adminOnlySettings = ['visibility', 'joinPolicy', 'addPolicy', 'customId', 'editPolicy', 'mentionAllPolicy', 'writePolicy', 'contentPolicy'];
+    if (settingsKeys.some(k => Object.prototype.hasOwnProperty.call(data, k))) {
+        if (!isAdmin && g.editPolicy !== 'all') return json(res, 403, { error: 'Solo admins.' });
+        if (!isAdmin && adminOnlySettings.some(k => Object.prototype.hasOwnProperty.call(data, k)))
+            return json(res, 403, { error: 'Ese ajuste es solo para admins.' });
+        const previousVisibility = g.visibility;
+        if (Object.prototype.hasOwnProperty.call(data, 'rename')) {
+            if (typeof data.rename !== 'string' || !data.rename.trim() || data.rename.length > 40) return json(res, 400, { error: 'Nombre inválido.' });
+            g.name = data.rename.trim();
+        }
+        /* ID personalizado: la dirección pública de enlaces cortos.
+           Se valida aquí (y la unicidad la garante el índice) para
+           devolver un 409 con texto en vez de un fallo opaco. Un
+           cambio de ID se comunica a los miembros con el grupo ya
+           actualizado (su lista y sus enlaces la re-leen). */
+        if (Object.prototype.hasOwnProperty.call(data, 'customId')) {
+            const nextId = typeof data.customId === 'string' ? data.customId.trim().toLowerCase() : '';
+            if (nextId && !validGroupCustomId(nextId)) return json(res, 400, { error: 'El ID personalizado admite 3-32 letras minúsculas, números, guiones y guiones bajos (sin empezar por g_).' });
+            const ocupada = Stmt.getGroupByCustom.get(nextId);
+            if (ocupada && ocupada.id !== g.id) return json(res, 409, { error: 'Ese ID personalizado ya está en uso.' });
+            g.customId = nextId;
+            /* Marca explícita: sin ella, writeGroupMeta no podría
+               distinguir «no la toco» de «la quito a propósito». */
+            g.customIdSet = true;
+        }
+        if (Object.prototype.hasOwnProperty.call(data, 'description')) {
+            if (typeof data.description !== 'string' || data.description.length > 500) return json(res, 400, { error: 'Descripción inválida.' });
+            g.description = data.description.trim();
+        }
+        if (Object.prototype.hasOwnProperty.call(data, 'avatar')) {
+            if (!validAvatar(data.avatar)) return json(res, 400, { error: 'Avatar inválido.' });
+            g.avatar = data.avatar;
+        }
+        for (const [key, values] of Object.entries({
+            visibility: ['public', 'private'], joinPolicy: ['open', 'request', 'closed'],
+            writePolicy: ['all', 'admins'], addPolicy: ['all', 'admins'],
+            editPolicy: ['all', 'admins'], mentionAllPolicy: ['all', 'admins']
+        })) {
+            if (Object.prototype.hasOwnProperty.call(data, key)) {
+                if (!values.includes(data[key])) return json(res, 400, { error: key + ' inválido.' });
+                g[key] = data[key];
+            }
+        }
+        if (Object.prototype.hasOwnProperty.call(data, 'contentPolicy')) {
+            if (!data.contentPolicy || typeof data.contentPolicy !== 'object' || Array.isArray(data.contentPolicy) ||
+                Object.entries(data.contentPolicy).some(([kind, policy]) => !groupPolicies[kind] || !groupPolicies[kind].includes(policy)))
+                return json(res, 400, { error: 'contentPolicy inválido.' });
+            g.contentPolicy = { ...g.contentPolicy, ...data.contentPolicy };
+        }
+        /* El inviteCode es una credencial y los mensajes
+           group-invite la CONGELAN en su texto (chat/routes.js):
+           si el grupo pasa de público a privado sin rotarla, una
+           invitación antigua seguía entrando por el código tras
+           la privatización (SECOA-N-03). */
+        if (previousVisibility === 'public' && g.visibility === 'private')
+            g.inviteCode = crypto.randomBytes(18).toString('base64url');
+        writeGroupMeta(g); notifyGroup('group');
+        return json(res, 200, pub(g, req.authUser.id));
+    }
+    return ROUTE_NOT_HANDLED;
+};
 
-    if (!req.authUser) return json(res, 401, { error: 'authentication required' });
-    if (url.pathname === '/account/profile' && typeof data.username === 'string')
-        data.username = data.username.trim().toLowerCase();
-    if (url.pathname === '/profile' || url.pathname === '/profile/push-avatar' || url.pathname === '/notes' || url.pathname.startsWith('/push/') ||
-        url.pathname === '/call/log' || url.pathname === '/account/delete' || url.pathname === '/stickers')
-        data.username = actor;
-    if (['/send', '/receipt', '/chat/delete', '/block', '/messages'].includes(url.pathname)) data.from = actor;
-    if (['/story', '/story/delete', '/story/edit'].includes(url.pathname)) data.from = actor;
-    if (url.pathname === '/story/view' || url.pathname === '/story/like') data.viewer = actor;
-
-    // ---- Stickers ----
-    if (url.pathname === '/stickers/create') return postCreateSticker(req, res, url, data);
-    if (url.pathname === '/stickers') return postStickers(req, res, url, data, actor);
-
-    if (url.pathname === '/chat/preferences') return postChatPreferences(req, res, url, data, actor);
-
-    if (url.pathname === '/poll/vote') return postPollVote(req, res, url, data, actor);
-
-    // ---- Contacts ----
-    if (url.pathname === '/contacts') return postContacts(req, res, url, data, actor);
-    if (url.pathname === '/contacts/remove') return postContactsRemove(req, res, url, data, actor);
-    if (url.pathname === '/contacts/cancel') return postContactsCancel(req, res, url, data, actor);
-    if (url.pathname === '/contacts/respond') return postContactsRespond(req, res, url, data, actor);
-
-    // ---- Account ----
-    if (url.pathname === '/account/profile') return postAccountProfile(req, res, url, data, actor);
-    if (url.pathname === '/account/chat-settings') return postAccountChatSettings(req, res, url, data, actor);
-    if (url.pathname === '/account/regenerate-key') { await postAccountRegenerateKey(req, res, url, data, actor); return; }
-    if (url.pathname === '/account/delete') return postAccountDelete(req, res, url, data, actor);
-
-
-
-    // ---- Push ----
-    if (url.pathname === '/push/subscribe') return postPushSubscribe(req, res, url, data, actor);
-    if (url.pathname === '/push/unsubscribe') return postPushUnsubscribe(req, res, url, data, actor);
-    if (url.pathname === '/push/test') return postPushTest(req, res, url, data, actor);
-
-    // ---- Profile ----
-    if (url.pathname === '/profile') return postProfile(req, res, url, data, actor);
-    if (url.pathname === '/profile/push-avatar') return postPushAvatar(req, res, url, data, actor);
-
-    // ---- /send (DM) ----
-    if (url.pathname === '/send') return postSend(req, res, url, data, actor);
-
-    // ---- Seen ----
-    if (url.pathname === '/seen') return postSeen(req, res, url, data, actor);
-    if (url.pathname === '/message/reaction') return postMessageReaction(req, res, url, data, actor);
-
-    // ---- Stories ----
-    if (url.pathname === '/story') return postStory(req, res, url, data, actor);
-    if (url.pathname === '/story/like' || url.pathname === '/story/view' || url.pathname === '/story/edit' || url.pathname === '/story/delete') return postStoryLike(req, res, url, data, actor);
-    if (url.pathname === '/notes') return postNotes(req, res, url, data, actor);
-
-    // ---- Receipts ----
-    if (url.pathname === '/receipt') return postReceipt(req, res, url, data, actor);
-    if (url.pathname === '/msg/delete') return postMsgDelete(req, res, url, data, actor);
-    if (url.pathname === '/msg/edit') return postMsgEdit(req, res, url, data, actor);
-    if (url.pathname === '/chat/delete') return postChatDelete(req, res, url, data, actor);
-    if (url.pathname === '/block') return postBlock(req, res, url, data, actor);
-
+const handleGroupRoutes = (req, res, url, data, actor) => {
     // ---- Groups: create ----
     if (url.pathname === '/groups' && req.method === 'POST') {
         if (rejectRateLimited(res, groupCreateLimiter, req.authUser.id, 10, 'grupos creados por minuto')) return;
@@ -569,145 +570,8 @@ const handleRequest = (req, res) => {
                     return json(res, 200, { ok: true });
                 }
 
-                if (data.message) {
-                    if (typeof data.message !== 'object' || Array.isArray(data.message)) return json(res, 400, { error: 'Mensaje inválido.' });
-                    const source = data.message;
-                    const kind = typeof source.kind === 'string' ? source.kind : '';
-                    if (!Object.prototype.hasOwnProperty.call(groupPolicies, kind)) return json(res, 400, { error: 'Tipo inválido.' });
-                    const policy = kind === 'text' ? g.writePolicy : g.contentPolicy[kind];
-                    if (policy === 'off') return json(res, 403, { error: 'Desactivado.' });
-                    if (!isAdmin && (g.writePolicy === 'admins' || policy === 'admins')) return json(res, 403, { error: 'Solo admins.' });
-                    if (typeof source.data !== 'string' || source.data.length > CONFIG.maxMessageDataChars) return json(res, 400, { error: 'Contenido inválido.' });
-                    if (kind === 'text' && characterCount(source.data, MESSAGE_LIMITS.groupMessageCharacters) > MESSAGE_LIMITS.groupMessageCharacters)
-                        return json(res, 400, { error: `Los mensajes de grupo admiten hasta ${MESSAGE_LIMITS.groupMessageCharacters} caracteres.` });
-                    if (rejectRateLimitedMessage(res, req.authUser.id)) return;
-                    /* Validar sin escribir: los blobs se guardan al final, cuando
-                       el mensaje ya está aceptado (antes una galería rechazada
-                       dejaba adjuntos huérfanos ocupando disco). */
-                    const gallery = source.gallery === undefined ? [] : validateGallery(req.authUser, source.gallery, blobAvailableTo);
-                    if (source.gallery !== undefined && (!gallery || kind !== 'image')) return json(res, 400, { error: 'Galería inválida.' });
-                    if (['image', 'video', 'audio', 'file'].includes(kind) && !source.hash && !gallery.length) return json(res, 400, { error: 'Falta hash.' });
-                    if (kind === 'sticker' && !validStickerData(source.data)) return json(res, 400, { error: 'Sticker inválido.' });
-                    const stickerBlobHash = kind === 'sticker' ? localStickerHash(source.data) : '';
-                    if (stickerBlobHash &&
-                        ((typeof source.hash === 'string' && source.hash.toLowerCase() !== stickerBlobHash) ||
-                            !blobAvailableTo(req.authUser, stickerBlobHash)))
-                        return json(res, 400, { error: 'Sticker no disponible.' });
-                    if (kind === 'contact') {
-                        const contact = normalizeContactData(source.data, name => resolveAccount(name, req.authUser));
-                        if (!contact) return json(res, 400, { error: 'Contacto inválido.' });
-                        source.data = JSON.stringify(contact);
-                    } else if (kind === 'poll') {
-                        const poll = normalizePollData(source.data);
-                        if (!poll) return json(res, 400, { error: 'Encuesta inválida.' });
-                        source.data = JSON.stringify(poll);
-                    }
-                    let mentions = [], mentionLabels = {};
-                    if (kind === 'text') {
-                        const mentioned = new Set();
-                        const allMatch = /(^|\s)@(all|todos)\b/i.test(source.data);
-                        if (allMatch) {
-                            if (g.mentionAllPolicy === 'admins' && !isAdmin) return json(res, 403, { error: 'Solo admins.' });
-                            for (const u of g.members) {
-                                if (u === actor) continue;
-                                const id2 = byName(u)?.id;
-                                if (id2) { mentioned.add(id2); mentionLabels[id2] = u; }
-                            }
-                        } else {
-                            for (const match of source.data.matchAll(/@([a-zA-Z0-9_.-]{3,24})/g)) {
-                                const u = match[1].toLowerCase();
-                                const member = g.members.find(c => c.toLowerCase() === u);
-                                const id2 = member && byName(member)?.id;
-                                if (id2) { mentioned.add(id2); mentionLabels[id2] = member; }
-                            }
-                        }
-                        mentioned.delete(req.authUser.id);
-                        mentions = [...mentioned];
-                    }
-                    let messageData = gallery.length ? '' : source.data;
-                    let pendingHash = typeof source.hash === 'string' ? source.hash.toLowerCase() : stickerBlobHash;
-                    if (pendingHash) {
-                        if (!blobHashOk(pendingHash)) return json(res, 400, { error: 'Hash inválido.' });
-                        // Referenciar un adjunto ya existente exige tener acceso a él.
-                        if (!messageData && !blobAvailableTo(req.authUser, pendingHash)) return json(res, 400, { error: 'Archivo no disponible.' });
-                    }
-                    /* Cuota de almacenamiento y, solo entonces, la escritura. */
-                    const bytesNuevos = (messageData && pendingHash && !stickerBlobHash ? Buffer.byteLength(messageData) : 0) +
-                        gallery.reduce((total, item) => total + (item.data ? Buffer.byteLength(item.data) : 0), 0);
-                    if (bytesNuevos > 0 && !blobQuotaOk(req.authUser.id, bytesNuevos))
-                        return json(res, 413, { error: 'Has alcanzado el límite de almacenamiento de adjuntos.' });
-                    if (pendingHash && messageData && !stickerBlobHash && !storeBlob(pendingHash, messageData))
-                        return json(res, 400, { error: 'Archivo inválido.' });
-                    if (gallery.length && !storeGallery(gallery, storeBlob))
-                        return json(res, 400, { error: 'Galería inválida.' });
-                    // El espacio acaba de crecer: fuera de la caché de cuota.
-                    invalidateBlobQuota(req.authUser.id);
-                    if (pendingHash) {
-                        source.hash = pendingHash;
-                        if (!stickerBlobHash) messageData = '';
-                    }
-                    const msg = {
-                        id: validMessageId(source.id) ? source.id : crypto.randomUUID(),
-                        fromId: req.authUser.id,
-                        kind, data: messageData, hash: typeof source.hash === 'string' ? source.hash.toLowerCase() : '', gallery,
-                        once: !!source.once,
-                        name: kind === 'image' ? '' : clampStr(source.name, 180),
-                        mime: validMime(source.mime) ? source.mime.slice(0, 120) : '',
-                        caption: typeof source.caption === 'string' ? source.caption.slice(0, 2000) : '',
-                        reply: resolveReply(source.reply, 'group:' + id, req.authUser),
-                        ts: Date.now(), mentions, mentionLabels,
-                        enc: typeof source.enc === 'string' && (source.enc === 'e2' || source.enc === 'g2') ? source.enc : ''
-                    };
-                    tx.sendMessage(msg, 'group:' + id, g.cryptoId);
-                    // Mensaje nuevo = la conversación reaparece.
-                    Stmt.deleteChatDeletion.run('group:' + id, req.authUser.id);
-                    updateGroupMessageSummaries(g, msg, req.authUser.id);
-                    const decorated = withMentions(decorateForClient(msg));
-                    /* El @usuario oculto tampoco viaja en el mensaje: si el
-                       remitente, el autor citado o algún mencionado lo oculta
-                       para alguien, el payload se personaliza con su alias
-                       opaco. Sin nadie oculto se serializa UNA vez, como
-                       antes; el push web solo se envía a los desconectados. */
-                    const nombres = [
-                        decorated.from,
-                        decorated.reply && decorated.reply.from,
-                        ...(decorated.mentionUsers || []).map(u => u && u.username)
-                    ].filter(Boolean);
-                    const personalizar = nombres.some(name => {
-                        const owner = profiles[name];
-                        if (!owner) return true;
-                        if (privacyFor(owner).usuario.mode !== 'server') return true;
-                        /* Quien bloqueó a alguien tampoco le muestra su @. */
-                        const bloqueados = blockedSet.get(name);
-                        return !!(bloqueados && bloqueados.size);
-                    });
-                    const rawGroupMessage = personalizar ? '' :
-                        JSON.stringify({ type: 'group-message', groupId: id, message: decorated });
-                    const payloadFor = name => personalizar
-                        ? JSON.stringify({ type: 'group-message', groupId: id, message: groupMessageForViewer(decorated, name) })
-                        : rawGroupMessage;
-                    for (const m of g.members) {
-                        pushRawName(m, payloadFor(m));
-                        if (m !== actor) {
-                            const memberAcc = byName(m);
-                            // Mensaje nuevo = el chat vuelve a la lista, salvo
-                            // que el miembro conserve archivados sus chats.
-                            if (memberAcc) unarchiveForIncoming(m, memberAcc.id, 'group:' + id);
-                            if (memberAcc && (!memberAcc.online || wantsAlwaysPush(m)))
-                                /* Título = nombre del grupo; cuerpo = «Remitente: texto» (o el tipo de
-                               adjunto); icono = el avatar del grupo (su ruta
-                               ya es pública); al tocar, abre el grupo. */
-                                void notifyUser(m, {
-                                    title: g.name,
-                                    body: `${pushNameOf(actor)}: ${pushBody(kind, msg.data, msg.caption)}`,
-                                    tag: 'grp-' + id,
-                                    icon: avatarPushGroupUrl(g.id),
-                                    url: '/?open=' + encodeURIComponent('group:' + g.id)
-                                });
-                        }
-                    }
-                    return json(res, 200, { ok: true, message: groupMessageForViewer(decorated, actor) });
-                }
+                const messageResult = handleGroupMessage(req, res, g, id, isAdmin, actor, data);
+                if (messageResult !== ROUTE_NOT_HANDLED) return messageResult;
                 if (data.addMember) {
                     if (g.addPolicy !== 'all' && !isAdmin) return json(res, 403, { error: 'Solo admins.' });
                     const newMember = accountFromValue(data.addMember, req.authUser);
@@ -891,75 +755,190 @@ const handleRequest = (req, res) => {
                     writeGroupMeta(g); notifyGroup('group');
                     return json(res, 200, pub(g, req.authUser.id));
                 }
-                const settingsKeys = ['rename', 'description', 'avatar', 'customId', 'visibility', 'joinPolicy', 'writePolicy', 'addPolicy', 'editPolicy', 'mentionAllPolicy', 'contentPolicy'];
-                /* Ajustes que deciden QUIÉN entra, QUIÉN edita, QUIÉN escribe
-                   o QUIÉN ve el grupo: reservados a admins aunque editPolicy
-                   sea 'all'. Con el guard antiguo, cualquier miembro con
-                   editPolicy=all ponía el grupo en público + joinPolicy=open
-                   (SECOA-A-002); sin writePolicy/contentPolicy aquí, el mismo
-                   miembro podía SILENCIAR a los no-admins (writePolicy='admins')
-                   o desactivar los medios sin ser admin (SECOA-N-02). */
-                const adminOnlySettings = ['visibility', 'joinPolicy', 'addPolicy', 'customId', 'editPolicy', 'mentionAllPolicy', 'writePolicy', 'contentPolicy'];
-                if (settingsKeys.some(k => Object.prototype.hasOwnProperty.call(data, k))) {
-                    if (!isAdmin && g.editPolicy !== 'all') return json(res, 403, { error: 'Solo admins.' });
-                    if (!isAdmin && adminOnlySettings.some(k => Object.prototype.hasOwnProperty.call(data, k)))
-                        return json(res, 403, { error: 'Ese ajuste es solo para admins.' });
-                    const previousVisibility = g.visibility;
-                    if (Object.prototype.hasOwnProperty.call(data, 'rename')) {
-                        if (typeof data.rename !== 'string' || !data.rename.trim() || data.rename.length > 40) return json(res, 400, { error: 'Nombre inválido.' });
-                        g.name = data.rename.trim();
-                    }
-                    /* ID personalizado: la dirección pública de enlaces cortos.
-                       Se valida aquí (y la unicidad la garante el índice) para
-                       devolver un 409 con texto en vez de un fallo opaco. Un
-                       cambio de ID se comunica a los miembros con el grupo ya
-                       actualizado (su lista y sus enlaces la re-leen). */
-                    if (Object.prototype.hasOwnProperty.call(data, 'customId')) {
-                        const nextId = typeof data.customId === 'string' ? data.customId.trim().toLowerCase() : '';
-                        if (nextId && !validGroupCustomId(nextId)) return json(res, 400, { error: 'El ID personalizado admite 3-32 letras minúsculas, números, guiones y guiones bajos (sin empezar por g_).' });
-                        const ocupada = Stmt.getGroupByCustom.get(nextId);
-                        if (ocupada && ocupada.id !== g.id) return json(res, 409, { error: 'Ese ID personalizado ya está en uso.' });
-                        g.customId = nextId;
-                        /* Marca explícita: sin ella, writeGroupMeta no podría
-                           distinguir «no la toco» de «la quito a propósito». */
-                        g.customIdSet = true;
-                    }
-                    if (Object.prototype.hasOwnProperty.call(data, 'description')) {
-                        if (typeof data.description !== 'string' || data.description.length > 500) return json(res, 400, { error: 'Descripción inválida.' });
-                        g.description = data.description.trim();
-                    }
-                    if (Object.prototype.hasOwnProperty.call(data, 'avatar')) {
-                        if (!validAvatar(data.avatar)) return json(res, 400, { error: 'Avatar inválido.' });
-                        g.avatar = data.avatar;
-                    }
-                    for (const [key, values] of Object.entries({
-                        visibility: ['public', 'private'], joinPolicy: ['open', 'request', 'closed'],
-                        writePolicy: ['all', 'admins'], addPolicy: ['all', 'admins'],
-                        editPolicy: ['all', 'admins'], mentionAllPolicy: ['all', 'admins']
-                    })) {
-                        if (Object.prototype.hasOwnProperty.call(data, key)) {
-                            if (!values.includes(data[key])) return json(res, 400, { error: key + ' inválido.' });
-                            g[key] = data[key];
-                        }
-                    }
-                    if (Object.prototype.hasOwnProperty.call(data, 'contentPolicy')) {
-                        if (!data.contentPolicy || typeof data.contentPolicy !== 'object' || Array.isArray(data.contentPolicy) ||
-                            Object.entries(data.contentPolicy).some(([kind, policy]) => !groupPolicies[kind] || !groupPolicies[kind].includes(policy)))
-                            return json(res, 400, { error: 'contentPolicy inválido.' });
-                        g.contentPolicy = { ...g.contentPolicy, ...data.contentPolicy };
-                    }
-                    /* El inviteCode es una credencial y los mensajes
-                       group-invite la CONGELAN en su texto (chat/routes.js):
-                       si el grupo pasa de público a privado sin rotarla, una
-                       invitación antigua seguía entrando por el código tras
-                       la privatización (SECOA-N-03). */
-                    if (previousVisibility === 'public' && g.visibility === 'private')
-                        g.inviteCode = crypto.randomBytes(18).toString('base64url');
-                    writeGroupMeta(g); notifyGroup('group');
-                    return json(res, 200, pub(g, req.authUser.id));
-                }
+                const settingsResult = handleGroupSettings(req, res, g, isAdmin, data, notifyGroup);
+                if (settingsResult !== ROUTE_NOT_HANDLED) return settingsResult;
                 return json(res, 400, { error: 'Acción no reconocida.' });
             }
+
+    return ROUTE_NOT_HANDLED;
+};
+
+const handleGroupKeyPost = (req, res, url, data) => {
+    if (/^\/groups\/[^/]+\/groupkey$/.test(url.pathname)) {
+        const gid = safeDecodeSegment(url.pathname.split('/')[2]);
+        if (gid === null) return json(res, 400, { error: 'id inválido' });
+        if (!/^[a-zA-Z0-9_-]{1,80}$/.test(gid)) return json(res, 400, { error: 'id inválido' });
+        const g = resolveGroup(gid);
+        if (!g) return json(res, 404, { error: 'no existe' });
+        if (!g.memberIds.includes(req.authUser.id)) return json(res, 403, { error: 'no eres miembro' });
+        const recipients = Array.isArray(data.recipients) ? data.recipients : [];
+        if (!g.keyboxes) g.keyboxes = [];
+        for (const box of recipients) {
+            if (!box || typeof box.recipient !== 'string' || !g.members.includes(box.recipient)) continue;
+            if (typeof box.iv !== 'string' || box.iv.length > 512 || typeof box.ct !== 'string' || box.ct.length > 16384) continue;
+            // El autor del keybox es siempre quien lo sube: un miembro
+            // no puede firmar keyboxes a nombre de otro.
+            box.by = req.authUser.username;
+            const idx = g.keyboxes.findIndex(b => b.recipient === box.recipient);
+            // Un miembro solo puede escribir SU propio slot; los
+            // admins pueden reescribir cualquiera.
+            const actorIsAdmin = g.admins.some(name => byName(name)?.id === req.authUser.id);
+            if (idx >= 0 && g.keyboxes[idx].by !== box.by && !actorIsAdmin) continue;
+            const entry = { recipient: box.recipient, by: box.by, iv: box.iv, ct: box.ct, ts: Date.now() };
+            if (idx >= 0) g.keyboxes[idx] = entry; else g.keyboxes.push(entry);
+        }
+        writeGroupMeta(g);
+        return json(res, 200, { ok: true });
+    }
+
+    return ROUTE_NOT_HANDLED;
+};
+
+/* Clasificación única para fallos síncronos y rechazos async, tanto en el
+   listener POST como en el handler exterior. Nunca devuelve error.message. */
+function respondRouteError(res, error) {
+    const authKeyUnreadable = error instanceof AuthKeyUnreadableError;
+    if (authKeyUnreadable) console.error('[crypto] auth_key ilegible:', error.message);
+    else console.error('[http] Error no controlado:', error);
+    try {
+        if (res.headersSent) { res.end(); return; }
+        if (authKeyUnreadable)
+            return json(res, 503, { error: 'Cifrado de la cuenta no legible con la llave actual. El operador debe revisar la llave maestra.' });
+        const badRequest = error &&
+            (error.statusCode === 400 || error.status === 400 || error.code === 'BAD_REQUEST');
+        if (badRequest) return json(res, 400, { error: 'bad request' });
+        return json(res, 500, { error: 'Error interno del servidor.' });
+    } catch { try { res.destroy(); } catch { } }
+}
+
+const handlePostRequest = (req, res, url, actor) => {
+    if (req.method === 'POST') {
+        const chunks = [];
+        let bytes = 0;
+        let oversized = false;
+        // Límite de cuerpo por ruta: las rutas de autenticación solo llevan
+        // usuario y contraseña, así que no tienen por qué aceptar 32 MB (ni
+        // pagar el coste de parsearlos).
+        const SMALL_BODY_ROUTES = new Set(['/auth/register', '/auth/login', '/auth/add-account', '/auth/switch', '/auth/logout', '/auth/account/remove']);
+        /* M3: /key solo lleva una clave pública: 64 KB en vez de los
+           megabytes del límite general. Así un cuerpo manipulado no se
+           parsea ni se arrastra por el descifrado. */
+        const bodyLimit = url.pathname === '/key' ? 64 * 1024
+            : SMALL_BODY_ROUTES.has(url.pathname) ? 8 * 1024 : CONFIG.maxHttpBodyBytes;
+        if (Number(req.headers['content-length']) > bodyLimit) {
+            json(res, 413, { error: 'Contenido demasiado grande.' });
+            req.resume();
+            return;
+        }
+        req.on('data', c => {
+            bytes += c.length;
+            if (bytes > bodyLimit) {
+                oversized = true;
+                chunks.length = 0;
+                return;
+            }
+            if (!oversized) chunks.push(c);
+        });
+        req.on('end', async () => {
+            try {
+            if (oversized) return json(res, 413, { error: 'Contenido demasiado grande.' });
+            const rawBody = Buffer.concat(chunks);
+            let data;
+            if (isEncrypted(req)) {
+                // El cuerpo llega cifrado: se descifra antes de interpretarlo y
+                // la respuesta se devuelve cifrada con la misma clave.
+                const opened = openRequest(req, url, rawBody);
+                if (opened.error) return json(res, 400, { error: opened.error });
+                data = opened.data;
+                sealResponse(res, opened.session);
+            } else {
+                /* Un POST sin cuerpo es una petición vacía, no un error: se
+                   interpreta como {}. Antes el JSON.parse('') devolvía 400 antes
+                   de ejecutar la ruta, y un logout sin cuerpo dejaba la sesión
+                   abierta con un mensaje que no decía nada. */
+                const text = rawBody.toString('utf8');
+                if (!text.trim()) data = {};
+                else {
+                    try { data = JSON.parse(text); } catch { return json(res, 400, { error: 'Cuerpo JSON inválido.' }); }
+                    if (!data || typeof data !== 'object') return json(res, 400, { error: 'El cuerpo debe ser un objeto JSON.' });
+                }
+            }
+
+    if (url.pathname === '/key') return postKey(req, res, url, data, actor);
+
+            const groupKeyResult = handleGroupKeyPost(req, res, url, data);
+            if (groupKeyResult !== ROUTE_NOT_HANDLED) return groupKeyResult;
+
+    // ---- Auth ----
+    if (url.pathname === '/auth/register') return await postAuthRegister(req, res, url, data, actor);
+    if (url.pathname === '/auth/login') return await postAuthLogin(req, res, url, data, actor);
+    if (url.pathname === '/auth/add-account') return await postAuthAddAccount(req, res, url, data, actor);
+    if (url.pathname === '/auth/switch') return postAuthSwitch(req, res, url, data, actor);
+    if (url.pathname === '/auth/account/remove') return postAuthAccountRemove(req, res, url, data, actor);
+    if (url.pathname === '/auth/logout') return postAuthLogout(req, res, url, data, actor);
+
+    if (!req.authUser) return json(res, 401, { error: 'authentication required' });
+    if (url.pathname === '/account/profile' && typeof data.username === 'string')
+        data.username = data.username.trim().toLowerCase();
+    if (url.pathname === '/profile' || url.pathname === '/profile/push-avatar' || url.pathname === '/notes' || url.pathname.startsWith('/push/') ||
+        url.pathname === '/call/log' || url.pathname === '/account/delete' || url.pathname === '/stickers')
+        data.username = actor;
+    if (['/send', '/receipt', '/chat/delete', '/block', '/messages'].includes(url.pathname)) data.from = actor;
+    if (['/story', '/story/delete', '/story/edit'].includes(url.pathname)) data.from = actor;
+    if (url.pathname === '/story/view' || url.pathname === '/story/like') data.viewer = actor;
+
+    // ---- Stickers ----
+    if (url.pathname === '/stickers/create') return postCreateSticker(req, res, url, data);
+    if (url.pathname === '/stickers') return postStickers(req, res, url, data, actor);
+
+    if (url.pathname === '/chat/preferences') return postChatPreferences(req, res, url, data, actor);
+
+    if (url.pathname === '/poll/vote') return postPollVote(req, res, url, data, actor);
+
+    // ---- Contacts ----
+    if (url.pathname === '/contacts') return postContacts(req, res, url, data, actor);
+    if (url.pathname === '/contacts/remove') return postContactsRemove(req, res, url, data, actor);
+    if (url.pathname === '/contacts/cancel') return postContactsCancel(req, res, url, data, actor);
+    if (url.pathname === '/contacts/respond') return postContactsRespond(req, res, url, data, actor);
+
+    // ---- Account ----
+    if (url.pathname === '/account/profile') return await postAccountProfile(req, res, url, data, actor);
+    if (url.pathname === '/account/chat-settings') return postAccountChatSettings(req, res, url, data, actor);
+    if (url.pathname === '/account/regenerate-key') { await postAccountRegenerateKey(req, res, url, data, actor); return; }
+    if (url.pathname === '/account/delete') return await postAccountDelete(req, res, url, data, actor);
+
+
+
+    // ---- Push ----
+    if (url.pathname === '/push/subscribe') return postPushSubscribe(req, res, url, data, actor);
+    if (url.pathname === '/push/unsubscribe') return postPushUnsubscribe(req, res, url, data, actor);
+    if (url.pathname === '/push/test') return await postPushTest(req, res, url, data, actor);
+
+    // ---- Profile ----
+    if (url.pathname === '/profile') return postProfile(req, res, url, data, actor);
+    if (url.pathname === '/profile/push-avatar') return postPushAvatar(req, res, url, data, actor);
+
+    // ---- /send (DM) ----
+    if (url.pathname === '/send') return postSend(req, res, url, data, actor);
+
+    // ---- Seen ----
+    if (url.pathname === '/seen') return postSeen(req, res, url, data, actor);
+    if (url.pathname === '/message/reaction') return postMessageReaction(req, res, url, data, actor);
+
+    // ---- Stories ----
+    if (url.pathname === '/story') return postStory(req, res, url, data, actor);
+    if (url.pathname === '/story/like' || url.pathname === '/story/view' || url.pathname === '/story/edit' || url.pathname === '/story/delete') return postStoryLike(req, res, url, data, actor);
+    if (url.pathname === '/notes') return postNotes(req, res, url, data, actor);
+
+    // ---- Receipts ----
+    if (url.pathname === '/receipt') return postReceipt(req, res, url, data, actor);
+    if (url.pathname === '/msg/delete') return postMsgDelete(req, res, url, data, actor);
+    if (url.pathname === '/msg/edit') return postMsgEdit(req, res, url, data, actor);
+    if (url.pathname === '/chat/delete') return postChatDelete(req, res, url, data, actor);
+    if (url.pathname === '/block') return postBlock(req, res, url, data, actor);
+
+    const groupResult = handleGroupRoutes(req, res, url, data, actor);
+    if (groupResult !== ROUTE_NOT_HANDLED) return groupResult;
 
     // ---- /messages (paginado) ----
     if (url.pathname === '/messages') return postMessages(req, res, url, data, actor);
@@ -968,26 +947,15 @@ const handleRequest = (req, res) => {
     if (url.pathname === '/call/log') return postCallLog(req, res, url, data, actor);
 
             json(res, 404, { error: 'Ruta no encontrada.' });
-                    } catch (error) {
-                /* Una auth_key ilegible NO es un fallo del servidor: es una
-                 * desincronización de llaves (la fila existe pero no la
-                 * descifra la llave maestra actual). Se responde 503 con un
-                 * texto que lo dice, para que el cliente no muestre un
-                 * "error interno" y el operador entienda qué mirar. */
-                if (error instanceof AuthKeyUnreadableError) {
-                    console.error('[crypto] auth_key ilegible:', error.message);
-                    if (!res.headersSent) json(res, 503, { error: 'Cifrado de la cuenta no legible con la llave actual. El operador debe revisar la llave maestra.' });
-                    else res.end();
-                    return;
-                }
-                console.error('[http] Error no controlado:', error);
-                if (!res.headersSent) json(res, 500, { error: 'Error interno del servidor.' });
-                else res.end();
-            }
+        } catch (error) { respondRouteError(res, error); }
 });
         return;
     }
 
+    return ROUTE_NOT_HANDLED;
+};
+
+const handleStaticRequest = (req, res) => {
     // ---- static ----
     const fp = resolvePublicFile(PUBLIC, req.url);
     if (!fp) { res.writeHead(404); return res.end('not found'); }
@@ -1008,18 +976,103 @@ const handleRequest = (req, res) => {
     stream.pipe(res);
 };
 
-// Red de seguridad: ningún error síncrono del handler debe tumbar el proceso.
+const handleRequest = (req, res) => {
+    let url;
+    let actor = '';
+    let data = null;
+    try { url = new URL(req.url, 'http://x'); }
+    catch { res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' }); return res.end('bad request'); }
+    if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+    // Forzado de TLS: con FORCE_TLS activo y certificados disponibles, toda
+    // petición en claro se redirige a HTTPS antes de tocar nada (ni siquiera
+    // las rutas públicas), de modo que las credenciales y la cookie de sesión
+    // nunca viajen sin cifrar. `requestEncrypted` ya cubre el caso del proxy
+    // de confianza que termina TLS, así que no se entra en bucle.
+    if (tlsState.forceTls && !requestEncrypted(req) && url.pathname !== '/healthz') {
+        const host = req.headers.host;
+        /* M2: la redirección solo se arma con un Host PROPIO (loopback,
+           literal IP o los de TLS_HOSTS). Un Host manipulado convertiría este
+           301 en un rebote a un dominio ajeno, con el camino de la sesión
+           por delante. `no-store`: una redirección no debe quedar en la
+           caché de navegador ni de proxy. */
+        if (host && hostAllowed(host)) {
+            res.writeHead(301, {
+                'Location': `https://${host}${req.url}`,
+                'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+                'Cache-Control': 'no-store',
+                ...securityHeaders
+            });
+            return res.end();
+        }
+    }
+    // CSP por petición (el host propio forma parte de connect-src) y HSTS
+    // siempre que la conexión sea (o vaya a ser) cifrada.
+    res.setHeader('Content-Security-Policy', cspFor(req.headers.host));
+    if (requestEncrypted(req))
+        res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    /* Cota de frecuencia por ruta:
+       - Autenticación: la más estricta (RATE_LIMIT_AUTH_PER_MINUTE, por IP),
+         y encima los frenos de fuerza bruta que ya tenía.
+       - Resto de la API: base por cuenta autenticada (RATE_LIMIT_API_PER_MINUTE)
+         o por IP sin sesión (RATE_LIMIT_PUBLIC_PER_MINUTE).
+       Los estáticos de public/ y el paquete de stickers por defecto no se
+       limitan aquí: son lecturas baratas con caché, y la pestaña de stickers
+       carga decenas de imágenes de golpe. */
+    const publicPage = req.method === 'GET' && (url.pathname === '/config' || url.pathname === '/' || PUBLIC_EXTENSIONS.has(path.extname(url.pathname).toLowerCase()));
+    const publicAuthPost = req.method === 'POST' && ['/auth/register', '/auth/login', '/auth/logout', '/auth/switch'].includes(url.pathname);
+    const authUser = sessionUser(req);
+    const esAuth = url.pathname === '/auth/add-account' ||
+        (req.method === 'POST' && ['/auth/login', '/auth/register', '/auth/logout', '/auth/switch'].includes(url.pathname));
+    if (esAuth) {
+        if (rejectRateLimited(res, authLimiter, 'ip:' + clientIp(req), CONFIG.rateLimits.auth, 'intentos de autenticación por minuto')) return;
+    } else if (url.pathname !== '/healthz') {
+        /* /healthz NUNCA se limita: el supervisor lo sondea cada segundo y
+           cuenta cualquier 4xx como «servicio caído», así que un 429 por
+           cuota reiniciaría un servicio que está sano. */
+        const esEstatico = PUBLIC_EXTENSIONS.has(path.extname(url.pathname).toLowerCase())
+            && !/^\/(avatar|blob|stickers\/blob)\//.test(url.pathname);
+        if (!esEstatico) {
+            const limiter = authUser ? apiLimiter : publicApiLimiter;
+            const clave = authUser ? 'u:' + authUser.id : 'ip:' + clientIp(req);
+            const tope = authUser ? CONFIG.rateLimits.api : CONFIG.rateLimits.public;
+            if (rejectRateLimited(res, limiter, clave, tope, 'peticiones por minuto')) return;
+        }
+    }
+    const publicResult = handlePublicRoutes(req, res, url, data, actor);
+    if (publicResult !== ROUTE_NOT_HANDLED) return publicResult;
+
+    if (!authUser && !publicPage && !publicAuthPost) return json(res, 401, { error: 'authentication required' });
+    /* Modo degradado (FORCE_TLS pedido pero sin cert.pem/key.pem): los inicios
+       de sesión, registro y cambio de cuenta SOLO desde el propio equipo.
+       A la red local no se le entregan cookies de sesión por HTTP en claro:
+       es justo el riesgo que FORCE_TLS quería cerrar (SECOA-B-001) y las
+       pruebas del repliegue corren por loopback, así que siguen pasando. */
+    if (publicAuthPost && tlsState.degradedNoCert && !isLoopbackPeer(req))
+        return json(res, 503, { error: 'HTTPS requerido: instala cert.pem/key.pem o arranca con FORCE_TLS=false para uso HTTP.' });
+    if (req.method !== 'GET' && req.method !== 'POST') return json(res, 405, { error: 'method not allowed' });
+    if (req.method === 'POST' && (!originAllowed(req) || req.headers['sec-fetch-site'] === 'cross-site'))
+        return json(res, 403, { error: 'cross-origin request rejected' });
+    req.authUser = authUser;
+    actor = authUser ? authUser.username : '';
+
+    const getResult = handleGetRoutes(req, res, url, data, actor);
+    if (getResult !== ROUTE_NOT_HANDLED) return getResult;
+
+    // POST
+    const postResult = handlePostRequest(req, res, url, actor);
+    if (postResult !== ROUTE_NOT_HANDLED) return postResult;
+
+    return handleStaticRequest(req, res);
+};
+
+// Red de seguridad para excepciones síncronas Y promesas devueltas por rutas.
 const handler = (req, res) => {
     try {
-        handleRequest(req, res);
-    } catch (err) {
-        console.error('[http] error no controlado:', err);
-        try {
-            if (!res.headersSent) {
-                res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
-                res.end('{"error":"bad request"}');
-            } else res.end();
-        } catch { try { res.destroy(); } catch { } }
+        return Promise.resolve(handleRequest(req, res))
+            .catch(error => { respondRouteError(res, error); });
+    } catch (error) {
+        respondRouteError(res, error);
+        return Promise.resolve();
     }
 };
 

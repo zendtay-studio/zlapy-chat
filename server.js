@@ -126,16 +126,15 @@ if (ownerCredential && ownerCredential.nuevo)
    ops/backup/backup.js) pero nada lo aplicaba. Best-effort: si el chmod no es
    posible (otro usuario, sistema sin permisos POSIX), se sigue en marcha
    avisando, porque un fallo duro aquí dejaría sin servicio. */
-try {
-    fs.chmodSync(DATA, 0o700);
-    for (const dbPath of [DB_PATH, BLOB_DB_PATH])
-        if (fs.existsSync(dbPath)) fs.chmodSync(dbPath, 0o600);
-    // El .env lleva la llave maestra: nunca más legible que para su dueño.
-    const envPath = path.join(ROOT, '.env');
-    if (fs.existsSync(envPath)) fs.chmodSync(envPath, 0o600);
-} catch (error) {
-    console.warn('[perms] no se pudieron ajustar los permisos del directorio de datos:', error.message);
-}
+const { hardenStoragePermissions } = require('./ops/config/secure-storage.js');
+const permissionErrors = hardenStoragePermissions({
+    dataDir: DATA,
+    backupDir: path.join(ROOT, 'backups'),
+    envPath: path.join(ROOT, '.env'),
+    dbPaths: [DB_PATH, BLOB_DB_PATH]
+});
+if (permissionErrors.length)
+    console.warn('[perms] algunos permisos no se pudieron ajustar:', permissionErrors[0].message);
 
 // La base declara la version del cifrado de sus datos. Si no encaja con la de
 // este servidor no se arranca: los datos serian ilegibles.

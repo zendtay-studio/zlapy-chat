@@ -12,7 +12,7 @@ const test = require('node:test');
 const { startServer, stop, api, register } = require('../helpers.js');
 
 const get = (base, ruta, cookie) => fetch(base + ruta, {
-    headers: cookie ? { Cookie: `chatlocal_session=${encodeURIComponent(cookie)}` } : {}
+    headers: cookie ? { Cookie: `zlapy_session=${encodeURIComponent(cookie)}` } : {}
 });
 const logout = base => api(base, 'POST', '/auth/logout', {});
 

@@ -1,264 +1,153 @@
-# Decisiones de diseño tras la auditoría
+# Decisiones vigentes y falsos positivos de auditoría
 
-La auditoría (run-1, `REPORT.md`) dejó tres hallazgos que no se resuelven con
-un parche, sino con una decisión de diseño. Aquí queda asentado qué se
-decidió y por qué, para que no se confunda con un olvido.
+Registro breve para no reabrir comportamientos deliberados o ya corregidos.
+El código es la referencia final; no se conserva cronología ni explotación.
 
-## 1. Existencia de cuentas deducible por el registro (V-12)
+## 1. HTTP, autenticación y exposición de información
 
-**Decisión: se conserva el contrato actual y el riesgo se mitiga con los
-límites de frecuencia nuevos.**
+### `/auth/session` no es un oráculo anónimo
 
-Sitio en el código: `POST /auth/register` responde **409** cuando el nombre
-ya está ocupado y **400** cuando la petición es inválida; el perfil de una
-cuenta inexistente devuelve la forma vacía. El formulario del cliente
-distingue el 409 del 400 para mostrar "nombre ya en uso", y el SPA trata la
-cuenta inexistente como cuenta sin datos. Ambos comportamientos son parte de
-la superficie del cliente desplegada.
+Sin sesión principal válida, `GET /auth/session` responde siempre
+`200 { authenticated: false }` con UUID existentes o inexistentes en cookies
+`zlapy_account_*`. No devuelve `gone`, `accountId` ni estados vinculados,
+y tampoco borra selectivamente esas cookies: un `Set-Cookie` distinto sería
+el mismo oráculo. Solo puede limpiarse la cookie principal inválida.
+`linked` y `alive` se exponen únicamente en la rama autenticada.
 
-Por qué no se cambia a propósito:
+### Registro y login
 
-- Unificando la respuesta, **el dato saldría igualmente por el tiempo**:
-  registrar una cuenta real hace scrypt y una escritura con índice único.
-  La filtración por temporización es la forma clásica de romper la
-  uniformidad, y disimularla exige trucos de duración constante que
-  trasladan el problema en vez de eliminarlo.
-- El colisionador aparece de todas formas en la base: el índice
-  `UNIQUE COLLATE NOCASE` de `users.username` rechaza el segundo registro.
-  Ocultarlo de verdad exigiría nombres cifrados y verificables (MAC) con un
-  secreto del servidor: un rediseño del modelo de identidad completo.
-- En la práctica los nombres no son secretos: aparecen en conversaciones,
-  grupos y permisos, y el universo de nombres de una instancia doméstica es
-  pequeño. El valor que extrae el atacante del 409 es marginal.
-- Lo que sí corta la vía abusable es lo ya aplicado en esta ronda:
-  registro limitado por IP del socket (15 por hora) y por servicio (60 por
-  hora, con enfriamiento global de 15 minutos), y el freno por cuenta en el
-  login. Enumerar nombres a gran escala exige proxies falsos; no un script
-  de una tarde.
+Se conserva el `409` de registro para username ocupado: el cliente distingue
+la colisión y `UNIQUE COLLATE NOCASE` es la barrera final. La enumeración
+masiva se frena con límites por IP del socket y de servicio. El login usa el
+mismo `401` y texto exista o no la cuenta, con retardos por cuenta y frenos
+por IP que no bloquean globalmente a terceros.
 
-## 2. Cifrado de metadatos (V-18)
+### Errores 400, 500 y 503
 
-**Decisión: trabajo futuro propio (migración y diseño de claves); no entra
-en esta ronda.**
+Una excepción inesperada produce `500` con JSON genérico; el detalle va al log.
+El `400` se reserva a `statusCode = 400`, `status = 400` o
+`code = 'BAD_REQUEST'`, sin filtrar el mensaje interno de la excepción.
+La misma clasificación cubre fallos síncronos y rechazos async de GET y POST.
+`AuthKeyUnreadableError` conserva un `503` específico: la auth_key existe,
+pero la llave maestra actual no puede descifrarla; no es un error de entrada.
 
-Sitio hoy:
+### Origen, proxy e IP
 
-- El **cuerpo** de los mensajes viaja sellado para el cliente (columna
-  `data`, con `crypto_version` y firma). Los adjuntos viven en la base de
-  blobs y no guardan texto.
-- En claro quedan metadatos: `username`, `add_policy`, `created_at` y
-  `last_seen` (tabla `users`); y en `messages`: `chat` (clave de
-  conversación), `ts`, `kind`, `hash` (SHA-256 del adjunto, que sirve para
-  desreferenciar el blob), `once` y `edited`.
+Los POST comprueban `Origin` y `sec-fetch-site`; el WebSocket valida origen en
+el upgrade. Los limitadores usan la IP del socket, no `X-Forwarded-*` para
+atribuir identidad. `X-Forwarded-Proto: https` solo se acepta desde loopback,
+el modelo del túnel/proxy local; confiar en cualquier cliente abriría bypasses.
 
-Por qué no es un parche de una tarde:
+### CSP con contenido inline
 
-- El índice `idx_messages_chat_ts` pagina cada conversación sin descifrar
-  nada (consulta O(log n) por página). Con `ts` cifrado —con IV distinto
-  por fila— el índice deja de servir: habría que escanear la conversación
-  entera por petición, inviable en móviles modestos (Termux incluido).
-- Los resúmenes de la lista de chats ordenan y cuentan con esos mismos
-  campos; cifrarlos obligaría a descifrar todo el histórico para pintar la
-  lista.
-- El `hash` del adjunto no puede cifrarse: `blob_access` y
-  `blob_access_members` se referencian por ese hash, y el deduplicado por
-  contenido depende de él.
-- Las claves: conseguir que ni el operador vea metadatos pide claves por
-  destinatario con rotación y pivote compatibles con lo que ya existe; eso
-  es una pieza de diseño nueva sobre la que el cliente actual no da
-  respaldo.
+`script-src` y `style-src` aún admiten `'unsafe-inline'` porque el cliente
+conserva scripts y manejadores inline. Retirarlo exige externalizarlos y
+revisar nonce/hashes, service worker y recursos `blob:` con pruebas de
+navegador. La saneación y el escape siguen siendo necesarios con o sin CSP.
 
-Camino que tendría sentido, por partes:
+## 2. Sesiones, cifrado y datos persistentes
 
-1. Primero lo barato y útil: convertir `last_seen` en franjas gruesas
-   (día o franja horaria). Es el metadato más revelador de actividad y hoy
-   se guarda al minuto.
-2. Después, mover la paginación a metadatos cifrados por conversación: cada
-   página se descifra y se ordena en el cliente, y el índice de SQLite se
-   sustituye por identificadores estrictamente crecientes.
-3. Anonimizar la columna `chat` es lo último y lo más caro: probablemente
-   exige rediseñar el modelo de identidad del punto 1 en conjunto.
+### Tokens sin tabla de sesiones
 
-## 3. Content-Security-Policy sin `unsafe-inline`
+Las sesiones son JWT HS256 sin tabla ni caché. La revocación por cuenta usa
+`user_rid`, el checksum de id/username/password/rid y las marcas temporales.
+El logout ordinario es local al navegador; los cambios de identidad o
+credenciales invalidan tokens anteriores. Renombrar reemite la cookie propia
+porque el username forma parte del checksum.
 
-**Decisión: refactor de cliente aparte.**
+Restaurar índices de `sessions`, caducar una caché de sesiones o recortar un
+máximo de filas por cuenta son propuestas sin objeto en este modelo.
 
-Hoy el SPA (`public/index.html`) lleva scripts embebidos y 96 atributos
-`onclick=` (además de `oninput`, `onchange`, `onsubmit`); `login.html`
-también lleva guiones propios. Quitar `'unsafe-inline'` del `script-src`
-exige:
+### Metadatos necesarios para consultas
 
-1. Sacar todos los scripts embebidos a ficheros externos y sustituir los
-   atributos inline por manejadores asignados por código.
-2. Elegir el mecanismo de exención: o `nonce` por respuesta (que implica
-   custodiar la HTML en runtime, hoy es fichero estático), o una lista de
-   `hashes` por fichero.
-3. Revisar el service worker y las URLs `blob:` para no romper avatares,
-   galerías ni historias.
+No se cifran con IV aleatorio `users.username`, tiempos y políticas, ni los
+metadatos `messages.chat/ts/kind/hash/once/edited`. La paginación con
+`idx_messages_chat_ts`, los resúmenes y la deduplicación dependen de ellos.
+Ocultarlos requiere rediseñar identidad, índices y paginación, no aplicar un
+cifrado que rompa consultas u obligue a descifrar todo el historial.
 
-Es un refactor del tamaño del propio cliente y su regresión debe
-acompañarse con pruebas de navegador (Playwright). Queda en la lista de
-trabajo de cliente, independiente de esta ronda del servidor. Mientras
-tanto, la superficie de XSS sigue cubierta por la saneación que el cliente
-aplica a cada dato antes de pintarlo (escape centralizado), que conviene
-mantener como severidad propia con o sin CSP.
+### Claves y firma
 
-## Referencia
+`messages.signing_public_key` se conserva aunque pueda derivarse de la
+auth_key actual: tras una rotación permite verificar mensajes antiguos no
+migrados; quitarla podría marcar contenido válido como adulterado.
 
-- Commit principal de la ronda: `4a16582` (cita los arreglos hallazgo por
-  hallazgo) y `c164713` (purga de filas de acceso huérfanas).
-- Informe fuente de la auditoría (fuera del repositorio):
-  `zlapy-chat/run-1/REPORT.md`.
+La regeneración de auth_key recifra el material de la cuenta en una sola
+transacción. La clave anterior solo se olvida tras confirmar; en rollback se
+restaura su caché y se poda la clave nueva. El borrado de cuenta aplica la
+misma regla: primero confirma y después limpia.
 
----
+Los contadores MTProto en RAM tienen un LRU de 500 entradas. Al expulsar se
+vuelca en SQLite el contador interno `seq` de esa auth_key; al volver, el
+`seq_no` emitido (`seq * 2 + 1`) continúa en pasos de 2 sin compartirse con
+otras sesiones. Un
+high-water global de `msg_id` evita repeticiones. El volcado se vacía al
+reiniciar el proceso y se borra al rotar o eliminar la clave.
 
-# Ronda SECOA — 23 oct 2026 (segunda auditoría ofensiva, con explotación real)
+## 3. SQLite y adjuntos
 
-La segunda auditoría se hizo **ejecutando el servidor en un puerto de
-aislamiento** (`DATA_DIR` temporal, `FORCE_TLS=false`, sin tocar `data/` real)
-y reproduciendo cada hallazgo con peticiones reales antes de tocar una línea.
-Con eso se separaron tres grupos: **hallazgos reales cerrados**, **falsos
-positivos descartados** (el agente los propuso, el código ya los cubría) y
-**decisiones que siguen vivas a propósito**.
+### Durabilidad y espera ante bloqueos
 
-## 4. Hallazgos confirmados y cerrados (con la prueba)
+Las dos bases usan WAL con `synchronous = FULL`: se elige durabilidad de
+commits confirmados ante una caída del SO, con mayor coste que `NORMAL`.
+Ambas aplican `busy_timeout = 15000` ms por defecto
+(`SQLITE_BUSY_TIMEOUT_MS`), para esperar contención transitoria de escritura.
 
-Todos se reprodujeron en la sandbox **antes** del parche y se verificó el
-cierre después; la suite completa (`npm test`, 162 pruebas) pasó en verde con
-los cambios puestos.
+### Borrado entre dos bases
 
-| Hallazgo | Qué permitía | Cómo quedó |
-| --- | --- | --- |
-| SECOA-I-001 / I-002 | `/send` aceptaba el medio **en línea sin hash** de 24 MB sin gastar cuota de adjuntos, y `POST /messages` amplificaba cada lectura a ~24 MB JSON (330-363 ms) | `MAX_INLINE_MEDIA_CHARS` (256 KiB → `413`), `bytesNuevos` cuenta **siempre** el `data` del mensaje (`src/chat/routes.js:246-284`) |
-| SECOA-I-004 | `/receipt` sin limitador: cada uno recorre hasta 500 ids y descifra cada fila | `receiptLimiter` (120/min, `src/chat/routes.js:376`) |
-| SECOA-A-001 | historias con medio en línea de 24 MB | `STORY_INLINE_CHAR_LIMIT` = 4 000 000 (`src/stories/routes.js`, `413` si pasa) |
-| SECOA-A-002 | un miembro sin rol podía abrir un grupo privado (`visibility`) o dejarlo `joinPolicy: open` | cinco ajustes quedaron **solo-admins** (`src/http/router.js`, `403 "Ese ajuste es solo para admins."`) |
-| SECOA-A-003 | un admin podía **expulsar al propietario**: la comprobación apuntaba a `groups.owner_id` (columna `SET NULL`), no al rol real, y dejaba el grupo huérfano | guarda explícita: `403 "No se puede expulsar al propietario del grupo."` (y se eliminó el bloque muerto) |
-| SECOA-B-001 | `FORCE_TLS` sin certificados: arranque abortado o, si se forzaba, credenciales en claro desde fuera | arranque **degradado** + `503` para `publicAuthPost` desde fuera de loopback (`src/http/router.js:128-130`) |
-| SECOA-C-011 | la caché de páginas sostenía cientos de MB en RAM con páginas de adjuntos grandes | cota global de bytes `CHAT_PAGE_CACHE_MAX_BYTES` (64 MiB) + desalojo (`src/chat/messages.js`) |
-| SECOA-D-001 / E-001 | `data/` nacía `0755` y las bases `0644`: lectura para cualquier usuario local del equipo | `server.js` paso 0: `0700`/`0600` al arrancar, `best-effort` con aviso |
-| SECOA-E-006 | el anti-replay del canal se registraba **antes** de validar el MAC (flood de basura expulsable) | registro del nonce **tras** verificar HMAC + rechazo de nonce vacío (`src/http/transport.js`) |
-| SECOA-I-003 | sesiones sin tope por cuenta | ~~`MAX_SESSIONS_PER_USER` = 20, recorta las más antiguas~~ *(quedó sin objeto en v9/v10: los tokens son JWT sin almacén, no hay sesiones que recortar — ver «Estado actual» más abajo)* |
-| SECOA-G | grupos sin tope de miembros (coste por mensaje lineal en N) | `MAX_GROUP_MEMBERS` = 200 en creación/`join`/`addMember` |
-| (limpieza) | `.zlapy.pid` en `0644` y un limitador (`keyLimiter`) sin consumidor | PID `0600`; `keyLimiter` eliminado |
+Las bases principal y de blobs no comparten una transacción atómica. Los
+borrados llaman a `pruneBlobHashes`; además, cada 6 horas un barrido retira
+huérfanos en tandas de 200. La referencia manda al autorizar: un blob aún no
+podado físicamente no se vuelve descargable por estar presente.
 
-## 5. Falsos positivos descartados (no se tocó el código)
+La poda respeta también stickers, avatares, fondos, imágenes de grupo y la
+imagen de respaldo, no solo `blob_access`. `INSERT OR IGNORE` deduplica por
+hash de forma idempotente; no es una fuga ni duplica contenido.
 
-El agente auditor los propuso como fallos; la verificación sobre el código
-mostró que **ya estaban resueltos**. Queda aquí para no volver a "arreglarlos":
+## 4. Recursos externos y operación
 
-- **Mismo-origen/CSRF en `POST`**: Origin + `sec-fetch-site` ya se comprobaban
-  en `src/http/router.js`, y el *upgrade* WebSocket tiene su propia comprobación
-  de origen (`src/realtime/websocket.js`).
-- **Índices de `sessions`**: ~~`idx_sessions_user` y `idx_sessions_exp` existen
-  desde el esquema v3~~ *(sin objeto desde v9: la tabla `sessions` se soltó al
-  pasar a JWT sin almacén; el debate no aplica — ver «Estado actual»)*.
-- **Caché de sesiones sin validar caducidad**: ~~`getSessionFromCache` ya
-  descarta las expiradas~~ *(sin objeto desde v9: no hay caché de sesiones que
-  validar; la caducidad la comprueba `jsonwebtoken` al verificar el token)*.
-- **`data.from` falsificable en `/story`**: el router lo sobrescribe con el
-  actor antes de llamar a la ruta.
-- **Duplicación de blobs por `INSERT OR IGNORE`**: el almacén es idempotente
-  por diseño, no había fuga: el hallazgo se retiró.
+### Timeouts acotados
 
-## 6. Lo que sigue sin cambiar, a propósito
+Web Push usa `AbortSignal.timeout(5000)` y Giphy `AbortSignal.timeout(8000)`.
+La señal cubre también la lectura del cuerpo. Un upstream colgado termina en
+un fallo acotado, no en una petición o cadena de avisos retenida siempre.
 
-- **La identidad por IP bajo túnel de Cloudflare** (SECOA-C-002): con
-  `X-Forwarded-*` detrás de `cloudflared`, un cliente podría falsear la IP de
-  origen de los limitadores por IP. **Decisión: no se cambia.** Son de
-  referencia para el registro/login, que **ya** tienen además límite por
-  cuenta; elevar "la IP real" a fuente de verdad desde una cabecera
-  introduciría un bypass nuevo. La restricción real de IP se mantiene en el
-  *socket* (`clientIp`), que un cliente de la LAN no puede falsear.
-- **La rotación de clave en una sola transacción** (SECOA-D-004):
-  `regenerateAuthKey` re-cifra todo el material del usuario dentro de una
-  transacción única por atomicidad. **Decisión: se conserva.** Dividirla en
-  trozos reintroduciría estados intermedios ilegibles — que es justo el fallo
-  que se corrigió en `4a16582`/`d3b977f`.
-- **La purga coherente de dos bases** (SECOA-D-005): los blobs huérfanos se
-  barren periódicamente en lugar de purgarse en la misma transacción que
-  borra el mensaje. **Decisión: se conserva**: es un barrido acotado que no
-  bloquea el servicio, y la referencia de acceso es la fuente de verdad.
-- **El pin del compilador nativo** (SECOA-E-013): `better-sqlite3` se compila
-  con el node-gyp del sistema. **Decisión: fuera de alcance**: cambiar el
-  *toolchain* de un proyecto desplegado por `npm ci` es una operación de
-  release, no un parche de seguridad.
+### Respaldos y permisos recursivos
 
-## 7. Rutas privadas en el histórico
+`npm run backup` copia ambas bases con la API de SQLite y `.env` como
+`credencial.env`, imprescindible para descifrar. Crea directorios 0700 y
+archivos 0600. Al arrancar, el endurecimiento recorre recursivamente todo
+`backups/`: directorios 0700 y archivos 0600, además de `data/`, bases y `.env`.
+No sigue symlinks, para no cambiar permisos fuera del árbol; los fallos de
+chmod se avisan y se tratan como best-effort.
 
-Tras esta ronda se reescribió el historial del repositorio para **eliminar
-rutas personales del host** que se habían colado en dos documentos de auditoría;
-el contenido (commits y mensajes) es el mismo, con hashes nuevos. Los informes
-originales viven **fuera del repositorio** y se citan solo con rutas relativas
-(`zlapy-chat/run-1/REPORT.md`).
+### Token de Cloudflare
 
----
+`CLOUDFLARE_TUNNEL_TOKEN` vive únicamente en `.env`. `zty.yml` y su plantilla
+contienen UUID/hostname, protocolo e ingress, pero no token. El lanzador usa
+`--token-file` con archivo 0600 en directorio temporal 0700; en cloudflared
+antiguo, `TUNNEL_TOKEN` por entorno. Nunca lo pone en argv, retira la variable
+original antes del hijo y redacta el token de la salida.
 
-# Estado actual (v9 → v12): decisiones que hay que saber antes de tocar
+El hallazgo de un secreto en `zty.yml` es falso en el estado actual: no hay
+token en ese archivo ni en `zty.yml.example`.
 
-Las rondas de arriba quedaron en su momento histórico. Desde entonces el
-esquema avanzó sin pérdida de datos (`docs/ESQUEMA-BD.md` §5 tiene las
-migraciones) y hay cuatro decisiones nuevas que **parecen fallos** si se leen
-sin contexto. No se arreglan "porque sí":
+### Suscripciones push inválidas
 
-- **`signing_public_key` se queda en `messages`.** Es un ahorro de espacio
-  tentador (recalcular la clave Ed25519 es determinista), pero la clave de
-  firma deriva de la `auth_key`, que el usuario **regenera** desde
-  `POST /account/regenerate-key`: tras regenerarla, los mensajes que el
-  re-cifrado no pudo migrar (dañados) solo se verifican con la clave que
-  viajó con ellos. Quitar la columna los marcaría como adulterados para
-  siempre. Optimización rechazada tras analizarla.
-- **Renombrar la cuenta re-emite la cookie de sesión** (no es un logout
-  accidental): el `checksum` del token lleva el `username`, así que sin
-  re-emitirla quien renombra saldría de su propia sesión. Las cookies de
-  otros navegadores quedan bloqueadas a propósito: cambio de identidad.
-- **`calls` tiene una fila por extremo** (PK `(owner, id)`, v12). Antes el
-  `INSERT OR REPLACE` borraba la del llamador: el histórico de llamadas solo
-  sobrevivía para quien recibía. La historia ya perdida **no** se recupera
-  con la migración; lo que se garantiza es que no se pierda más.
-- **`sessions` no existe** (v9/v10): los tokens son JWT sin tabla ni caché.
-  Cualquier propuesta de "restaurar los índices de sesiones" o "topar
-  sesiones por cuenta" parte de un modelo que ya no es este; la revocación
-  se hace rotando el `rid` (`user_rid`). Modelo completo en
-  `docs/ESQUEMA-BD.md` §3.13 y `docs/CRIPTOGRAFIA.md` §6.5.
+Se eliminan suscripciones con 404/410 y el 403 que indica credenciales VAPID
+distintas de las usadas al crearlas; otro 403 no implica baja automática.
+El cliente se vuelve a suscribir si `applicationServerKey` difiere de la clave
+vigente, evitando suscripciones zombi tras cambiar las claves del servidor.
 
----
+## 5. Falsos positivos que no deben reabrirse
 
-# Ronda de noviembre de 2026: notificaciones, datos locales y arranque
-
-Decisiones de esta ronda que conviene conocer antes de tocar estas zonas:
-
-- **Las suscripciones push zombi se eliminan (403), no se ignoran.** Si el
-  servicio de push responde 403 «las credenciales VAPID no corresponden a las
-  usadas al crear la suscripción» (la clave del servidor cambió, p. ej. al
-  restaurar la base), esa suscripción **nunca** entregará: se borra la fila y
-  la entrada de RAM como si estuviera caducada (404/410), con aviso en el log.
-  Un 403 ajeno a credenciales no se considera muerte de la suscripción.
-- **El cliente re-suscribe solo si la clave no coincide.** Al arrancar (o al
-  activar el interruptor) se compara la `applicationServerKey` de la
-  suscripción guardada con la clave VAPID actual del servidor: si difieren, se
-  re-suscribe con la de hoy. Sin esto, un interruptor «encendido» con una
-  suscripción zombi parecía funcionar (los avisos con la página abierta vienen
-  del WebSocket) y nunca llegaba nada con la app cerrada.
-- **El service worker necesita origen de confianza, no solo «continuar».** Con
-  certificado autofirmado el navegador rechaza el registro del SW
-  (`SecurityError`) aunque el usuario haya ignorado el aviso: sin SW no hay
-  push. Las salidas son instalarlo como CA, usar `localhost` o un túnel HTTPS
-  válido. El diagnóstico lo dice con ese texto en vez de un mensaje genérico.
-- **Los errores globales no fatales no tumban el servidor.**
-  `uncaughtException`/`unhandledRejection` se registran SIEMPRE (consola +
-  `data/log/errors.log`, acotado a 2 MB). Los errores fatales (base corrupta,
-  disco lleno, permisos de `data/`) cierran las bases y salen con exit 1 para
-  que el supervisor levante limpio; el resto se registran y **se sigue
-  sirviendo**, con el watchdog (health check + latido) como red de seguridad.
-- **Las dependencias las instala el supervisor, no el servidor.** `npm start`
-  ejecuta `ensure-deps` antes del supervisor; si `server.js` detecta una
-  librería que falta, sale con código 79 y el supervisor la instala y relanza
-  **una** vez (sin backoff y sin gastar intentos de arranque). Instalar npm
-  dentro del proceso del servidor dejaría un `node_modules` a medio instalar.
-- **`ops/` y `test/` van por dominios**, como `src/`: `install/`, `runtime/`,
-  `db/`, `backup/`, `crypto/`, `auth/`, `net/`, `config/`, `data/` y
-  `auth/`, `calls/`, `chat/`, `client/`, `crypto/`, `db/`, `groups/`, `http/`,
-  `profile/`, `push/`, `runtime/`, `shared/`, `stickers/` respectivamente. Las
-  rutas de `package.json`, los `require` y toda la documentación se
-  actualizaron con el movimiento.
+| Propuesta | Comprobación vigente |
+| --- | --- |
+| «El UUID existe porque `/auth/session` devuelve `gone` o limpia su cookie» | La rama anónima es uniforme en cuerpo y `Set-Cookie`; no clasifica cookies vinculadas. |
+| «Faltan índices, caducidad de caché o tope de filas en `sessions`» | No existe esa tabla ni esa caché; valen JWT, rid y checksum. |
+| «El token del túnel está en `zty.yml`» | Ni el archivo actual ni la plantilla lo contienen; el lanzador solo lo toma de `.env` y evita argv/logs. |
+| «Toda excepción debe devolver 400» | Solo errores marcados son 400; las inesperadas son 500 genérico y las auth_keys ilegibles, 503. |
+| «No hay defensa CSRF/origen en POST o WebSocket» | Router y upgrade validan origen; POST también rechaza `sec-fetch-site: cross-site`. |
+| «`/story` confía en `data.from` del cliente» | El router lo sustituye por el actor autenticado antes de ejecutar la ruta. |
+| «Cada reenvío de un blob lo duplica» | La PK por hash e `INSERT OR IGNORE` son idempotentes; la cuota global cambia solo al insertar. |
+| «Un adjunto físicamente presente siempre es público» | La descarga exige autorización; autorización y poda física son mecanismos separados. |

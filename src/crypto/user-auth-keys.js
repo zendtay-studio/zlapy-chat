@@ -50,6 +50,12 @@ function createUserAuthKeys({ db, Stmt, encryptAtRest, decryptAtRest, onAuthKeyC
         throw new TypeError('createUserAuthKeys necesita las funciones de cifrado en reposo.');
 
     const authKeyCache = new Map();
+    function cacheAuthKey(userId, record) {
+        authKeyCache.delete(userId);
+        if (authKeyCache.size >= AUTH_KEY_CACHE_MAX) authKeyCache.delete(authKeyCache.keys().next().value);
+        authKeyCache.set(userId, record);
+        return record;
+    }
 
     /* M7: la auth_key viaja cifrada con la llave maestra ATADA a su usuario
      * (AAD). Un sobre copiado de otra fila no descifra: antes cualquier
@@ -74,9 +80,7 @@ function createUserAuthKeys({ db, Stmt, encryptAtRest, decryptAtRest, onAuthKeyC
         try { key = Buffer.from(decAuthKey(userId, row.auth_key), 'hex'); } catch { }
         if (!key || key.length !== mtproto.AUTH_KEY_BYTES) return null;
         const rec = { key, keyId: row.key_id };
-        if (authKeyCache.size >= AUTH_KEY_CACHE_MAX) authKeyCache.delete(authKeyCache.keys().next().value);
-        authKeyCache.set(userId, rec);
-        return rec;
+        return cacheAuthKey(userId, rec);
     }
 
     /* Igual que `authKeyRecord`, pero distingue los tres estados:
@@ -95,8 +99,7 @@ function createUserAuthKeys({ db, Stmt, encryptAtRest, decryptAtRest, onAuthKeyC
         if (!key || key.length !== mtproto.AUTH_KEY_BYTES)
             return { state: 'ilegible', record: null };
         const rec = { key, keyId: row.key_id };
-        if (authKeyCache.size >= AUTH_KEY_CACHE_MAX) authKeyCache.delete(authKeyCache.keys().next().value);
-        authKeyCache.set(userId, rec);
+        cacheAuthKey(userId, rec);
         return { state: 'ok', record: rec };
     }
 
@@ -115,8 +118,7 @@ function createUserAuthKeys({ db, Stmt, encryptAtRest, decryptAtRest, onAuthKeyC
         const now = Date.now();
         Stmt.insertAuthKey.run(userId, encAuthKey(userId, key.toString('hex')), keyId, now, now);
         const rec = { key, keyId };
-        if (authKeyCache.size >= AUTH_KEY_CACHE_MAX) authKeyCache.delete(authKeyCache.keys().next().value);
-        authKeyCache.set(userId, rec);
+        cacheAuthKey(userId, rec);
         /* Al CREAR la clave (primera vez del usuario, o regeneración) el par
          * de firma cacheado pudo derivar de la semilla maestra (de aplica
          * mientras la auth_key no existía): hay que invalidar la caché, o
@@ -125,6 +127,15 @@ function createUserAuthKeys({ db, Stmt, encryptAtRest, decryptAtRest, onAuthKeyC
             try { onAuthKeyCreated(userId); } catch { }
         }
         return rec;
+    }
+
+    /* Olvida los dos estados RAM ligados a la llave. Se usa al rotarla y al
+       borrar la cuenta; devuelve si existía un contador MTProto que podar. */
+    function forgetAuthKey(userId, knownRecord = null) {
+        // knownRecord permite podar tras un DELETE que ya eliminó la fila.
+        const record = knownRecord || authKeyRecord(userId);
+        authKeyCache.delete(userId);
+        return record ? mtproto.forgetSession(record.key) : false;
     }
 
     /* Cifra un contenido con la auth_key del usuario (PCE3, MTProto 2.0).
@@ -184,6 +195,8 @@ function createUserAuthKeys({ db, Stmt, encryptAtRest, decryptAtRest, onAuthKeyC
         authKeyRecord,
         authKeyState,
         ensureAuthKey,
+        forgetAuthKey,
+        cacheAuthKey,
         encryptForUser,
         decryptForUser,
         messageContextBytes,

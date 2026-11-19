@@ -25,7 +25,10 @@ for (const dir of new Set([path.dirname(DB_PATH), path.dirname(BLOB_DB_PATH)]))
 
 const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
-db.pragma('synchronous = NORMAL');
+/* FULL fuerza fsync en cada commit: con NORMAL, una caída del sistema
+ * operativo podía perder transacciones ya confirmadas aunque el proceso
+ * siguiera vivo. WAL se conserva; se prioriza la durabilidad de los datos. */
+db.pragma('synchronous = FULL');
 db.pragma('foreign_keys = ON');
 db.pragma(`busy_timeout = ${CONFIG.sqliteBusyTimeoutMs}`);
 db.pragma(`cache_size = -${CONFIG.sqliteCacheSizeKb}`);
@@ -33,7 +36,7 @@ db.pragma('temp_store = MEMORY');
 
 const blobDb = new Database(BLOB_DB_PATH);
 blobDb.pragma('journal_mode = WAL');
-blobDb.pragma('synchronous = NORMAL');
+blobDb.pragma('synchronous = FULL');
 blobDb.pragma('foreign_keys = ON');
 blobDb.pragma(`busy_timeout = ${CONFIG.sqliteBusyTimeoutMs}`);
 blobDb.pragma(`cache_size = -${CONFIG.sqliteCacheSizeKb}`);
@@ -42,6 +45,12 @@ blobDb.exec(`
 CREATE TABLE IF NOT EXISTS blobs (
     hash TEXT PRIMARY KEY,
     data TEXT NOT NULL
+);
+/* Volcado temporal de secuencias MTProto expulsadas del LRU. No contiene
+   contenido de usuario y crypto/setup lo vacía al abrir un proceso nuevo. */
+CREATE TABLE IF NOT EXISTS mtproto_session_spill (
+    auth_key_id TEXT PRIMARY KEY,
+    next_seq INTEGER NOT NULL
 );
 `);
 

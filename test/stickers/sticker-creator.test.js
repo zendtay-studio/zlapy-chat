@@ -307,7 +307,7 @@ test('creates private stickers, publishes tagged stickers voluntarily, and share
         for (const sticker of defaultPack.json.stickers) {
             assert.match(sticker.sticker, /^\/stickers\/blob\/[a-f0-9]{64}$/);
             const image = await fetch(srv.base + sticker.sticker, {
-                headers: { Cookie: `chatlocal_session=${encodeURIComponent(ana.cookie)}` }
+                headers: { Cookie: `zlapy_session=${encodeURIComponent(ana.cookie)}` }
             });
             assert.equal(image.status, 200, `${sticker.expression} blob is available from the library`);
             const asset = Buffer.from(await image.arrayBuffer());
@@ -326,7 +326,7 @@ test('creates private stickers, publishes tagged stickers voluntarily, and share
         }
         await Promise.all(defaultPack.json.stickers.map(async sticker => {
             const image = await fetch(srv.base + sticker.sticker, {
-                headers: { Cookie: `chatlocal_session=${encodeURIComponent(ana.cookie)}` }
+                headers: { Cookie: `zlapy_session=${encodeURIComponent(ana.cookie)}` }
             });
             assert.equal(image.status, 200, `${sticker.expression} asset is served`);
             assert.equal(image.headers.get('content-type'), 'image/webp');
@@ -370,7 +370,7 @@ test('creates private stickers, publishes tagged stickers voluntarily, and share
         assert.equal(newestFace.json.stickers[0].sticker, webp256.json.sticker,
             'newly published faces appear before the default pack');
         const webp256Response = await fetch(srv.base + webp256.json.sticker, {
-            headers: { Cookie: `chatlocal_session=${encodeURIComponent(ana.cookie)}` }
+            headers: { Cookie: `zlapy_session=${encodeURIComponent(ana.cookie)}` }
         });
         assert.equal(webp256Response.headers.get('content-type'), 'image/webp');
         assert.deepEqual(Buffer.from(await webp256Response.arrayBuffer()), webp256Bytes);
@@ -384,7 +384,7 @@ test('creates private stickers, publishes tagged stickers voluntarily, and share
         assert.equal(gif.status, 201);
         assert.equal(gif.json.published, true);
         const gifResponse = await fetch(srv.base + gif.json.sticker, {
-            headers: { Cookie: `chatlocal_session=${encodeURIComponent(ana.cookie)}` }
+            headers: { Cookie: `zlapy_session=${encodeURIComponent(ana.cookie)}` }
         });
         assert.equal(gifResponse.headers.get('content-type'), 'image/gif');
         assert.deepEqual(Buffer.from(await gifResponse.arrayBuffer()), gifBytes);
@@ -403,7 +403,7 @@ test('creates private stickers, publishes tagged stickers voluntarily, and share
         }, ana.cookie);
         assert.equal(animatedWebp.status, 201);
         const animatedResponse = await fetch(srv.base + animatedWebp.json.sticker, {
-            headers: { Cookie: `chatlocal_session=${encodeURIComponent(ana.cookie)}` }
+            headers: { Cookie: `zlapy_session=${encodeURIComponent(ana.cookie)}` }
         });
         assert.equal(animatedResponse.headers.get('content-type'), 'image/webp');
         const savedAnimatedBytes = Buffer.from(await animatedResponse.arrayBuffer());
@@ -411,7 +411,7 @@ test('creates private stickers, publishes tagged stickers voluntarily, and share
         assert.equal(webpAnimationFrameCount(savedAnimatedBytes), 2,
             'saving a sticker preserves the animation frames');
         const discover = await fetch(srv.base + '/stickers/discover?tags=reaction,happy', {
-            headers: { Cookie: `chatlocal_session=${encodeURIComponent(beto.cookie)}` }
+            headers: { Cookie: `zlapy_session=${encodeURIComponent(beto.cookie)}` }
         });
         assert.equal(discover.status, 200);
         const discoverResult = await discover.json();
@@ -419,11 +419,11 @@ test('creates private stickers, publishes tagged stickers voluntarily, and share
         assert.equal(discoverResult.stickers[0].sticker, gif.json.sticker);
         assert.deepEqual(discoverResult.stickers[0].tags.sort(), ['happy', 'reaction']);
         const missing = await fetch(srv.base + '/stickers/discover?tags=missing', {
-            headers: { Cookie: `chatlocal_session=${encodeURIComponent(beto.cookie)}` }
+            headers: { Cookie: `zlapy_session=${encodeURIComponent(beto.cookie)}` }
         });
         assert.equal((await missing.json()).stickers.length, 0);
         const publicGif = await fetch(srv.base + gif.json.sticker, {
-            headers: { Cookie: `chatlocal_session=${encodeURIComponent(caro.cookie)}` }
+            headers: { Cookie: `zlapy_session=${encodeURIComponent(caro.cookie)}` }
         });
         assert.equal(publicGif.status, 200);
 
@@ -433,13 +433,13 @@ test('creates private stickers, publishes tagged stickers voluntarily, and share
         } finally { blobDb.close(); }
 
         const downloaded = await fetch(srv.base + created.json.sticker, {
-            headers: { Cookie: `chatlocal_session=${encodeURIComponent(ana.cookie)}` }
+            headers: { Cookie: `zlapy_session=${encodeURIComponent(ana.cookie)}` }
         });
         assert.equal(downloaded.status, 200);
         assert.equal(downloaded.headers.get('content-type'), 'image/webp');
         assert.deepEqual(Buffer.from(await downloaded.arrayBuffer()), bytes);
         assert.equal((await fetch(srv.base + created.json.sticker, {
-            headers: { Cookie: `chatlocal_session=${encodeURIComponent(caro.cookie)}` }
+            headers: { Cookie: `zlapy_session=${encodeURIComponent(caro.cookie)}` }
         })).status, 404);
 
         await api(srv.base, 'POST', '/contacts', { username: 'stickerbeto' }, ana.cookie);
@@ -467,10 +467,10 @@ test('creates private stickers, publishes tagged stickers voluntarily, and share
         assert.equal(sentAnimated.status, 200);
         assert.equal(sentAnimated.json.ok, true);
         assert.equal((await fetch(srv.base + created.json.sticker, {
-            headers: { Cookie: `chatlocal_session=${encodeURIComponent(beto.cookie)}` }
+            headers: { Cookie: `zlapy_session=${encodeURIComponent(beto.cookie)}` }
         })).status, 200);
         assert.equal((await fetch(srv.base + animatedWebp.json.sticker, {
-            headers: { Cookie: `chatlocal_session=${encodeURIComponent(beto.cookie)}` }
+            headers: { Cookie: `zlapy_session=${encodeURIComponent(beto.cookie)}` }
         })).headers.get('content-type'), 'image/webp');
 
         const group = await api(srv.base, 'POST', '/groups', {
@@ -484,7 +484,7 @@ test('creates private stickers, publishes tagged stickers voluntarily, and share
         }, ana.cookie);
         assert.equal(groupSend.status, 200);
         assert.equal((await fetch(srv.base + created.json.sticker, {
-            headers: { Cookie: `chatlocal_session=${encodeURIComponent(beto.cookie)}` }
+            headers: { Cookie: `zlapy_session=${encodeURIComponent(beto.cookie)}` }
         })).status, 200);
 
         const db = new Database(path.join(srv.dataDir, 'zlapy.db'), { readonly: true });
@@ -499,17 +499,17 @@ test('creates private stickers, publishes tagged stickers voluntarily, and share
         assert.equal(unfavorited.json.stickers.includes(gif.json.sticker), false);
         assert.equal(unfavorited.json.stickers.includes(created.json.sticker), false);
         assert.equal((await fetch(srv.base + created.json.sticker, {
-            headers: { Cookie: `chatlocal_session=${encodeURIComponent(ana.cookie)}` }
+            headers: { Cookie: `zlapy_session=${encodeURIComponent(ana.cookie)}` }
         })).status, 200, 'removing a private sticker from favorites retains its owned blob');
         assert.equal((await fetch(srv.base + created.json.sticker, {
-            headers: { Cookie: `chatlocal_session=${encodeURIComponent(beto.cookie)}` }
+            headers: { Cookie: `zlapy_session=${encodeURIComponent(beto.cookie)}` }
         })).status, 200, 'a recipient can still view a sent sticker after it is unfavorited');
         const stillPublic = await fetch(srv.base + gif.json.sticker, {
-            headers: { Cookie: `chatlocal_session=${encodeURIComponent(caro.cookie)}` }
+            headers: { Cookie: `zlapy_session=${encodeURIComponent(caro.cookie)}` }
         });
         assert.equal(stillPublic.status, 200, 'unfavoriting a published sticker keeps its blob available');
         const discoverAfterUnfavorite = await fetch(srv.base + '/stickers/discover?tags=reaction,happy', {
-            headers: { Cookie: `chatlocal_session=${encodeURIComponent(beto.cookie)}` }
+            headers: { Cookie: `zlapy_session=${encodeURIComponent(beto.cookie)}` }
         });
         assert.equal(discoverAfterUnfavorite.status, 200);
         assert.equal((await discoverAfterUnfavorite.json()).stickers[0].sticker, gif.json.sticker);
@@ -518,7 +518,7 @@ test('creates private stickers, publishes tagged stickers voluntarily, and share
         try { writableBlobDb.prepare('DELETE FROM blobs WHERE hash = ?').run(webp256.json.hash); }
         finally { writableBlobDb.close(); }
         const missingSticker = await fetch(srv.base + webp256.json.sticker, {
-            headers: { Cookie: `chatlocal_session=${encodeURIComponent(ana.cookie)}` }
+            headers: { Cookie: `zlapy_session=${encodeURIComponent(ana.cookie)}` }
         });
         assert.equal(missingSticker.status, 200);
         assert.deepEqual(Buffer.from(await missingSticker.arrayBuffer()), fallbackBytes,
@@ -550,7 +550,7 @@ test('creates private stickers, publishes tagged stickers voluntarily, and share
                 'the unfavorited sticker blob reference survives server restart');
             } finally { restartedDb.close(); }
             assert.equal((await fetch(restarted.base + created.json.sticker, {
-                headers: { Cookie: `chatlocal_session=${encodeURIComponent(ana.cookie)}` }
+                headers: { Cookie: `zlapy_session=${encodeURIComponent(ana.cookie)}` }
             })).status, 200, 'the unfavorited sticker remains accessible after server restart');
         } finally {
             await stop(restarted);

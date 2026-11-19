@@ -184,19 +184,67 @@ function computeMsgKeyFromPlaintext(authKey, plaintext) {
  * conteo vive en RAM por llave; el reboot lo reinicia (los blob nuevos
  * parten del reloj otra vez, y el contenido en reposo no rechaza por
  * monotonia: esa disciplina es del canal en vivo). */
+const SESSION_COUNTERS_MAX = 500;
 const sessionCounters = new Map();
+/* msg_id puede ser monótono globalmente: los saltos entre sesiones son válidos.
+   seq_no, en cambio, cuenta mensajes de CADA sesión y debe seguir 1, 3, 5…;
+   por eso su high-water se vuelca al expulsar, nunca se comparte entre llaves. */
+let msgIdHighWater = 0n;
+const noPersistence = { load: () => 0, save: () => { }, forget: () => false };
+let sessionPersistence = noPersistence;
+
+/* El adaptador vive en crypto/setup y vuelca en SQLite solo al expulsar. Es
+   deliberadamente inyectable para probar el protocolo sin tocar una base real. */
+function configureSessionPersistence(adapter = null) {
+    if (adapter && (typeof adapter.load !== 'function' || typeof adapter.save !== 'function' || typeof adapter.forget !== 'function'))
+        throw new TypeError('session persistence necesita load/save/forget.');
+    sessionCounters.clear();
+    sessionPersistence = adapter || noPersistence;
+}
 
 function nextPacketState(authKey) {
     const id = authKeyId(authKey);
-    const st = sessionCounters.get(id) || { seq: 0, lastMsgId: 0n };
+    let st = sessionCounters.get(id);
+    if (!st) {
+        const seq = Number(sessionPersistence.load(id));
+        if (!Number.isSafeInteger(seq) || seq < 0) throw new Error('Secuencia MTProto persistida inválida.');
+        st = { seq };
+    }
+    const seq = st.seq;
     const unixtime = BigInt(Math.floor(Date.now() / 1000));
-    const frac = BigInt((st.seq % 2147483647) * 4 + 1);   // 32 bits bajos no nulos, paridad 1
+    const frac = BigInt((seq % 2147483647) * 4 + 1);   // 32 bits bajos no nulos, paridad 1
     let msgId = (unixtime << 32n) | frac;
-    if (msgId <= st.lastMsgId) msgId = st.lastMsgId + 4n;  // monotonia dentro de la sesión
-    const msgSeqNo = st.seq * 2 + 1;      // content-related: todo sobre aquí es contenido
-    sessionCounters.set(id, { seq: st.seq + 1, lastMsgId: msgId });
+    if (msgId <= msgIdHighWater) msgId = msgIdHighWater + 4n;
+    msgIdHighWater = msgId;
+    const msgSeqNo = seq * 2 + 1;
+    sessionCounters.delete(id);
+    if (sessionCounters.size >= SESSION_COUNTERS_MAX) {
+        const oldestId = sessionCounters.keys().next().value;
+        const oldest = sessionCounters.get(oldestId);
+        // Si el volcado falla se aborta el cifrado, nunca se reinicia una sesión.
+        sessionPersistence.save(oldestId, oldest.seq);
+        sessionCounters.delete(oldestId);
+    }
+    sessionCounters.set(id, { seq: seq + 1 });
     return { msgId, msgSeqNo };
 }
+
+/* La rotación y el borrado olvidan tanto la entrada LRU como su volcado. */
+function forgetSession(authKey) {
+    const id = authKeyId(authKey);
+    const inMemory = sessionCounters.delete(id);
+    let spilled = false;
+    try { spilled = sessionPersistence.forget(id); }
+    catch (error) {
+        /* La clave ya rotó o la cuenta ya se borró: una fila residual es menos
+           peligrosa que invertir RAM respecto a SQLite. Queda para reintento
+           en otro arranque y nunca convierte el commit en un falso rollback. */
+        console.warn('[crypto] No se pudo podar el volcado de sesión:', error.message);
+    }
+    return spilled || inMemory;
+}
+
+const sessionCounterCount = () => sessionCounters.size;
 
 /* ─────────────────────────── empaquetado ─────────────────────────────── */
 
@@ -322,5 +370,9 @@ module.exports = {
     igeEncrypt,
     igeDecrypt,
     deriveAesKeys,
-    computeMsgKeyFromPlaintext
+    computeMsgKeyFromPlaintext,
+    SESSION_COUNTERS_MAX,
+    configureSessionPersistence,
+    forgetSession,
+    sessionCounterCount
 };

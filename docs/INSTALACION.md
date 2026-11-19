@@ -1,633 +1,190 @@
-# Instalación de Zlapy
+# Instalación y operación de Zlapy
 
-Guía completa para instalar, arrancar, verificar y mantener Zlapy (servidor
-Node.js + SQLite + WebSocket) en Linux, Android (Termux), Windows y macOS.
-
-- [1. Requisitos](#1-requisitos)
-- [2. Instalación paso a paso](#2-instalación-paso-a-paso)
-- [3. Configuración inicial](#3-configuración-inicial)
-- [4. Arranque](#4-arranque)
-- [5. Ejecutar como servicio](#5-ejecutar-como-servicio)
-- [6. Verificación de la instalación](#6-verificación-de-la-instalación)
-- [7. Certificados HTTPS](#7-certificados-https)
-- [8. Copias de seguridad y restauración](#8-copias-de-seguridad-y-restauración)
-- [9. Actualizar](#9-actualizar)
-- [10. Diagnóstico](#10-diagnóstico)
-- [11. Red local y exposición a internet](#11-red-local-y-exposición-a-internet)
-
----
+Referencia práctica para instalar dependencias, configurar el servicio, activar
+TLS y mantener respaldos recuperables. Para la descripción del producto y el
+arranque mínimo, consulta el [README](../README.md).
 
 ## 1. Requisitos
 
-### 1.1 Node.js
-
-**Node 22 o superior es obligatorio.** No es una recomendación: está declarado
-en dos sitios y en los dos casos es un requisito duro.
-
-| Dónde | Qué dice | Consecuencia |
-| --- | --- | --- |
-| `package.json` → `engines.node` | `">=22"` | `npm install` avisa (y con `engine-strict` falla) si bajas de 22 |
-| `better-sqlite3@13.0.3` → `engines.node` | `">=22"` | El paquete también queda fuera de rango por debajo de 22 (y el proyecto usa funciones de Node moderno) |
-
-Comprueba la versión antes de nada:
+- **Node.js 22 o superior** y npm; Git, `curl` y espacio para bases y adjuntos.
+- Python 3, `make` y un compilador C++ cuando `better-sqlite3` deba compilarse.
+  Android/Termux siempre lo compila.
+- Opcional: OpenSSL para certificados y `cloudflared` para el túnel.
 
 ```bash
-node --version    # debe ser v22.x o superior
-npm --version
-```
-
-Si necesitas instalar Node 22:
-
-| Sistema | Comando / fuente |
-| --- | --- |
-| Linux (Debian/Ubuntu) | `sudo apt install nodejs npm` (puede ser anterior a 22 → usa [Nodesource](https://github.com/nodesource/distributions) o `nvm`) |
-| Linux (Fedora/Arch) | `sudo dnf install nodejs` / `sudo pacman -S nodejs npm` |
-| Windows | Instalador oficial de <https://nodejs.org> o `winget install OpenJS.NodeJS.LTS` |
-| macOS | `brew install node@22` o el instalador oficial de <https://nodejs.org> |
-| Termux (Android) | `pkg install nodejs` (comprueba `node -v`) |
-
-### 1.2 Herramientas de compilación
-
-`better-sqlite3` es un **módulo nativo**: incluye un binding de C++ que se
-compila (o se descarga como binario precompilado) durante la instalación.
-
-**En la mayoría de plataformas no hace falta compilar nada**: `better-sqlite3`
-v13.0.3 trae binarios precompilados para:
-
-| Prebuild | Plataforma |
-| --- | --- |
-| `linux-x64`, `linux-arm64` | Linux glibc |
-| `linuxmusl-x64`, `linuxmusl-arm64` | Linux musl (Alpine) |
-| `darwin-x64`, `darwin-arm64` | macOS |
-| `win32-x64`, `win32-arm64` | Windows |
-
-**Excepción: Termux/Android.** Ahí `process.platform` es `android`, para el que
-**no existe prebuild**: hay que compilar el módulo en el propio dispositivo.
-Por eso el script `postinstall` del proyecto comprueba que el binario nativo
-existe y avisa con las instrucciones exactas.
-
-Si te toca compilar, necesitas el toolchain de `node-gyp`:
-
-| Herramienta | Para qué | Debian/Ubuntu | Fedora | Arch |
-| --- | --- | --- | --- | --- |
-| Python 3 | `node-gyp` ejecuta `python3` para configurar la compilación | `sudo apt install python3` | `sudo dnf install python3` | `sudo pacman -S python` |
-| make | drive de compilación | `sudo apt install build-essential` | `sudo dnf install make` | `sudo pacman -S make` |
-| C++17 (`g++` o `clang`) | compilar el binding | `sudo apt install build-essential` | `sudo dnf install gcc-c++` | `sudo pacman -S base-devel` |
-
-Comprobación rápida de que el toolchain está completo:
-
-```bash
+node --version && npm --version
 python3 --version && make --version && g++ --version
 ```
 
-### 1.3 Otros requisitos
-
-| Requisito | Detalle |
+| Plataforma | Herramientas de compilación |
 | --- | --- |
-| `git` | Para clonar el repositorio |
-| `openssl` | Solo si quieres HTTPS autofirmado (Linux: `sudo apt install openssl`; Termux: `pkg install openssl`) |
-| `cloudflared` | Solo si quieres exponer el servidor a internet (`npm run tunnel`) |
-| `curl` | Para comprobar `/healthz` |
-| Espacio en disco | Dependencias + bases + adjuntos (los vídeos y audios se guardan como blobs en `data/zlapy-zlapy-blob.db`) |
+| Debian/Ubuntu | `sudo apt install python3 make g++ build-essential` |
+| Fedora | `sudo dnf install python3 make gcc-c++` |
+| Arch | `sudo pacman -S --needed base-devel python` |
+| Termux | `pkg install python make clang sqlite` |
+| macOS | `xcode-select --install`, solo si hace falta compilar |
+| Windows | Visual Studio Build Tools (C++) y Python 3, solo si hace falta compilar |
 
----
-
-## 2. Instalación paso a paso
-
-### 2.0 Los tres pasos comunes a todas las plataformas
-
-1. **Clonar** el repositorio.
-2. **Instalar dependencias** con `npm ci` (usa `package-lock.json`, versionado, y
-   por tanto es reproducible). `npm install` solo hace falta si el repo vino
-   **sin** lockfile. El arranque (`npm start`) no instala nada en silencio: si
-   falta alguna dependencia, el preflight la instala con `npm ci` y lo dice por
-   consola.
-3. **Crear la configuración y el directorio de datos**: `cp .env.example .env` y
-   `mkdir -p data`.
-
-> **El directorio de datos debe existir.** El código abre `data/zlapy.db` y
-> `data/zlapy-zlapy-blob.db` con SQLite, y SQLite **no crea el directorio**: si falta, el
-> arranque aborta con `Cannot open database because the directory does not exist`.
-> Si configuras `DATA_DIR` a otra ruta, crea también ese directorio.
-
-### 2.1 Linux (Debian/Ubuntu, Fedora, Arch)
-
-#### Debian / Ubuntu
+El `postinstall` comprueba el binario nativo e intenta compilarlo si falta. El
+proyecto aprueba `better-sqlite3` en `allowScripts`; si npm aún lo solicita:
 
 ```bash
-# Dependencias del sistema (solo si vas a compilar; en x64/arm64 hay prebuild)
+npm install-scripts approve better-sqlite3
+npm run rebuild:sqlite
+```
+
+Usa el script del proyecto, no `npm rebuild better-sqlite3`: invoca `node-gyp`
+explícitamente y contempla las cabeceras de Termux.
+
+## 2. Instalación por plataforma
+
+### Linux
+
+Instala Node 22+ con tu distribución, Nodesource o nvm si hace falta. En Debian o
+Ubuntu:
+
+```bash
 sudo apt update
-sudo apt install -y git python3 make g++ build-essential
-
-# Node 22+ (si tu distro trae una versión anterior, usa Nodesource o nvm)
-node --version   # debe ser v22 o superior
-
-# Clonar e instalar
+sudo apt install -y git python3 make g++ build-essential curl openssl
 git clone https://github.com/zendtay-studio/zlapy-chat.git
 cd zlapy-chat
 npm ci
-
-# Configuración y datos
-cp .env.example .env
-mkdir -p data
-```
-
-#### Fedora
-
-```bash
-sudo dnf install -y git python3 make gcc-c++ gcc-c++-make
-git clone https://github.com/zendtay-studio/zlapy-chat.git
-cd zlapy-chat
-npm ci
-cp .env.example .env
-mkdir -p data
-```
-
-#### Arch
-
-```bash
-sudo pacman -S --needed git base-devel python
-git clone https://github.com/zendtay-studio/zlapy-chat.git
-cd zlapy-chat
-npm ci
-cp .env.example .env
-mkdir -p data
-```
-
-#### Si `npm ci` falla al compilar `better-sqlite3`
-
-En Linux, macOS y Windows con arquitectura soportada **no debería ocurrir**
-(los prebuilds cubren `linux-x64/arm64`, `linuxmusl-x64/arm64`,
-`darwin-x64/arm64` y `win32-x64/arm64`). Si ocurre, el error típico de
-`node-gyp` es que falta Python o falta un compilador: instala el toolchain de
-la tabla 1.2 y compila a mano:
-
-```bash
-npm run rebuild:sqlite
-```
-
-> **Aviso verificado en esta versión:** con `better-sqlite3@13.0.3` el paquete
-> **ya no trae script `install`** y declara `"gypfile": false`. Por eso
-> `npm rebuild better-sqlite3` **no compila nada** (imprime "rebuilt
-> dependencies successfully" y no genera ningún binario), **tampoco con
-> `--build-from-source`**: no hay script que ejecutar. La única vía que
-> funciona es invocar `node-gyp` explícitamente, como hace
-> `npm run rebuild:sqlite` (`ops/install/build-sqlite.js`).
->
-> Eso deja el binario en `node_modules/better-sqlite3/build/Release/better_sqlite3.node`,
-> que es una de las rutas que comprueba el `postinstall` del proyecto.
->
-> El `postinstall` del proyecto (`ops/install/check-native.js`) **intenta compilar
-> solo** cuando falta el binario, así que en Android/Termux `npm ci` ya
-> compila el módulo sin pasos extra.
-
-#### Verificar que el binario nativo está en su sitio
-
-El `postinstall` del proyecto ya lo hace al instalar; si quieres comprobarlo a
-mano:
-
-```bash
-node -e "console.log(require.resolve('better-sqlite3/package.json'))"
-ls node_modules/better-sqlite3/prebuilds/     # prebuild descargado
-ls node_modules/better-sqlite3/build/Release/  # o compilado a mano
-```
-
-### 2.2 Termux (Android)
-
-En Android, `better-sqlite3` **no tiene prebuild** (`platform` = `android`), así
-que hay que compilarlo en el móvil. Requiere instalar Termux desde **F-Droid**
-(la versión de Play Store está obsoleta).
-
-#### Instalación manual
-
-```bash
-# 1. Paquetes del sistema: python, make, clang y sqlite
-pkg update && pkg upgrade -y
-pkg install python make clang sqlite git nodejs openssl
-
-# 2. Clonar
-git clone https://github.com/zendtay-studio/zlapy-chat.git
-cd zlapy-chat
-
-# 3. Instalar dependencias
-npm ci
-#    El postinstall comprueba el binario nativo y, como en Android no hay
-#    prebuild, lo compila en el dispositivo. Tarda varios minutos: deja el
-#    teléfono enchufado y no cierres la terminal.
-
-# 4. Si la compilación falló (faltaba el toolchain), instálalo y repite:
-pkg install python make clang
-npm run rebuild:sqlite
-
-# 5. Arrancar
 npm start
 ```
 
-> **npm 12 o superior.** Los *scripts de instalación* de las dependencias
-> están bloqueados por defecto, así que npm puede pedirte aprobar el de
-> `better-sqlite3`:
->
-> ```bash
-> npm install-scripts approve better-sqlite3
-> npm run rebuild:sqlite
-> ```
->
-> El proyecto ya lo aprueba en su `package.json` (campo `allowScripts`), así
-> que normalmente no hace falta. El aviso de npm sobre `better-sqlite3` es un
-> error conocido de npm con la versión 13 de ese paquete: el paquete **sí**
-> trae los binarios precompilados dentro del tarball (funciona en Linux,
-> macOS y Windows); en Android no existe ninguno y hay que compilar.
+En Fedora o Arch usa las herramientas de la tabla anterior. `npm ci` instala lo
+fijado por el `package-lock.json` versionado.
 
-El `.env` **se crea solo** en la primera ejecución (a partir de
-`.env.example`), pero la credencial del propietario (`DB_USER` +
-`DB_PASSWORD`) hay que definirla: de ella se deriva la llave maestra que
-cifra todos los datos. Ponla en el `.env` antes del primer arranque
-(§ 3.2).
+### Android con Termux
 
-Compilar `better-sqlite3` en un móvil ARM tarda varios minutos: no cierres la
-terminal y deja el teléfono enchufado (evita que Android mate el proceso).
-
-#### Script todo-en-uno: `npm run termux`
+Instala Termux desde F-Droid y ejecuta:
 
 ```bash
-npm run termux
+pkg update && pkg upgrade -y
+pkg install git nodejs python make clang sqlite openssl
+git clone https://github.com/zendtay-studio/zlapy-chat.git
+cd zlapy-chat
+npm ci
+npm start
 ```
 
-Equivale exactamente a:
+Si falta el binario nativo, ejecuta `npm run rebuild:sqlite` y después `node
+ops/install/check-native.js`. Como alternativa, tras clonar, `npm run termux`
+actualiza paquetes, instala el toolchain, ejecuta `npm i --ignore-scripts`,
+compila, verifica y arranca.
 
-```
-pkg update && pkg upgrade -y && pkg install python make clang sqlite
-  && npm i --ignore-scripts && npm run rebuild:sqlite
-  && node ops/install/check-native.js && npm start
-```
+Evita que Android cierre Termux durante la compilación; `termux-wake-lock` reduce
+las suspensiones en segundo plano. `termux-setup-storage` habilita `/sdcard`
+cuando Android lo permita; crea antes cualquier carpeta usada para `DATA_DIR` o
+respaldos. El almacenamiento privado de Termux suele dar menos problemas.
 
-Es decir: instala los paquetes de Termux, instala las dependencias **sin**
-scripts (para que el `postinstall` no falle antes de compilar), compila
-`better-sqlite3` en el dispositivo, comprueba el binario y arranca el servidor.
+### Windows y macOS
 
-#### Almacenamiento externo (opcional)
-
-Si quieres los datos o los respaldos en la tarjeta SD:
-
-```bash
-termux-setup-storage      # concede acceso a /sdcard (Android 11+ lo restringe)
-```
-
-Después, en `.env`: `DATA_DIR=/sdcard/Download/zlapy-data` (crea el
-directorio antes) y para los respaldos: `npm run backup -- /sdcard/Download/zlapy-backups`.
-
-#### Mantener el móvil vivo
-
-Android suspende las apps en segundo plano y puede cerrar el proceso de
-Termux. Para evitarlo:
-
-```bash
-termux-wake-lock
-```
-
-### 2.3 Windows (PowerShell / CMD)
+Con Node 22+ instalado, en PowerShell:
 
 ```powershell
-# 1. Node 22+ (winget o instalador oficial de nodejs.org)
-winget install OpenJS.NodeJS.LTS
-node --version
-
-# 2. Clonar
 git clone https://github.com/zendtay-studio/zlapy-chat.git
 Set-Location zlapy-chat
-
-# 3. Dependencias
 npm ci
-
-# 4. Configuración y datos
-Copy-Item .env.example .env
-New-Item -ItemType Directory -Force data | Out-Null
-```
-
-En CMD equivalente:
-
-```cmd
-git clone https://github.com/zendtay-studio/zlapy-chat.git
-cd zlapy-chat
-npm ci
-copy .env.example .env
-mkdir data
-```
-
-**Notas específicas de Windows:**
-
-- En x64 y ARM64 hay prebuild (`win32-x64`, `win32-arm64`): **no hace falta
-  Visual Studio** ni Python para instalar.
-- Si el prebuild no sirviera, habría que instalar **Build Tools de Visual
-  Studio** (carga de trabajo "Desarrollo de C++") y **Python 3**, y compilar
-  con `node-gyp` como en Linux.
-- `npm test` funciona igual: Node 22 resuelve el patrón `test/*.test.js` por
-  su cuenta (no depende del intérprete de comandos).
-- Ejecuta siempre desde la raíz del proyecto: `DATA_DIR=data` es una ruta
-  **relativa al directorio de trabajo actual**.
-
-### 2.4 macOS (Homebrew)
-
-```bash
-# 1. Node 22+
-brew install node@22
-# (o `brew install node` para la última LTS)
-# node@22 es "keg-only": para que `node` apunte a él, enlázalo
-brew link --force --overwrite node@22
-node --version
-
-# 2. Clonar e instalar
-git clone https://github.com/zendtay-studio/zlapy-chat.git
-cd zlapy-chat
-npm ci
-
-# 3. Configuración y datos
-cp .env.example .env
-mkdir -p data
-```
-
-En Apple Silicon (arm64) e Intel (x64) hay prebuild: **no hace falta Xcode ni
-compilador**.
-
----
-
-## 3. Configuración inicial
-
-### 3.1 El fichero `.env`
-
-El servidor **y** el supervisor leen el **mismo** `.env` de la raíz del
-proyecto (con `dotenv`). Las variables ya presentes en el entorno tienen
-prioridad sobre el fichero, por eso `PORT=3001 npm start` manda sobre el
-`PORT` del `.env`.
-
-```bash
-cp .env.example .env
-chmod 600 .env          # contiene la credencial del propietario: solo tú debes leerlo
-```
-
-Al arrancar, `src/config.js` también **completa el `.env` de forma aditiva**
-desde `.env.example`: si la plantilla incorpora variables o comentarios nuevos,
-se añaden solo los que falten en tu archivo. **Tus valores y textos existentes
-no se reemplazan**. La operación es idempotente y también puede ejecutarse a
-mano con `node ops/config/sync-env-example.js` (sin mostrar secretos por
-consola).
-
-Los valores se **validan al arrancar** (`src/config.js`): un valor fuera de
-rango aborta el arranque con un mensaje explícito
-(`PORT must be between 1 and 65535`). **Después de editar el `.env` hay que
-reiniciar el servidor.**
-
-#### Variables más habituales
-
-| Variable | Por defecto | Qué hace | Rango válido |
-| --- | ---: | --- | --- |
-| `PORT` | `1820` | Puerto TCP donde escucha el servidor (http **y** https en el mismo puerto) | 1–65535 |
-| `DATA_DIR` | `data` | Carpeta de `zlapy.db` y `zlapy-zlapy-blob.db`. Vacío = `data/` dentro del proyecto | Ruta (relativa al CWD) |
-| `DB_USER` | *(vacío)* | Usuario del propietario: con `DB_PASSWORD` forma la credencial de la que se deriva la llave maestra | Texto |
-| `DB_PASSWORD` | *(vacío)* | Contraseña del propietario (o usa `DB_PASSWORD_FILE` con la contraseña en un fichero `0600`) | Texto |
-| `DB_NAME` / `BLOB_DB_NAME` | `zlapy` / `zlapy-blob` | Nombre (o ruta) de las bases; el de adjuntos se deriva del principal (`<DB_NAME>-blob`) si no se fija | Texto/ruta |
-| `MESSAGE_DIRECT_CHAR_LIMIT` | `10000` | Máx. caracteres por mensaje directo | 1–1 000 000 |
-| `MESSAGE_GROUP_CHAR_LIMIT` | `15000` | Máx. caracteres por mensaje de grupo | 1–1 000 000 |
-| `STORY_TEXT_CHAR_LIMIT` | `140` | Máx. caracteres del texto de una historia | 1–100 000 |
-| `PROFILE_DESCRIPTION_CHAR_LIMIT` | `140` | Máx. caracteres de la descripción del perfil | 1–100 000 |
-| `MESSAGE_RATE_LIMIT` | `30` | Mensajes máximos por ventana, por cuenta | 1–1 000 000 |
-| `MESSAGE_RATE_WINDOW_MS` | `60000` | Tamaño de la ventana del límite (60 000 = 1 min) | 1–31 536 000 000 |
-| `RATE_LIMIT_API_PER_MINUTE` | `600` | Cota base de la API por cuenta autenticada | 1–1 000 000 |
-| `RATE_LIMIT_PUBLIC_PER_MINUTE` | `300` | Cota base pública por IP sin sesión | 1–1 000 000 |
-| `RATE_LIMIT_AUTH_PER_MINUTE` | `60` | Cota de autenticación, más estricta que el resto | 1–1 000 000 |
-| `MAX_AUDIO_DURATION_MS` | `60000` | Duración máxima de una nota de voz (60 000 = 1 min) | 1 000–3 600 000 |
-| `MAX_HTTP_BODY_BYTES` | `33554432` | Tamaño máximo del cuerpo de una petición (32 MiB) | 1 024–1 073 741 824 |
-| `MAX_MESSAGE_DATA_CHARS` | `24000000` | Máx. caracteres de datos multimedia cifrados por mensaje | ≤ `MAX_HTTP_BODY_BYTES` |
-| `MAX_GALLERY_ITEMS` | `20` | Elementos máximos por galería | 2–100 |
-| `MAX_GALLERY_ENCODED_CHARS` | `24000000` | Caracteres codificados máximos de una galería | ≤ `MAX_HTTP_BODY_BYTES` |
-| `NOTE_TTL_MS` | `86400000` | Vigencia de la nota de perfil (24 h) | 60 000–2 592 000 000 |
-| `STORY_TTL_MS` | `86400000` | Vigencia de las historias (24 h) | 60 000–2 592 000 000 |
-| `CHAT_PAGE_CACHE_TTL_MS` | `10000` | Tiempo en caché de una página de chat (0 = sin reutilizar) | 0–3 600 000 |
-| `CHAT_PAGE_CACHE_MAX` | `20` | Páginas de chat guardadas en caché (0 = sin caché) | 0–100 000 |
-| `SQLITE_CACHE_SIZE_KB` | `64000` | Caché de SQLite en KiB por conexión | 1 024–1 048 576 |
-| `SQLITE_BUSY_TIMEOUT_MS` | `5000` | Espera máxima de SQLite ante una base ocupada | 0–60 000 |
-| `AUTH_SESSION_TTL_MS` | `2592000000` | Vigencia de la sesión de autenticación (30 días) | 60 000–31 536 000 000 |
-| `CLOUDFLARE_TUNNEL_TOKEN` | *(vacío)* | Token del túnel de Cloudflare (lo usa `npm run tunnel`) | — |
-| `GIPHY_API_KEY` | *(vacío)* | Clave de Giphy para los stickers (solo la usa el servidor) | — |
-
-#### Variables del supervisor (`SUPERVISOR_*`)
-
-Solo tienen efecto sobre `npm start` (el supervisor), no sobre `node server.js`.
-
-| Variable | Por defecto | Qué hace |
-| --- | ---: | --- |
-| `SUPERVISOR_PID_FILE` | `.zlapy.pid` | Fichero donde se publica el PID del servidor hijo (se resuelve **desde la raíz del proyecto**) |
-| `SUPERVISOR_HEALTH_PATH` | `/healthz` | Ruta que el supervisor consulta para saber si el servidor está sano |
-| `SUPERVISOR_HEALTH_PORT` | *(vacío)* | Puerto inicial del health check; el supervisor lo sustituye por el que el hijo anuncia en su banner |
-| `SUPERVISOR_HEALTH_MS` | `15000` | Cada cuánto se comprueba la salud (ms) |
-| `SUPERVISOR_STARTUP_MS` | `30000` | Gracia de arranque antes de exigir respuesta (ms) |
-| `SUPERVISOR_HEALTH_TIMEOUT_MS` | `5000` | Tiempo de espera de cada comprobación (ms) |
-| `SUPERVISOR_FAILURES_BEFORE_KILL` | `3` | Fallos de salud consecutivos antes de matar y reiniciar el hijo |
-| `SUPERVISOR_BACKOFF_MS` | `1000` | Backoff inicial entre reinicios (1 s → 2 s → 4 s…) |
-| `SUPERVISOR_BACKOFF_MAX_MS` | `30000` | Backoff máximo (30 s) |
-| `SUPERVISOR_MAX_RESTARTS` | `10` | Fallos de **arranque** consecutivos antes de abrir el cortacircuito (0 = sin tope) |
-| `SUPERVISOR_HOT_CRASH_THRESHOLD` | `5` | Caídas en caliente seguidas a partir de las cuales se avisa del crash-loop (el servicio **no** se apaga) |
-| `SUPERVISOR_STABLE_MS` | `60000` | Tiempo sano necesario para olvidar la racha de fallos anteriores |
-| `SUPERVISOR_HB_MS` | `10000` | Latido servidor → supervisor por el canal IPC (ms) |
-| `SUPERVISOR_HB_STALE_MS` | `45000` | Sin latido durante ese tiempo estando en marcha → reinicio con log (event loop bloqueado) |
-| `SUPERVISOR_DEPS_INSTALL_ATTEMPTS` | `3` | Intentos de instalar dependencias que faltan (el servidor sale con 79) antes de rendirse (0 = sin tope) |
-
-### 3.2 La credencial del propietario y la llave maestra
-
-El servidor cifra los datos en reposo (mensajes, historias, adjuntos, fotos,
-nombres de grupos, claves de push, clave VAPID) con una llave maestra de
-32 bytes que **no se guarda en ningún sitio**: se deriva de la credencial
-del propietario con scrypt (N=32768, r=8, p=1).
-
-| Pieza | Dónde vive |
-| --- | --- |
-| Credencial (`DB_USER` + `DB_PASSWORD`) | El `.env` (modo `600`), o la contraseña en un fichero aparte con `DB_PASSWORD_FILE` |
-| Sal de derivación (`kdf_salt`) + parámetros | La propia base de datos (`meta`) |
-| Comprobación (`keycheck`) | La propia base de datos: un texto conocido cifrado con la llave |
-| Huella (`key_id`) y manifiesto de integridad | La propia base de datos (`meta`) |
-
-Instalación nueva: pon la credencial en el `.env` y arranca.
-
-```bash
-cp .env.example .env
-# edita .env: define DB_USER y DB_PASSWORD (mínimo 12 caracteres variados)
 npm start
 ```
 
-El servidor inicializa la base con esa credencial la primera vez. Sin ella
-el servidor **no arranca** (sale con código 78): sin la credencial no hay
-llave, y sin llave los datos no se pueden ni leer ni escribir.
+Si falta el binario, instala Build Tools y ejecuta `npm run rebuild:sqlite`. Los
+modos POSIX no equivalen a las ACL de Windows: restringe la carpeta a la cuenta
+del servicio.
 
-Gestión de la credencial (todo con el servidor **parado**):
+En macOS instala Node con `brew install node@22` y, si hace falta, `brew link
+--force --overwrite node@22`. Después clona, ejecuta `npm ci` y `npm start`;
+instala las herramientas de Xcode solo si hay que compilar.
+
+### Primer arranque
+
+Sin `.env`, se crea desde la plantilla con credencial aleatoria y modo `0600`,
+sin imprimir secretos. También se crean las carpetas y bases, y una base vacía se
+inicializa con esa credencial. Para elegirla en una base nueva:
 
 ```bash
-npm run owner -- show                                   # metadatos de la instalación
-npm run owner -- check                                  # auditoría de integridad
-npm run owner -- credential --user NUEVO --password NUEVA   # cambia la credencial: re-cifra TODO
-npm run owner -- rotate                                 # re-deriva con sal nueva (misma credencial)
-npm run owner -- export-kit --out /ruta/segura          # kit de recuperación (credencial + bases)
-npm run owner -- reset --yes                            # borra las bases (empezar de cero)
+npm run owner -- init --user NOMBRE
 ```
 
-Notas verificadas:
+Copiar la plantilla con credenciales vacías no las genera: eso solo ocurre si
+`.env` no existe. Con datos existentes, una credencial ausente o incorrecta causa
+la salida 78; restaura la original, no inicialices otra.
 
-- **La credencial es la raíz de confianza**: quien la tenga descifra la base
-  entera. Guárdala también fuera de la máquina (`export-kit` o `npm run
-  backup`, que ya copia el `.env` como `credencial.env`). Sin ella, los
-  respaldos son bytes inservibles.
-- **Cambiar `DB_USER` o `DB_PASSWORD` a mano en el `.env` no sirve**: la base
-  seguirá cifrada con la llave vieja y el servidor se negará a arrancar
-  (keycheck inválido). Hay que migrar con `npm run owner -- credential`,
-  que re-cifra todo lo que dependía de la llave anterior (auth_keys, material
-  de grupos, VAPID, campos sueltos y adjuntos) y escribe el `.env` **al
-  final**: si algo falla a mitad, la credencial anterior sigue en pie y el
-  arranque falla de forma explícita, nunca con datos a medias.
-- **La migración exige el servidor parado**: un proceso vivo seguiría
-  cifrando con la llave anterior (la desincronización que costó una cuenta en
-  esta instalación). El vigilante del `.env` también lo detecta: si la
-  credencial cambia con el servidor en marcha, el proceso sale con código 75
-  y el supervisor lo reinicia con la nueva.
-- Si la base **ya tiene datos** y la credencial no abre (o falta), el arranque
-  **aborta** con el código 78 en vez de derivar una llave nueva en silencio.
-  Es a propósito: una llave nueva haría ilegibles todos los mensajes,
-  historias y adjuntos. Restaura la credencial del kit de recuperación.
-- Las **contraseñas de las cuentas** de los usuarios no tienen nada que ver
-  con esta credencial: van con bcrypt (coste 10) en la propia base.
+## 3. Configuración y credencial
 
-### 3.3 Permisos recomendados
+Servidor, supervisor y scripts cargan `.env` desde la raíz; el entorno del proceso
+tiene prioridad (`PORT=3001 npm start` es un cambio temporal). Reinicia tras
+editar. La plantilla completa está en [`.env.example`](../.env.example) y los
+valores esenciales se resumen en el [README](../README.md#configuración-esencial).
+
+La sincronización es **aditiva e idempotente**: añade variables y comentarios
+ausentes sin reemplazar contenido. Para ejecutarla manualmente:
 
 ```bash
-chmod 600 .env            # contiene la llave maestra
-chmod 700 data            # bases + adjuntos
+node ops/config/sync-env-example.js
+chmod 600 .env
 ```
 
-El **servidor los aplica solo en cada arranque** (`server.js`, paso 0): fija
-`0700` en `data/` (y en `data2/`/`backups/` si existen) y `0600` en
-`zlapy.db`, `zlapy-zlapy-blob.db` y `.env`. Los comandos de arriba solo hacen falta si
-copias bases a mano fuera del servidor. El `chmod` es *best-effort*: si el
-sistema no lo permite (otro dueño, sistema sin permisos POSIX), el servidor
-sigue arrancando y lo dice por el log (`[perms] no se pudieron ajustar …`);
-romper el arranque por un permiso sería peor que avisar. El fichero de PID
-del supervisor (`.zlapy.pid`) se escribe con `0600` desde el código.
+`DATA_DIR` relativo se resuelve desde el directorio de trabajo. Los nombres
+predeterminados son `zlapy.db` y `zlapy-blob.db`; una instalación antigua puede
+conservar `blob.db`. Ambas bases usan WAL, `synchronous=FULL` y
+`SQLITE_BUSY_TIMEOUT_MS=15000` (ajustable entre 0 y 60000). Los límites numéricos
+se validan al arrancar. Push espera 5 segundos y Giphy, 8 segundos.
 
----
-
-## 4. Arranque
-
-### 4.1 `npm start` (con supervisor)
+No edites `DB_USER`, `DB_PASSWORD` o `DB_PASSWORD_FILE` para migrar una base. Con
+el servidor detenido:
 
 ```bash
-npm start
+npm run owner -- credential --user NUEVO --password NUEVA
+npm run owner -- rotate
+npm run owner -- export-kit --out /ruta/segura
 ```
 
-`npm start` ejecuta primero `node ops/install/ensure-deps.js` (si falta alguna
-librería, la instala; si el servidor saliera con 79 por una lib ausente, el
-supervisor la instala y relanza una sola vez) y luego
-`ops/runtime/supervisor.js`, que **no** es el servidor: es el guardián que lo
-mantiene vivo.
+`credential` re-cifra y escribe `.env` al final; `rotate` cambia la sal conservando
+la credencial. `--password` puede quedar en el historial y la lista de procesos.
+Usa `npm run owner -- check` y `npm run owner -- unlock-check` para verificar.
 
-| Qué hace el supervisor | Detalle |
-| --- | --- |
-| Lanza el hijo | `node server.js` desde la raíz del proyecto, heredando el entorno (y por tanto el `.env`) |
-| Publica el PID | Lo escribe en `SUPERVISOR_PID_FILE` (por defecto `.zlapy.pid`) |
-| Watchdog de salud | Cada `SUPERVISOR_HEALTH_MS` (15 s) consulta `/healthz`; **solo un 2xx cuenta como sano** |
-| Reinicio por cuelgue | Tras `SUPERVISOR_FAILURES_BEFORE_KILL` (3) fallos seguidos, envía `SIGTERM` y, si el hijo no muere, `SIGKILL` a los 5 s |
-| Backoff exponencial | 1 s → 2 s → 4 s … hasta `SUPERVISOR_BACKOFF_MAX_MS` (30 s). Nunca hay bucle rápido |
-| Detecta el puerto real | Lee del banner del hijo (`✅ Zlapy (SQLite) en el puerto NNNN`) el puerto en el que escucha y sondea ese, no el supuesto |
-| Cortacircuito | Tras `SUPERVISOR_MAX_RESTARTS` (10) **fallos de arranque** consecutivos, deja de reintentar y sale con **código 70** |
-| Caída en caliente | Si el hijo ya servía y se cae, **siempre** reinicia con el backoff topado y avisa a partir de 5 caídas seguidas. **Nunca deja el servicio apagado** |
-| Apagado ordenado | Propaga `SIGTERM`/`SIGINT` al hijo, que cierra sockets, hace checkpoint del WAL y cierra las bases |
+Sin la credencial original no se recupera el contenido. Guarda credencial y bases
+juntas, fuera de la máquina y con acceso restringido; restaura también cualquier
+archivo usado por `DB_PASSWORD_FILE`.
 
-> Ejecuta `npm start` **en un solo sitio**. Dos instancias se pelean el puerto:
-> la segunda muere con «Puerto ocupado» y su supervisor entra en backoff hasta
-> abrir el cortacircuito.
+## 4. Arranque, verificación y servicios
 
-### 4.2 `node server.js` (sin supervisor, para depurar)
+`npm start` ejecuta preflight y supervisor: vigila `/healthz` y latidos IPC,
+reinicia con backoff y distingue arranque fallido de caída en caliente. Ejecuta
+`node server.js` para depurar sin reintentos.
 
 ```bash
-node server.js
+curl http://localhost:1820/healthz
+curl -k https://localhost:1820/healthz   # si HTTPS está activo
 ```
 
-Arranca el servidor directamente: **sin watchdog, sin backoff y sin
-reinicio automático**. Es el modo indicado para depurar, para ver la traza
-completa de un fallo de arranque o para correr bajo un gestor externo que ya
-haga de supervisor.
+Espera HTTP 200 y `"ok":true`; `/healthz` consulta ambas bases sin exigir sesión.
 
-Diferencias prácticas:
+### Firewall y red local
 
-- Un fallo de arranque se ve completo en pantalla (el supervisor lo envuelve en
-  reintentos con backoff).
-- Si el proceso se cae, **se queda caído**.
-- Las variables `SUPERVISOR_*` no tienen efecto.
-- El cierre es el mismo: `SIGTERM`/`SIGINT` cierran sockets, hacen checkpoint
-  del WAL y cierran las bases.
-
-### 4.3 Abrir el firewall (Linux)
-
-El servidor escucha en `0.0.0.0`, así que hace falta permitir el puerto para
-que el móvil pueda entrar.
+El modo `auto` escucha en todas las interfaces. Permite el puerto solo en la red
+que corresponda:
 
 ```bash
-# ufw (Debian/Ubuntu)
 sudo ufw allow 1820/tcp
-sudo ufw status
-
-# firewalld (Fedora)
-sudo firewall-cmd --permanent --add-port=1820/tcp
-sudo firewall-cmd --reload
+# firewalld:
+sudo firewall-cmd --permanent --add-port=1820/tcp && sudo firewall-cmd --reload
 ```
 
-En un servidor **en internet** no abras el puerto directamente: usa el túnel
-de Cloudflare (§11.3).
+Otro dispositivo debe alcanzar `http://IP-DEL-SERVIDOR:1820/healthz`. Revisa WiFi,
+aislamiento de clientes y firewall. No expongas el puerto directamente a Internet.
 
-### 4.4 Qué direcciones imprime
+### systemd
 
-Al arrancar, el servidor muestra sus URLs:
-
-```
-✅ Zlapy (SQLite) en el puerto 1820
-
-   Esta PC:   http://localhost:1820
-   Tu red:    http://192.168.1.50:1820
-
-   HTTPS:
-               https://localhost:1820
-               https://192.168.1.50:1820
-```
-
-El bloque de HTTPS solo aparece si existen `cert.pem` y `key.pem` en la raíz
-del proyecto (§7).
-
----
-
-## 5. Ejecutar como servicio
-
-El supervisor **ya es** un autoarranque: reinicia el servidor si se cae. Un
-gestor externo (systemd, pm2, Termux:Boot) solo hace falta si quieres que
-**el propio supervisor** reviva tras un reinicio del sistema.
-
-> No ejecutes `npm start` a mano y a la vez como servicio: Pelean por el puerto.
-
-### 5.1 systemd (Linux)
-
-Crea un usuario de sistema y el directorio de la aplicación:
-
-```bash
-sudo adduser --system --group --home /opt/zlapy-chat --no-create-home zlapy
-sudo git clone https://github.com/zendtay-studio/zlapy-chat.git /opt/zlapy-chat
-sudo chown -R zlapy:zlapy /opt/zlapy-chat
-```
-
-Fichero de unidad `/etc/systemd/system/zlapy.service`:
+Crea `/etc/systemd/system/zlapy.service`, ajustando usuario y rutas:
 
 ```ini
 [Unit]
-Description=Zlapy (chat local Node.js + SQLite)
-Documentation=https://github.com/zendtay-studio/zlapy-chat
+Description=Zlapy
 After=network-online.target
 Wants=network-online.target
-# Evita una tormenta de reinicios si el servicio falla en bucle:
-# como máximo 10 arranques en 5 minutos.
 StartLimitIntervalSec=300
 StartLimitBurst=10
 
@@ -636,16 +193,9 @@ Type=simple
 User=zlapy
 Group=zlapy
 WorkingDirectory=/opt/zlapy-chat
-Environment=NODE_ENV=production
 ExecStart=/usr/bin/npm start --prefix /opt/zlapy-chat
 Restart=always
 RestartSec=5
-# El cortacircuito del supervisor sale con código 70 (EX_SOFTWARE).
-# Con Restart=always systemd lo reinicia igualmente; si prefieres que el
-# servicio se quede parado cuando el cortacircuito salta, usa esta línea
-# en lugar de Restart=always:
-#   Restart=on-failure
-#   SuccessExitStatus=70
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=zlapy
@@ -654,471 +204,196 @@ SyslogIdentifier=zlapy
 WantedBy=multi-user.target
 ```
 
-Activar y arrancar:
+Comprueba npm con `command -v npm`. El usuario necesita leer el proyecto y escribir
+datos, respaldos, `.env` y PID. Activa y revisa:
 
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now zlapy
 systemctl status zlapy
-journalctl -u zlapy -f          # logs en vivo
-journalctl -u zlapy -n 100      # últimas 100 líneas
-sudo systemctl restart zlapy    # reiniciar (lee el .env otra vez)
-sudo systemctl stop zlapy
+journalctl -u zlapy -f
 ```
 
-Notas:
+No combines el servicio con otro `npm start`. Para mantenimiento, ejecuta
+`sudo systemctl stop zlapy`.
 
-- `WorkingDirectory` **importa**: el `.env`, el `DATA_DIR=data` relativo y el
-  `.zlapy.pid` se resuelven desde la raíz del proyecto. `ExecStart` debe usar
-  la ruta **absoluta** de Node (compruébala con `which node`).
-- `Environment=NODE_ENV=production` es la convención habitual, pero **el código
-  de Zlapy no lee `NODE_ENV`**: no cambia ningún comportamiento. No lo uses
-  como si activara un "modo producción".
-- El usuario de servicio necesita **escritura** en el directorio del proyecto
-  (`data/`, `.zlapy.pid`) y lectura del `.env` (que contiene la llave
-  maestra).
-- El supervisor escribe el PID del hijo en `/opt/zlapy-chat/.zlapy.pid`.
-
-### 5.2 pm2
+### pm2
 
 ```bash
-npm i -g pm2
-
+npm install --global pm2
 cd /ruta/zlapy-chat
 pm2 start npm --name zlapy -- start
-
-pm2 status              # estado
-pm2 logs zlapy          # logs en vivo
-pm2 monit               # monitor
-pm2 restart zlapy       # reiniciar (relee el .env)
-pm2 save                # guarda la lista de procesos
-pm2 startup             # imprime la línea que hay que ejecutar con sudo
+pm2 save
+pm2 startup       # ejecuta el comando que imprime
+pm2 logs zlapy
 ```
 
-`pm2 startup` imprime un comando `sudo env PATH=... pm2 startup systemd -u
-$USER --hp $HOME`: **ejecuta esa línea tal cual** (con `sudo`) para que pm2 se
-arranque al iniciar el sistema, y luego `pm2 save` otra vez.
+Usa `pm2 stop zlapy` para mantenimiento y `pm2 restart zlapy` tras configurar.
 
-Notas:
+### Termux:Boot
 
-- Lanza pm2 **desde la raíz del proyecto**: pm2 usa ese directorio de trabajo
-  y de ahí se resuelve el `.env` y el `DATA_DIR=data` relativo.
-- `pm2 restart zlapy` reinicia el supervisor, que a su vez reinicia el hijo.
-- Para quitarlo: `pm2 delete zlapy && pm2 save`.
-- pm2 no aplica el `.env` por sí mismo: lo carga `dotenv` dentro del proceso,
-  igual que en el resto de casos.
-
-### 5.3 Termux:Boot (autoarranque en Android)
-
-1. Instala la app **Termux:Boot** desde F-Droid (es una app aparte).
-2. Crea el script de arranque:
+Instala Termux:Boot desde F-Droid, ajusta la ruta y prueba este script:
 
 ```bash
 mkdir -p ~/.termux/boot
 cat > ~/.termux/boot/zlapy <<'EOF'
 #!/data/data/com.termux/files/usr/bin/bash
-# Autoarranque de Zlapy en Android (Termux:Boot)
 cd "$HOME/zlapy-chat" || exit 1
-# Mantiene el dispositivo despierto mientras el servidor corre:
 termux-wake-lock 2>/dev/null
 exec npm start
 EOF
 chmod +x ~/.termux/boot/zlapy
 ```
 
-3. Reinicia el móvil (o abre la app Termux:Boot y ejecuta el script) y comprueba
-   que el servidor responde:
+## 5. HTTPS y red
+
+Genera un certificado autofirmado incluyendo todas las IP o nombres usados:
 
 ```bash
-curl http://localhost:1820/healthz
+openssl req -x509 -newkey rsa:2048 -sha256 -days 397 -nodes \
+  -keyout key.pem -out cert.pem -subj "/CN=zlapy" \
+  -addext "subjectAltName=DNS:localhost,IP:127.0.0.1,IP:192.168.1.50" \
+  -addext "basicConstraints=critical,CA:TRUE"
+chmod 600 key.pem cert.pem
 ```
 
-Notas:
+Sustituye la IP de ejemplo y renueva el certificado si cambian IP o nombres;
+reinicia después. Para quitar el aviso puedes instalarlo como CA de confianza en
+el dispositivo, asumiendo ese riesgo.
 
-- El script debe ser **ejecutable** (`chmod +x`), si no Termux:Boot lo ignora.
-- Ajusta la ruta a la tuya si clonaste el repositorio en otro sitio.
-- `termux-wake-lock` evita que Android suspenda el proceso; sin él, el
-  servidor puede morir con la pantalla apagada.
-- Si tu `.env` usa `DATA_DIR` dentro de `/sdcard`, recuerda que Android 11+
-  restringe el acceso: usa el almacenamiento interno de Termux
-  (`~/zlapy-chat/data`) para los datos.
+Con ambos archivos, HTTP y HTTPS comparten puerto. `FORCE_TLS=true` redirige HTTP
+a HTTPS (excepto `/healthz`) y marca las cookies `Secure`. Un proxy local puede
+declarar `X-Forwarded-Proto: https`; solo se confía en ella desde loopback.
 
----
+Sin certificados, el forzado queda degradado y solo permite autenticación local.
+Para HTTP deliberado en una LAN de confianza usa `FORCE_TLS=false`; las sesiones
+remotas caducan antes.
 
-## 6. Verificación de la instalación
+> El cifrado de cuerpos y WebSocket no protege cookies, cabeceras ni GET ni evita
+> la sustitución activa de claves. TLS es necesario para llamadas y push.
 
-### 6.1 Health check
+HTTPS envía HSTS por un año: si retiras certificados, restáuralos o limpia ese
+estado en el navegador.
+
+## 6. Respaldos y restauración
 
 ```bash
-curl http://localhost:1820/healthz
-```
-
-Respuesta esperada (200):
-
-```json
-{"ok":true,"schema":12,"uptime":42}
-```
-
-- `ok: true` → el servidor responde **y ambas bases** (`zlapy.db` y `zlapy-zlapy-blob.db`)
-  contestan a una consulta.
-- `schema: 3` → versión del esquema de la base de datos.
-- `uptime` → segundos desde el arranque.
-
-Si la base no responde, el mismo endpoint devuelve **503**:
-
-```json
-{"ok":false,"error":"database unavailable"}
-```
-
-`/healthz` es **público** y no expone datos de usuarios.
-
-Con HTTPS:
-
-```bash
-curl -k https://localhost:1820/healthz
-```
-
-### 6.2 En el navegador
-
-1. Abre `http://localhost:1820` (en el PC) o `http://<IP-del-PC>:1820` (en el
-   móvil, misma WiFi).
-2. Pulsa **«Crear cuenta»**, elige un usuario (**3–24 caracteres**, minúsculas,
-   números, `_`, `.` o `-`) y una contraseña (de **8 a 128** caracteres).
-3. Entra y comprueba que la lista de contactos aparece vacía.
-
-Para las **llamadas con cámara/micrófono** en el móvil usa la dirección
-**HTTPS** (ver §7): los navegadores solo dan cámara y micrófono en un
-*contexto seguro*.
-
-### 6.3 Suite de pruebas
-
-```bash
-npm test
-```
-
-Ejecuta `node --test --require ./test/bootstrap.js "test/**/*.test.js"` (Node
-expande el glob recursivo; funciona igual en PowerShell, CMD y shells Unix). Las
-pruebas están partidas por dominios en subcarpetas de `test/`. La suite levanta
-servidores en puertos libres con directorios de datos temporales, no toca tu
-`data/` y no interfiere con el servidor en marcha.
-
-Referencia actual: **292 casos en 56 ficheros, todas en verde** (~4 min).
-
----
-
-## 7. Certificados HTTPS
-
-### 7.1 Por qué hacen falta
-
-| Motivo | Detalle |
-| --- | --- |
-| Cámara y micrófono | Los navegadores solo los conceden en un **contexto seguro**: `https://` o `localhost`. En el móvil, `http://192.168.x.x` **no** es contexto seguro → las llamadas fallan |
-| Notificaciones push | La **Push API** y los *service workers* exigen un origen seguro: `https://` (o `localhost`). Sin HTTPS no hay push |
-| HSTS | Cuando la conexión va cifrada, el servidor envía `Strict-Transport-Security: max-age=31536000` |
-
-### 7.2 Generación
-
-El servidor sirve **http y https en el mismo puerto**: un despachador lee el
-primer byte de la conexión y, si es `0x16` (el inicio de un *handshake* TLS),
-lo pasa al servidor HTTPS (`src/http/servers.js`). Por eso no hay dos puertos
-ni dos direcciones que recordar.
-
-```bash
-cd /ruta/zlapy-chat
-openssl req -x509 -newkey rsa:2048 -nodes -keyout key.pem -out cert.pem -days 365 -subj "/CN=zlapy"
-```
-
-Resultado:
-
-- `cert.pem` y `key.pem` en la **raíz del proyecto**.
-- Si existen ambos, el arranque activa HTTPS automáticamente y el banner
-  muestra el bloque `HTTPS:`.
-- Si borras o renuevas los certificados, **reinicia el servidor**.
-
-Regenerar el certificado (por ejemplo, tras 365 días):
-
-```bash
-openssl req -x509 -newkey rsa:2048 -nodes -keyout key.pem -out cert.pem -days 365 -subj "/CN=zlapy"
-```
-
-> `cert.pem` y `key.pem` están en `.gitignore`: no se suben al repositorio.
-> En Termux: `pkg install openssl`.
-
-### 7.3 Aceptar el certificado autofirmado
-
-El certificado es autofirmado, así que el navegador mostrará un aviso de
-seguridad (y además puede avisar de que el nombre `zlapy` no coincide con la
-IP o el dominio por el que entras):
-
-| Navegador | Cómo continuar |
-| --- | --- |
-| Chrome / Edge (Android, escritorio) | «Avanzado» → «Continuar a … (unsafe)» |
-| Firefox | «Avanzado» → «Aceptar el riesgo y continuar» |
-| Safari (iOS/macOS) | «Mostrar detalles» → «visitar este sitio web» → «Aceptar» |
-
-En iOS, si instalaste el certificado en un perfil y no te fía, hay que
-activarlo en **Ajustes → General → VPN e gestión de dispositivos → instalar el
-certificado**.
-
-> **Importante:** una vez que visitas la versión HTTPS, el navegador guarda la
-> directiva HSTS (`max-age=31536000`). Si después quitas `cert.pem`/`key.pem`,
-> el navegador seguirá forzando HTTPS durante ese periodo y la versión HTTP
-> dejará de funcionar hasta que expire la caché HSTS.
-
----
-
-## 8. Copias de seguridad y restauración
-
-### 8.1 Crear un respaldo
-
-```bash
-npm run backup                 # → backups/zlapy-backup-<fecha-hora>/
-npm run backup -- /ruta/dir    # destino a elegir (si ya existe, debe estar vacío)
-```
-
-Qué hace (`ops/backup/backup.js`):
-
-| Paso | Detalle |
-| --- | --- |
-| Copia `zlapy.db` | Con la API `backup()` de SQLite: **consistente aunque el servidor esté corriendo y con WAL activo** |
-| Copia `zlapy-zlapy-blob.db` | Igual (adjuntos deduplicados por hash) |
-| Credencial | Copia el `.env` como `credencial.env`: sin `DB_USER` + `DB_PASSWORD` el respaldo es inservible |
-| Permisos | Directorio `0700`, ficheros `0600` (contienen usuarios, sesiones, hashes y mensajes cifrados) |
-| Destino ocupado | Si la carpeta existe y **no está vacía**, aborta: no sobrescribe nada |
-
-La credencial y las bases **siempre van juntas**: sin `DB_USER` +
-`DB_PASSWORD`, los mensajes, historias y adjuntos del respaldo son
-**irrecuperables**. Guarda el respaldo **fuera** del disco de la aplicación
-(por ejemplo, en `/sdcard`, en un disco externo o en otro equipo).
-
-> Copiar solo el `.db` con el servidor corriendo **no** es un respaldo válido:
-> el WAL queda fuera. Usa siempre `npm run backup`.
-
-### 8.2 Restaurar
-
-1. **Para el servidor** (`Ctrl+C` o `SIGTERM`; el cierre es ordenado y hace
-   checkpoint del WAL):
-   ```bash
-   # con systemd:  sudo systemctl stop zlapy
-   # con pm2:      pm2 stop zlapy
-   ```
-2. **Copia las bases** del respaldo a la carpeta de datos (`DATA_DIR`, por
-   defecto `data/`):
-   ```bash
-   cp backups/zlapy-backup-<fecha>/zlapy.db data/zlapy.db
-   cp backups/zlapy-backup-<fecha>/zlapy-zlapy-blob.db data/zlapy-zlapy-blob.db
-   ```
-   Borra los ficheros `-wal` y `-shm` que quedaron en `data/` (son de la base
-   anterior):
-   ```bash
-   rm -f data/zlapy.db-wal data/zlapy.db-shm data/zlapy-zlapy-blob.db-wal data/zlapy-zlapy-blob.db-shm
-   ```
-3. **Restaura la credencial** (el `.env` del respaldo):
-   ```bash
-   cp <respaldo>/credencial.env .env
-   chmod 600 .env
-   ```
-4. **Arranca y comprueba**:
-   ```bash
-   npm start
-   curl http://localhost:1820/healthz     # → {"ok":true,"schema":12,...}
-   ```
-   Si el arranque falla con *"La credencial no corresponde a esta base de
-   datos: el keycheck no descifra"*, es que el paso 3 no se hizo bien.
-
----
-
-## 9. Actualizar
-
-```bash
-cd /ruta/zlapy-chat
-
-# 1. Respaldo antes de tocar nada
 npm run backup
-
-# 2. Actualizar el código
-git pull
-
-# 3. Reinstalar las dependencias (usa el package-lock.json versionado)
-npm ci
-
-# 4. Reiniciar
-sudo systemctl restart zlapy     # o: pm2 restart zlapy / Ctrl+C y npm start
+npm run backup -- /ruta/destino-vacio
 ```
 
-### Aviso importante: qué migra y qué no
+SQLite copia consistentemente ambas bases, incluso con el servidor activo, y `.env`
+se guarda como `credencial.env`. El destino debe estar vacío; copiar un `.db` activo
+a mano puede omitir su WAL. Guarda otra copia fuera del servidor y pruébala.
 
-El **esquema** se aplica de forma idempotente al arrancar (`CREATE TABLE IF
-NOT EXISTS`) y **sí tiene migraciones por pasos** (v9→v12: suelta `sessions`
-y `users.auth_version`, añade `calls.peer_hash`, reconstruye la PK de `calls`
-y las columnas que se añadieron después) — corren solas y sin perder datos.
+El destino recibe `0700` y sus archivos `0600`. Al arrancar se endurecen
+recursivamente los directorios (`0700`) y archivos (`0600`) de `backups/`, sin
+seguir symlinks. Los errores de `chmod` se registran sin impedir el arranque.
 
-Lo que **no** se migra es el **formato de cifrado**: si cambia, el servidor
-**se niega a arrancar**:
+### Restaurar la configuración predeterminada
 
-- `Formato de cifrado de la base no compatible (crypto_version=N)` →
-  restaura la base desde un respaldo de `backups/` o arranca con una base
-  nueva.
-- `Database crypto version is incompatible with this server.` → mismo caso.
-- `Database schema is incompatible: messages.<columna> is missing.` → la base
-  es de un esquema anterior: restaura o empieza de cero.
-
-Planifica las actualizaciones con esta regla: **si el esquema ha cambiado,
-restaurar desde un respaldo o empezar con una base vacía**. No existe un
-"upgrade" automático.
-
-NO existe `npm run migrate:mtproto` ni un "upgrade" automático del contenido: el
-servidor lee los dos formatos de cifrado y reescribe siempre el actual, así que
-el histórico se va convirtiendo solo a medida que se reescribe. Para re-cifrar
-**todo** de golpe (o cambiar la credencial) está `npm run owner -- credential`,
-que respalda antes y revierte compensado si algo falla:
+Detén el servicio y, desde la raíz, repón bases y credencial del mismo respaldo:
 
 ```bash
-npm run owner -- credential     # cambio de credencial con re-cifrado completo
+cp backups/zlapy-backup-FECHA/zlapy.db data/zlapy.db
+cp backups/zlapy-backup-FECHA/zlapy-blob.db data/zlapy-blob.db
+cp backups/zlapy-backup-FECHA/credencial.env .env
+rm -f data/zlapy.db-wal data/zlapy.db-shm \
+  data/zlapy-blob.db-wal data/zlapy-blob.db-shm
+chmod 600 .env data/zlapy.db data/zlapy-blob.db
+chmod 700 data
+npm start
 ```
 
-Conviene **parar el servidor** mientras lo hace. Es idempotente y verifica cada
-registro antes de tocarlo.
+Con el servidor arrancado, ejecuta `curl http://localhost:1820/healthz` en otra
+terminal. Sustituye `FECHA`; adapta nombres si cambiaste `DB_NAME`/`BLOB_DB_NAME`
+o usas la base antigua `blob.db`. Restaura también el archivo de `DB_PASSWORD_FILE`,
+si existe: sin la credencial original el respaldo es irrecuperable.
 
----
+Con el servidor parado, `npm run owner -- export-kit --out DIR` copia credencial,
+bases y WAL/SHM. `npm run owner -- reset --yes` borra las bases: no es recuperación.
 
-## 10. Diagnóstico
+## 7. Cloudflare Tunnel
 
-| Síntoma | Causa | Solución |
-| --- | --- | --- |
-| `❌ Puerto 1820 ocupado. Usa PORT=3001 npm start` | `EADDRINUSE` en el despachador (`src/http/servers.js`): hay **otro Zlapy** (o el supervisor anterior) escuchando | Para el otro proceso (`systemctl stop zlapy`, `pm2 stop zlapy`) o cambia el puerto **en el `.env`** (`PORT=3001`) y reinicia. `PORT=3001 npm start` solo vale para esa ejecución puntual |
-| El supervisor entra en bucle de «fallo de arranque» | El hijo muere antes de servir: casi siempre un error de configuración o de la base | Mira el error del hijo en la salida del supervisor; el mensaje concreto está unas líneas más arriba |
-| `CIRCUITO ABIERTO: 10 fallos de arranque consecutivos …` y el proceso sale con **código 70** | Se agotó `SUPERVISOR_MAX_RESTARTS` (10) porque el servidor **nunca llegó a servir** | **Corrige la causa y arranca a mano** (`node server.js` para ver el error completo). Con systemd y `Restart=always`, systemd lo reintentará: usa `Restart=on-failure` + `SuccessExitStatus=70` si quieres que se quede parado |
-| `CAÍDA EN CALIENTE (code=…, uptime=…) … El servicio no se queda apagado.` | El servidor ya servía y se ha caído. El supervisor reinicia **siempre** con el backoff topado y avisa a partir de 5 caídas | Mira el error del hijo (el supervisor reenvía su stdout/stderr tal cual). Suele ser un `uncaughtException` o una base inaccesible |
-| `sin latido del hijo desde hace 45s` / `salud fallida x3 …` | El proceso está **vivo pero colgado**: el event loop bloqueado (o la base no responde) | Comprueba a mano `curl http://localhost:1820/healthz`; si el puerto del `.env` no es el real, ajusta `SUPERVISOR_HEALTH_PORT` (el supervisor lo corrige solo con el banner, pero solo si el hijo llega a imprimirlo) |
-| `Cannot open database because the directory does not exist` | La carpeta de datos no existe: SQLite **no crea directorios** | `mkdir -p data` (o `mkdir -p "$DATA_DIR"`); el directorio debe existir **antes** de arrancar |
-| `No se pudo desbloquear la base con la credencial del propietario` (salida 78) | `DB_USER`/`DB_PASSWORD` faltan en el `.env` o no son los de esta base (`src/crypto/owner-key.js`) | **Restaura la credencial del kit de recuperación en el `.env`** (no inventes una nueva: dejaría ilegibles todos los datos cifrados) |
-| `Formato de cifrado de la base no compatible (crypto_version=N)` / `Database crypto version is incompatible with this server.` | La base es de una versión anterior del formato de cifrado. El formato **no** se migra | Restaura la base desde `backups/` o arranca con una base nueva (mueve `data/` a otra parte) |
-| `Database schema is incompatible: messages.<columna> is missing.` | La base no tiene el esquema v12 | Igual que arriba: restaurar o empezar de cero |
-| `[deps] Faltan dependencias del proyecto: …` (salida **79**) | Falta una librería de `package.json` | `npm run deps` (con `npm start`, el supervisor lo hace solo: instala y relanza una vez, hasta `SUPERVISOR_DEPS_INSTALL_ATTEMPTS`) |
-| `[uncaughtException] se sigue sirviendo: …` | Un error aislado en caliente: no es fatal (no es pérdida de disco ni base corrupta), así que el servidor sigue en pie | Revisa `data/log/errors.log` (pila completa, girado a 2 MB). Si se repite, arréglalo: el watchdog del supervisor reinicia si el proceso se zombieiza |
-| `No se encuentra el binario nativo de better-sqlite3 para android-arm64` (o `linux-x64`, …) | El `postinstall` del proyecto comprueba que exista el binario nativo y no lo encuentra | En Linux/macOS/Windows con arquitectura soportada: `npm install` descarga el prebuild; si falla, instala el toolchain (python3, make, g++) y compila (ver §2.1). **En Termux hay que compilar** (ver §2.2) |
-| `npm rebuild better-sqlite3` dice «rebuilt dependencies successfully» pero no compila nada (tampoco con `--build-from-source`) | `better-sqlite3@13.0.3` **no tiene script `install`** y declara `"gypfile": false`: no hay nada que `npm rebuild` pueda ejecutar | Compila explícitamente: `cd node_modules/better-sqlite3 && npm exec -- node-gyp rebuild --release --force_build=1` |
-| Error de `node-gyp` al instalar (`Python executable not found`, `g++ not found`, `make: command not found`) | Falta el toolchain de compilación | Debian/Ubuntu: `sudo apt install python3 make g++ build-essential`; Fedora: `sudo dnf install python3 make gcc-c++`; Arch: `sudo pacman -S base-devel python`; Termux: `pkg install python make clang sqlite` |
-| `Esta base de datos ya tiene datos` (al hacer `npm run owner -- init`) | `init` es sólo para bases nuevas | Para cambiar la credencial de una base con datos: `npm run owner -- credential`. Para empezar de cero: `npm run owner -- reset --yes` |
-| `Hay un servidor de Zlapy en marcha (pid …)` | La migración de credencial re-cifra las bases y el proceso vivo seguiría cifrando con la llave anterior | Para el servidor (`Ctrl+C`) y vuelve a ejecutar el comando |
-| `No se encontró 'cloudflared' en el PATH.` | `cloudflared` no está instalado | Instálalo: <https://developers.cloudflare.com/cloudflared/install/> |
-| `Falta CLOUDFLARE_TUNNEL_TOKEN en .env` | El token del túnel no está en el `.env` | `CLOUDFLARE_TUNNEL_TOKEN=eyJ...` en el `.env` (panel de Cloudflare → Zero Trust → Networks → Tunnels) |
-| `No existe zty.yml. Cópialo desde el ejemplo:` | Falta la configuración del túnel | `cp zty.yml.example zty.yml` y edita tu dominio en `ingress` |
-| El túnel levanta pero nadie entra | La regla `ingress` de `zty.yml` apunta a un puerto que no es el del servidor, o el dominio no resuelve | Comprueba `service: http://localhost:1820` en `zty.yml` y que `PORT` coincide |
-| La **cámara o el micrófono** no funcionan en el móvil | `http://` no es contexto seguro | Usa **HTTPS** (§7) y acepta el certificado autofirmado |
-| Las **notificaciones push** no llegan | La Push API exige un origen **HTTPS**, un navegador con soporte de Push, permiso concedido y que el sistema operativo no limite la actividad en segundo plano | Sirve por HTTPS, activa las notificaciones en Ajustes y prueba el envío; el servidor registra los fallos en `[push] N/M notificaciones fallidas` |
-| El navegador insiste en HTTPS y `http://` ya no responde | HSTS: al visitar la versión HTTPS el servidor envía `Strict-Transport-Security: max-age=31536000` | Vuelve a servir los certificados (`cert.pem` + `key.pem`) o espera a que expire la caché HSTS del navegador |
-| `401 {"error":"authentication required"}` al llamar a una ruta | La sesión no está iniciada o expiró | Inicia sesión en el navegador; las sesiones duran `AUTH_SESSION_TTL_MS` (30 días por defecto) |
-| `403 {"error":"cross-origin request rejected"}` | La comprobación de origen: el `Origin` de la petición no coincide con el `Host` | Accede siempre por la **misma URL** que usaste para iniciar sesión (mismo host y puerto, `http` o `https` sin cambiar a mitad de sesión) |
-| Los datos aparecen en un sitio y las bases en otro | `DATA_DIR=data` es una ruta **relativa al directorio de trabajo** | Arranca siempre desde la raíz del proyecto; en un servicio, `WorkingDirectory` debe apuntar a ella |
-| Dos servidores se matan entre sí | `npm start` ejecutado en dos sitios a la vez | Deja una sola instancia: o el supervisor, o el servicio (systemd/pm2), nunca ambos |
+Publicar en Internet cambia el modelo de riesgo: restringe el acceso con
+Cloudflare Access/WAF y utiliza HTTPS. El servidor puede descifrar los mensajes;
+el túnel no añade cifrado de extremo a extremo ni sustituye los respaldos.
 
----
-
-## 11. Red local y exposición a internet
-
-### 11.1 Averiguar la IP del PC
+1. Instala `cloudflared`.
+2. Define `CLOUDFLARE_TUNNEL_TOKEN` **únicamente en `.env`**.
+3. Crea la configuración sin incluir el token:
 
 ```bash
-hostname -I
-# o
-ip addr show | grep "inet "
-# o
-ip -4 addr show scope global
+cp zty.yml.example zty.yml
+chmod 600 zty.yml .env
 ```
 
-El servidor ya las imprime al arrancar, en el bloque `Tu red:` del banner.
-
-### 11.2 Por qué el móvil y el PC deben estar en la misma red
-
-- El servidor escucha en `0.0.0.0`, así que responde a cualquier IP que
-  llegue al puerto 1820.
-- El móvil tiene que **alcanzar esa IP**: misma WiFi/router, sin «aislamiento
-  de clientes» activado en el router y sin un firewall que bloquee el puerto.
-- Desde fuera de tu red, la IP privada (`192.168.x.x`, `10.x.x.x`) **no
-  existe**: no hay ruta. O usas una VPN hacia tu casa, o expones el servicio
-  por un túnel.
-
-Comprueba desde el móvil (con la app de terminal o el navegador):
-
-```
-http://192.168.1.50:1820/healthz
-```
-
-Si no responde, el problema es de red (WiFi distinto, aislamiento del router,
-firewall), no de Zlapy.
-
-### 11.3 Exponerlo a internet: una decisión consciente
-
-Publicar el servidor en internet **no es un paso de la instalación**: es una
-decisión que cambia el modelo de seguridad. Zlapy está diseñado para una
-**red de confianza local**:
-
-- Los mensajes **no van cifrados de extremo a extremo**: el servidor los
-  descifra, los firma y los retransmite. Quien tenga acceso al servidor (o a
-  un túnel que lo exponga) ve el contenido.
-- El WebSocket y las sesiones viajan en claro sobre `http://` si no usas
-  HTTPS.
-- El túnel de Cloudflare **publica la instancia en internet** con la
-  configuración que tú escribas.
-
-Si aun así quieres salir a internet:
+Edita `zty.yml`: UUID de `tunnel`, `hostname` y `service`. Para el puerto estándar,
+el servicio local es `http://localhost:1820`; conserva la regla final
+`http_status:404`. El archivo contiene configuración, **nunca
+`CLOUDFLARE_TUNNEL_TOKEN` ni otro token**.
 
 ```bash
-# 1. cloudflared instalado
-# 2. Token en el .env
-#    CLOUDFLARE_TUNNEL_TOKEN=eyJ...
-# 3. Configuración del túnel
-cp zty.yml.example zty.yml      # y edita el dominio en `ingress`
-
-# 4. Con el servidor ya arrancado, en otra terminal:
+cloudflared --config zty.yml ingress validate
+# Con Zlapy ya arrancado, en otra terminal:
 npm run tunnel
 ```
 
-Detalles del túnel (`ops/net/tunnel.js`):
+El script prefiere un archivo temporal `0600` dentro de un directorio `0700` para
+entregar el token. Si `cloudflared` no admite `--token-file`, usa `TUNNEL_TOKEN`
+en el entorno; en ningún caso lo añade a los argumentos. Filtra el token de la
+salida y elimina el archivo temporal al terminar.
 
-- El token **nunca viaja en `argv`** (quedaría visible en `ps` y en
-  `/proc/<pid>/cmdline`): se entrega por un fichero temporal `0600` dentro de
-  un directorio `0700`, o por el entorno del proceso (`TUNNEL_TOKEN`) si tu
-  `cloudflared` es antiguo y no admite `--token-file`.
-- La salida del proceso se filtra para que el token **no aparezca en los logs**.
-- Equivale a `cloudflared -config zty.yml tunnel run --token-file <fichero>`.
+## 8. Actualización y pruebas
 
-Riesgos y precauciones:
+Respalda y detén el servicio antes de sustituir código:
 
-| Riesgo | Mitigación |
+```bash
+npm run backup
+git pull
+npm ci
+node ops/config/sync-env-example.js
+# Arranca de nuevo el servicio y, después, verifica:
+curl http://localhost:1820/healthz
+```
+
+El arranque aplica cambios de esquema y rellenos compatibles de forma idempotente.
+Ante cifrado, filas o esquema incompatibles se detiene: restaura un respaldo
+compatible; nunca fuerces otra llave sobre los datos.
+
+`npm run update` no equivale a `git pull`: reemplaza el código conservando
+`data/`, `backups/`, `.env`, `zty.yml` y `node_modules`, pero elimina `.git` y no
+conserva `cert.pem`/`key.pem`. Puede borrar otros archivos locales; revísalo y
+respalda antes de usarlo.
+
+`npm test` ejecuta `node --test --require ./test/bootstrap.js "test/**/*.test.js"`
+con puertos libres y datos temporales. CI usa Node 22, `npm ci`, auditoría de
+dependencias y la misma suite.
+
+## 9. Diagnóstico
+
+| Síntoma | Comprobación o solución |
 | --- | --- |
-| La instancia queda accesible desde internet | Restringe el acceso en el panel de Cloudflare (`Access` / WAF / reglas de IP) |
-| Sin E2E, quien entre ve los mensajes | No lo publiques en una red no confiable; activa HTTPS con un certificado válido (no autofirmado) |
-| Fuerza bruta de contraseñas | El servidor ya bloquea por cuenta e IP, pero no publiques a ciegas: pon HTTPS y reglas de acceso |
-| El túnel **no** protege los datos en reposo | Sigue haciendo falta `npm run backup` y guardar una copia del `.env` (la credencial del propietario) fuera del servidor |
+| Node demasiado antiguo | Instala Node 22+ y repite `npm ci` |
+| Falta `better-sqlite3` o su binario | `npm run deps`; si persiste, instala el toolchain y `npm run rebuild:sqlite` |
+| Puerto 1820 ocupado | Detén la otra instancia o cambia `PORT`; no lances otro supervisor |
+| Reinicios de arranque | Ejecuta `node server.js` y corrige el primer error mostrado |
+| Salida 78 / keycheck inválido | Restaura la credencial original; el supervisor no la reintenta |
+| Salida 79 / dependencias | Ejecuta `npm run deps` y revisa red, npm y binario nativo |
+| Salida 70 / cortacircuito | Corrige el fallo de arranque antes de reiniciar el servicio |
+| Base bloqueada | Revisa escritores concurrentes y `SQLITE_BUSY_TIMEOUT_MS=15000` |
+| `database unavailable` | Comprueba permisos, disco y las dos bases en `DATA_DIR` |
+| No se puede entrar desde LAN | Revisa IP, WiFi, aislamiento, firewall y `BIND_HOST` |
+| Registro remoto exige HTTPS | Instala certificados o decide explícitamente `FORCE_TLS=false` |
+| Cámara, micrófono o push fallan | Usa HTTPS, concede permisos y revisa el servicio push del navegador |
+| `cross-origin request rejected` | Conserva el mismo esquema, host y puerto usados al iniciar sesión |
+| HSTS fuerza HTTPS | Restaura certificados o elimina el estado HSTS del navegador |
+| Falta el túnel | Instala `cloudflared`, define el token en `.env` y crea `zty.yml` |
+| El túnel no encamina | Valida `zty.yml`, hostname y `service: http://localhost:1820` |
+| Errores no fatales repetidos | Revisa la consola y `data/log/errors.log` |
 
----
+Los errores de credencial o de formato no se arreglan generando otra llave. Antes
+de una reparación, crea un respaldo y conserva cualquier credencial anterior.
 
-## Anexo: comandos de un vistazo
-
-| Comando | Qué hace |
-| --- | --- |
-| `npm ci` | Instala las dependencias exactas del `package-lock.json` (reproducible) |
-| `npm install` | Instala/actualiza dependencias (ejecuta el `postinstall` que verifica el binario nativo) |
-| `npm start` | Preflight de dependencias + arranque **con supervisor** (`ops/install/ensure-deps.js` → `ops/runtime/supervisor.js`) |
-| `node server.js` | Arranca el servidor **sin supervisor** (depuración) |
-| `npm test` | Suite completa (`node --test --require ./test/bootstrap.js "test/**/*.test.js"`; 292 casos en subcarpetas por dominio) |
-| `npm run deps` | Solo el preflight: comprueba las dependencias e instala las que falten |
-| `npm run backup [-- dir]` | Respaldo consistente de `zlapy.db` y `zlapy-zlapy-blob.db` (la llave va en el `.env`: cópialo aparte) |
-| `npm run owner -- <comando>` | Credencial del propietario: `init`, `credential`, `rotate`, `check`, `show`, `unlock-check`, `export-kit`, `reset` |
-| `npm run tunnel` | Túnel de Cloudflare (`cloudflared` + `zty.yml` + token en el `.env`) |
-| `npm run termux` | Actualiza paquetes, instala el toolchain y arranca (en Termux) |
-| `npm run repair` / `npm run repair:double-encrypted [-- --apply]` | Reparan `auth_key` ilegibles / perfiles cifrados dos veces |
-| `npm run dbview` / `npm run sqliteview` | Visores de la base de solo lectura (`127.0.0.1:3001` / `:3002`) |
-| `npm run generate:emojis` | Regenera los índices de emojis del cliente |
-
-| Ruta | Contenido |
-| --- | --- |
-| `.env` | Configuración (plantilla: `.env.example`). **No se sube al repo** |
-| `cert.pem`, `key.pem` | Certificado HTTPS autofirmado. **No se sube al repo** |
-| `data/` | `zlapy.db` (datos) y `zlapy-zlapy-blob.db` (adjuntos). **No se sube al repo** |
-| `backups/` | Respaldos manuales. **No se sube al repo** |
-| `zty.yml` | Configuración del túnel (plantilla: `zty.yml.example`). **No se sube al repo** |
-| `.zlapy.pid` | PID del servidor hijo mientras corre el supervisor |
+Otros comandos: `npm run repair` y `npm run repair:double-encrypted` simulan reparaciones (`-- --apply` las aplica con el servidor parado y respaldo previo); no recuperan contenido sin su llave anterior.
+`npm run dbview` y `npm run sqliteview` abren visores de solo lectura en `127.0.0.1:3001` y `:3002`; `npm run generate:emojis` regenera los índices de emojis.

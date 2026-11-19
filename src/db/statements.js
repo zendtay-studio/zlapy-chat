@@ -45,7 +45,10 @@ const Stmt = {
     // Clave de cifrado de contenido por usuario (auth_key, PCE3 MTProto 2.0)
     getAuthKey: db.prepare('SELECT auth_key, key_id FROM user_auth_keys WHERE user_id = ?'),
     insertAuthKey: db.prepare('INSERT INTO user_auth_keys (user_id, auth_key, key_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)'),
-    replaceAuthKey: db.prepare('UPDATE user_auth_keys SET auth_key = ?, key_id = ?, updated_at = ? WHERE user_id = ?'),
+    upsertAuthKey: db.prepare(`INSERT INTO user_auth_keys (user_id, auth_key, key_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET auth_key = excluded.auth_key,
+        key_id = excluded.key_id, updated_at = excluded.updated_at`),
     upsertKey: db.prepare(`INSERT INTO user_keys (user_id, key_cipher, updated_at) VALUES (?, ?, ?)
         ON CONFLICT(user_id) DO UPDATE SET key_cipher = excluded.key_cipher, updated_at = excluded.updated_at`),
 
@@ -172,10 +175,6 @@ const Stmt = {
         FROM default_stickers ORDER BY position ASC`),
     getDefaultStickerByExpression: db.prepare('SELECT hash FROM default_stickers WHERE expression = ?'),
     isDefaultStickerHash: db.prepare('SELECT 1 FROM default_stickers WHERE hash = ? LIMIT 1'),
-    upsertDefaultSticker: db.prepare(`INSERT INTO default_stickers
-        (expression, hash, label, tags, sticker, position) VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(expression) DO UPDATE SET hash = excluded.hash, label = excluded.label,
-        tags = excluded.tags, sticker = excluded.sticker, position = excluded.position`),
     insertPublicSticker: db.prepare('INSERT OR IGNORE INTO public_stickers (hash, user_id, created_at) VALUES (?, ?, ?)'),
     insertPublicStickerTag: db.prepare('INSERT OR IGNORE INTO public_sticker_tags (hash, tag) VALUES (?, ?)'),
     listPublicStickers: db.prepare(`SELECT ps.hash, ps.created_at,
@@ -221,28 +220,6 @@ const Stmt = {
         ORDER BY ps.created_at DESC, ps.hash DESC
         LIMIT ? OFFSET ?`),
     countPublicStickers: db.prepare('SELECT COUNT(*) AS count FROM public_stickers'),
-    countPublicStickersByTags: db.prepare(`SELECT COUNT(*) AS count FROM (
-        SELECT ps.hash
-        FROM public_stickers ps
-        JOIN public_sticker_tags pst ON pst.hash = ps.hash
-        WHERE pst.tag IN (SELECT value FROM json_each(?))
-        GROUP BY ps.hash
-        HAVING COUNT(DISTINCT pst.tag) = ?
-    )`),
-    countPublicStickersByTagPrefix: db.prepare(`WITH requested_tags AS (
-            SELECT value FROM json_each(?)
-        )
-        SELECT COUNT(*) AS count FROM (
-            SELECT ps.hash
-            FROM public_stickers ps
-            JOIN public_sticker_tags pst ON pst.hash = ps.hash
-            WHERE pst.tag IN (SELECT value FROM requested_tags)
-                OR substr(pst.tag, 1, length(?)) = ?
-            GROUP BY ps.hash
-            HAVING COUNT(DISTINCT CASE WHEN pst.tag IN (SELECT value FROM requested_tags)
-                THEN pst.tag END) = ?
-                AND SUM(CASE WHEN substr(pst.tag, 1, length(?)) = ? THEN 1 ELSE 0 END) > 0
-        )`),
     countPublicStickersByTagQuery: db.prepare(`WITH requested_terms AS (
             SELECT value FROM json_each(?)
         )
@@ -327,7 +304,6 @@ const Stmt = {
         owner_id = ?, visibility = ?, join_policy = ?, write_policy = ?, add_policy = ?, edit_policy = ?,
         mention_all_policy = ?, content_policy = ?, invite_code = ?, custom_id = ?, keys_cipher = ?, created_at = ? WHERE id = ?`),
     getGroupByCustom: db.prepare('SELECT * FROM groups WHERE custom_id = ?'),
-    listPublicGroups: db.prepare(`SELECT id FROM groups WHERE visibility = 'public'`),
     listPublicGroupsForDiscover: db.prepare(`SELECT id, name, description FROM groups g
         WHERE g.visibility = 'public'
           AND NOT EXISTS (SELECT 1 FROM group_members gm WHERE gm.gid = g.id AND gm.user_id = ?)

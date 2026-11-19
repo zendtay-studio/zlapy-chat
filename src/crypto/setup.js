@@ -12,8 +12,24 @@ const { ensureOwnerCredential } = require('./owner-key.js');
 const { aadAuthKey } = require('./aad.js');
 const { createMessageCrypto } = require('./message-crypto.js');
 const { createUserAuthKeys, AuthKeyUnreadableError } = require('./user-auth-keys.js');
-const { db } = require('../db/database.js');
+const mtproto = require('./mtproto.js');
+const { blobDb, db } = require('../db/database.js');
 const { Stmt } = require('../db/statements.js');
+
+/* Solo las entradas expulsadas del LRU tocan SQLite. La tabla es temporal de
+   proceso: al reiniciar se vacía y la sesión arranca de nuevo, como ya estaba
+   permitido para contenido en reposo. Así cada auth_key recupera SU secuencia
+   sin mantener otro Map ilimitado ni escribir en cada mensaje. */
+blobDb.prepare('DELETE FROM mtproto_session_spill').run();
+const spillGet = blobDb.prepare('SELECT next_seq FROM mtproto_session_spill WHERE auth_key_id = ?');
+const spillSave = blobDb.prepare(`INSERT INTO mtproto_session_spill (auth_key_id, next_seq) VALUES (?, ?)
+    ON CONFLICT(auth_key_id) DO UPDATE SET next_seq = excluded.next_seq`);
+const spillForget = blobDb.prepare('DELETE FROM mtproto_session_spill WHERE auth_key_id = ?');
+mtproto.configureSessionPersistence({
+    load: id => spillGet.get(id)?.next_seq || 0,
+    save: (id, seq) => { spillSave.run(id, seq); },
+    forget: id => spillForget.run(id).changes > 0
+});
 
 /* Abre la base con la credencial del propietario. En una instalación nueva
    la inicializa (sal + keycheck) con esa credencial. */

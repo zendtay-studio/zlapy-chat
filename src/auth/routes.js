@@ -9,7 +9,7 @@
 'use strict';
 
 const crypto = require('crypto');
-const { accountCookieName, accountCookies, clearCookie, clearSessionCookie, createLinkedAccountSession, createSession, sessionCookie, sessionFromToken, sessionUser, setAccountSessionCookie } = require('./sessions.js');
+const { ACCOUNT_COOKIE_PREFIX, accountCookieName, accountCookies, clearCookie, clearSessionCookie, createLinkedAccountSession, createSession, sessionCookie, sessionFromToken, sessionUser, setAccountSessionCookie } = require('./sessions.js');
 const { esHashAntiguo, hashPassword, verifyPassword } = require('./password.js');
 const { Stmt } = require('../db/statements.js');
 const { keyUploadLimiter, loginAttempts, registerAttempts } = require('../http/rate-limit.js');
@@ -62,28 +62,21 @@ function getAuthSession(req, res, url, data, actor) {
        cuenta exista ni que su sesión viva). */
     const linked = [];
     for (const [name, value] of accountCookies(req)) {
-        const accountId = name.slice('chatlocal_account_'.length);
+        const accountId = name.slice(ACCOUNT_COOKIE_PREFIX.length);
         if (accountId === user.id) continue;
         const linkedUser = sessionFromToken(value);
         linked.push({ id: accountId, alive: !!(linkedUser && linkedUser.id === accountId) });
     }
     return json(res, 200, { authenticated: true, user: { id: user.id, username: user.username }, linked });
     }
-    // Sin sesión viva: si alguna cookie de cuenta guardada apunta a una
-    // cuenta borrada, se avisa y se limpia, para que el cliente la olvide.
-    let goneId = '';
-    for (const part of String(req.headers.cookie || '').split(';')) {
-    const name = part.split('=')[0].trim();
-    if (!name.startsWith('chatlocal_account_')) continue;
-    const accountId = name.slice('chatlocal_account_'.length);
-    if (Stmt.getUserById.get(accountId)) continue;
-    goneId = goneId || accountId;
-    clearCookie(res, req, name);
-    }
+    /* Sin sesión viva la respuesta es SIEMPRE idéntica: consultar la base por
+       cada cookie `zlapy_account_*` y devolver `gone` solo para los UUID
+       inexistentes convertía esta ruta pública en un oráculo de cuentas.
+       Tampoco se borran selectivamente esas cookies: el Set-Cookie delataba
+       lo mismo aunque el cuerpo se uniformara. La información de cuentas
+       vinculadas solo se expone en la rama autenticada de arriba. */
     if (token) clearSessionCookie(res, req);
-    return json(res, 200, goneId
-    ? { authenticated: false, gone: true, accountId: goneId }
-    : { authenticated: false });
+    return json(res, 200, { authenticated: false });
 }
 
 function getKey(req, res, url, data, actor) {

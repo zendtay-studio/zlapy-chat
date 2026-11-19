@@ -1,912 +1,260 @@
-# Zlapy — mensajes y llamadas en tu red
+# Zlapy
 
-Clone de WhatsApp que corre **100 % en tu red local**: servidor Node, chats en
-tiempo real por WebSocket y **llamadas de voz/video P2P (WebRTC)**.
+Servidor de mensajería y llamadas para una red local, con cliente web/PWA,
+Node.js, SQLite y WebSocket. Las integraciones externas (Giphy, Web Push y
+Cloudflare Tunnel) son opcionales.
 
-- **Mensajería** en tiempo real (1:1 y grupos), con ticks de enviado/entregado/leído.
-- **Llamadas** de voz y vídeo P2P: el audio y el vídeo van directos entre
-  dispositivos (DTLS-SRTP); el servidor solo hace de señalización.
-- **Cuentas** con usuario, contraseña y UUID permanente; **contactos** con
-  solicitud de aceptación mutua; **grupos** con roles y permisos por tipo de
-  contenido.
-- **Historias** de 24 h, **notas**, **galerías**, **archivos** (deduplicados por
-  hash SHA-256), **menciones**, **reacciones** y **borrados con alcance por
-  usuario**.
-- **Cifrado**: en reposo con AES-256-GCM, en la nube con un modelo derivado de
-  **MTProto 2.0** (clave por cuenta, clave por mensaje, firma Ed25519) y **del
-  canal** con X25519 + ChaCha20 + HMAC, incluso cuando se sirve por HTTP sin TLS.
-- **PWA** instalable, con **notificaciones push** (Web Push, VAPID).
+## Qué incluye
 
-Todo vive en dos ficheros SQLite: `data/zlapy.db` (datos de la plataforma) y
-`data/blob.db` (adjuntos multimedia, deduplicados por hash).
+- Chats directos y grupos en tiempo real, con estados de envío, entrega y lectura.
+- Contactos, solicitudes, bloqueos, roles de grupo y privacidad por función.
+- Respuestas, edición, reacciones, menciones, historias, notas y galerías.
+- Adjuntos deduplicados por SHA-256 y almacenados en una base SQLite separada.
+- Llamadas de voz y vídeo WebRTC P2P; el servidor solo hace la señalización.
+- PWA instalable y notificaciones Web Push compatibles.
+- Cifrado en reposo con AES-256-GCM, contenido por cuenta con MTProto 2.0 y
+  AES-256-IGE, y una capa adicional para cuerpos HTTP y frames WebSocket.
 
----
+> **No es cifrado de extremo a extremo.** El servidor puede descifrar el
+> contenido. La capa de transporte de la aplicación tampoco sustituye a TLS:
+> por HTTP, las cabeceras, las cookies y las respuestas GET pueden quedar
+> expuestas, y un atacante activo puede suplantar la clave pública del servidor.
 
-## Índice
+## Inicio rápido
 
-1. [Requisitos](#requisitos)
-2. [Instalación](#instalación)
-3. [Arranque](#arranque)
-4. [Configuración](#configuración)
-5. [HTTPS y el móvil](#https-y-el-móvil)
-6. [Uso](#uso)
-7. [Interfaz y accesibilidad](#interfaz-y-accesibilidad)
-8. [Arquitectura](#arquitectura)
-9. [Cifrado](#cifrado)
-10. [Base de datos](#base-de-datos)
-11. [API](#api)
-12. [Estructura de ficheros](#estructura-de-ficheros)
-13. [Pruebas y CI](#pruebas-y-ci)
-14. [Copias de seguridad](#copias-de-seguridad)
-15. [Operación](#operación)
-16. [Seguridad](#seguridad)
-17. [Resolución de problemas](#resolución-de-problemas)
-18. [Documentación](#documentación)
+### Requisitos
 
----
-
-## Requisitos
-
-| | |
-| --- | --- |
-| **Node.js** | **22 o superior** (`better-sqlite3` v13 lo exige) |
-| **Compilador** | `python3`, `make` y `g++`/`clang` (solo si hay que compilar `better-sqlite3`) |
-| **Disco** | SQLite + adjuntos: cuenta con el espacio de los multimedia que quieras subir |
-| **Red** | Los dispositivos que chatean entre sí deben verse (misma WiFi/LAN o un túnel) |
-
-Comprobación rápida de la versión:
+- **Node.js 22 o superior** y npm.
+- Git.
+- Python 3, `make` y un compilador C++ si `better-sqlite3` necesita compilarse.
+  En Android/Termux la compilación es obligatoria.
+- Espacio para las bases y los adjuntos; los dispositivos deben tener acceso de
+  red al servidor.
 
 ```bash
-node -v      # debe ser v22 o mayor
-npm -v
+node --version
+npm --version
 ```
 
----
-
-## Instalación
-
-### Linux (Debian/Ubuntu)
-
-```bash
-sudo apt update
-sudo apt install -y git python3 make g++ build-essential
-git clone https://github.com/zendtay-studio/zlapy-chat.git
-cd zlapy-chat
-npm ci                 # instala lo que fija package-lock.json
-```
-
-### Termux (Android)
-
-```bash
-pkg update && pkg upgrade -y
-pkg install git python make clang sqlite
-git clone https://github.com/zendtay-studio/zlapy-chat.git
-cd zlapy-chat
-npm ci
-```
-
-O en un solo paso, con el script del propio proyecto:
-
-```bash
-git clone https://github.com/zendtay-studio/zlapy-chat.git
-cd zlapy-chat
-npm run termux   # actualiza paquetes, instala las herramientas, compila y arranca
-```
-
-> **Nota (npm 12 o superior).** Desde npm 12 los *scripts de instalación* de las
-> dependencias están bloqueados por defecto, así que el binario nativo de
-> `better-sqlite3` no se compila solo. El proyecto ya lo aprueba en su
-> `package.json` (`allowScripts`) y, además, el `postinstall` comprueba el
-> binario y **lo compila si falta**. Si prefieres hacerlo a mano:
->
-> ```bash
-> npm install-scripts approve better-sqlite3   # solo si npm te lo pide
-> npm run rebuild:sqlite                        # compila en el sitio
-> ```
->
-> En Android no existe binario publicado: la compilación es obligatoria
-> (`pkg install python make clang` antes).
-
-### Primera instalación: no hay que hacer nada más
-
-`npm start` funciona en una instalación nueva sin pasos manuales:
-
-| Qué pasa | Resultado |
-| --- | --- |
-| No existe `.env` | Se crea a partir de `.env.example` con los valores por defecto (permisos `600`) |
-| No existe la credencial del propietario | La base vacía se inicializa sola con `DB_USER` + `DB_PASSWORD` del `.env` (permisos `600`) |
-| No existe la base de datos | Se crea vacía en `data/` |
-
-Si la base de datos **ya tiene cuentas** y falta la llave maestra, el servidor
-se niega a arrancar (generar una llave nueva dejaría ilegibles los mensajes,
-historias y adjuntos cifrados): hay que restaurar la llave de tu respaldo.
-
-### Windows / macOS
+### Instalar y arrancar
 
 ```bash
 git clone https://github.com/zendtay-studio/zlapy-chat.git
 cd zlapy-chat
 npm ci
+npm start
 ```
 
-En Windows hace falta **PowerShell** y las *Build Tools* de Visual Studio (o
-`npm install --global windows-build-tools`) para compilar `better-sqlite3`.
-En macOS, `xcode-select --install`.
+`npm start` comprueba las dependencias antes de lanzar el servidor bajo un
+supervisor. No hace falta crear manualmente `.env` ni `data/` en una instalación
+nueva:
 
-> `npm ci` instala exactamente las versiones del `package-lock.json` (que está
-> versionado), de modo que la instalación es reproducible. `npm install` también
-> funciona, pero puede resolver versiones nuevas.
+- `.env` se genera desde `.env.example`, con una credencial de propietario
+  aleatoria y permisos `0600`; su valor no se imprime.
+- Las carpetas de datos y las bases se crean al abrir SQLite.
+- La base nueva se inicializa con la credencial de `.env`.
 
-<details>
-<summary>Instalación detallada por plataforma, servicio en segundo plano y diagnóstico</summary>
+> **Haz una copia externa de `.env` desde el primer día.** `DB_USER` y
+> `DB_PASSWORD` (o el archivo indicado por `DB_PASSWORD_FILE`) permiten derivar
+> la llave maestra. Si se pierden, las bases y sus respaldos no se pueden
+> descifrar. Nunca publiques ese archivo ni lo confirmes en Git.
 
-Guía completa: [`docs/INSTALACION.md`](docs/INSTALACION.md) — incluye systemd,
-pm2, Termux:Boot, apertura de firewall, generación de certificados y tabla de
-síntomas → causa → solución.
+Si ya existen datos y la credencial falta o no corresponde, el servidor sale con
+código 78 y el supervisor no reintenta: restaura la credencial correcta. No se
+genera otra llave sobre una base existente.
 
-</details>
+### Acceso
 
----
+El puerto predeterminado es **1820**. El arranque muestra las direcciones
+disponibles:
 
-## Arranque
+- Esta máquina: `http://localhost:1820`.
+- Otro dispositivo en la LAN: `http://IP-DEL-SERVIDOR:1820`.
+- Con certificados: las mismas direcciones mediante `https://`.
+
+Comprueba el servicio con:
 
 ```bash
-npm start        # comprueba las dependencias y arranca con supervisor: si el proceso se cae, lo reinicia
+curl http://localhost:1820/healthz
 ```
 
-| Comando | Qué hace |
+Una respuesta HTTP 200 contiene `"ok":true`; un 503 indica que alguna base no
+responde. Para usarlo desde otro dispositivo puede ser necesario permitir
+`1820/tcp` en el firewall. Mantén una sola instancia sobre la misma base y puerto.
+
+La instalación detallada por plataforma, los servicios de arranque automático y
+el diagnóstico están en [docs/INSTALACION.md](docs/INSTALACION.md).
+
+## Configuración esencial
+
+La configuración vive en `.env`; [`.env.example`](.env.example) documenta todas
+las variables, sus valores y sus rangos. Las variables del entorno del proceso
+tienen prioridad sobre el archivo. Reinicia después de editarlo.
+
+Al arrancar, la configuración se sincroniza de forma **aditiva** con la plantilla:
+solo se añaden variables y comentarios que falten, sin sustituir valores ni texto
+existentes. También puedes ejecutar `node ops/config/sync-env-example.js`.
+
+| Variable | Valor inicial | Uso |
+| --- | --- | --- |
+| `PORT` | `1820` | HTTP, HTTPS y WebSocket en el mismo puerto |
+| `BIND_HOST` | `auto` | Todas las interfaces; `loopback` limita el acceso a esta máquina |
+| `FORCE_TLS` | `false` en la plantilla | Redirige a HTTPS y marca la cookie `Secure` cuando hay certificados |
+| `DATA_DIR` | `data` | Carpeta de persistencia |
+| `DB_NAME` | `zlapy` | Produce `data/zlapy.db` |
+| `BLOB_DB_NAME` | Derivado | Produce `data/zlapy-blob.db`; conserva `blob.db` en instalaciones antiguas |
+| `DB_USER`, `DB_PASSWORD` | Generados al crear `.env` | Credencial de la llave maestra |
+| `DB_PASSWORD_FILE` | Vacío | Archivo `0600` con la contraseña; tiene prioridad sobre `DB_PASSWORD` |
+| `SQLITE_BUSY_TIMEOUT_MS` | `15000` | Espera ante bloqueos de SQLite, en milisegundos |
+| `AUTH_SESSION_TTL_MS` | `2592000000` | Sesión normal de 30 días |
+| `AUTH_PLAIN_SESSION_TTL_MS` | `28800000` | Sesión de 8 horas por HTTP desde otra máquina |
+| `GIPHY_API_KEY` | Vacío | Búsqueda de stickers mediante el servidor |
+| `CLOUDFLARE_TUNNEL_TOKEN` | Vacío | Secreto usado únicamente por `npm run tunnel` |
+
+Ambas bases usan WAL y `synchronous=FULL`. Los envíos push se cancelan tras
+**5 segundos** y las consultas a Giphy tras **8 segundos**, para no dejar peticiones
+externas esperando indefinidamente.
+
+## HTTPS, llamadas y push
+
+HTTP y HTTPS comparten puerto. Para activar HTTPS, coloca un certificado y su
+llave en `cert.pem` y `key.pem`, o define `TLS_CERT_FILE` y `TLS_KEY_FILE`, y
+reinicia. El certificado debe incluir en `subjectAltName` los nombres o IP por
+los que accederán los clientes.
+
+Cámara, micrófono, service workers y Web Push necesitan un contexto seguro;
+en un móvil que entra por IP, eso significa HTTPS. Un certificado autofirmado
+requiere aceptar o instalar su confianza en cada dispositivo.
+
+Con certificados disponibles, se recomienda:
+
+```dotenv
+FORCE_TLS=true
+```
+
+Sin certificados, ese ajuste queda degradado: el servidor permite HTTP local,
+pero bloquea registro e inicio de sesión desde otras máquinas hasta instalarlos
+o elegir explícitamente `FORCE_TLS=false`. HTTP abierto debe limitarse a una red
+de confianza. La generación de certificados y las consecuencias de HSTS se explican
+en [docs/INSTALACION.md](docs/INSTALACION.md#5-https-y-red).
+
+## Credencial del propietario y recuperación
+
+La llave maestra se deriva con scrypt de `DB_USER` + `DB_PASSWORD`; no se guarda
+como una llave independiente. Esta credencial no es la contraseña de una cuenta
+de chat.
+
+```bash
+npm run owner -- show
+npm run owner -- check
+npm run owner -- unlock-check
+npm run owner -- credential --user NUEVO --password NUEVA
+npm run owner -- rotate
+npm run owner -- export-kit --out /ruta/segura
+npm run owner -- reset --yes
+```
+
+- `credential` re-cifra el contenido; `rotate` conserva la credencial y cambia la
+  sal. No edites la credencial a mano para migrar una base.
+- Detén el servidor para `init`, `credential`, `rotate`, `export-kit` y `reset`.
+- `reset --yes` borra las bases: haz un respaldo verificable antes.
+- Pasar `--password` puede exponer el secreto en el historial del shell y en
+  `/proc`; evita incluir secretos reales en comandos compartidos o registros.
+- Conserva juntos, cifrados y fuera del servidor, la credencial y las bases.
+  `export-kit` crea un kit de recuperación con ambos.
+
+## Respaldos
+
+```bash
+npm run backup
+npm run backup -- /ruta/destino-vacio
+```
+
+El destino predeterminado es `backups/zlapy-backup-<fecha-hora>/`. El comando usa
+la API de respaldo de SQLite, por lo que puede ejecutarse con el servidor activo
+y WAL habilitado. Copia las bases configuradas y `.env` como `credencial.env`;
+no sobrescribe un destino que ya contenga archivos. Si usas `DB_PASSWORD_FILE`,
+ese archivo externo debe respaldarse por separado.
+
+Los directorios de respaldo se crean con `0700` y los archivos con `0600`. En cada
+arranque se endurecen `data/`, `.env`, las bases y **recursivamente** `backups/`:
+directorios `0700`, archivos `0600`, sin seguir enlaces simbólicos. Es un ajuste de
+permisos de mejor esfuerzo en sistemas que lo permitan.
+
+Para restaurar, detén el servidor, repón las dos bases y la misma credencial,
+retira los WAL/SHM antiguos y comprueba `/healthz`. El procedimiento completo está
+en [docs/INSTALACION.md](docs/INSTALACION.md#6-respaldos-y-restauración).
+
+## Operación y comandos
+
+| Comando | Función |
 | --- | --- |
-| `npm start` | **`node ops/install/ensure-deps.js && node ops/runtime/supervisor.js`**: instala las dependencias que falten (si el servidor llega a salir con 79 sin una librería, el supervisor la instala y relanza una sola vez) y arranca el servidor **bajo el supervisor**: preflight, spawn con canal IPC, watchdog de `/healthz` + latido (10 s/45 s), backoff exponencial (1 s → 30 s) y cortacircuito ante fallos de arranque. Exit 78 (credencial) no se reintenta |
-| `npm run deps` | Solo el preflight de dependencias (comprueba e instala lo que falte) |
-| `npm test` | Suite completa (`node --test --require ./test/bootstrap.js "test/**/*.test.js"`): unitarias + integración en instancias aisladas |
-| `npm run backup` | Respaldo consistente de las dos bases (la credencial va en el `.env`: copia también ese fichero) |
-| `npm run owner` | Credencial del propietario: `init`, `credential` (cambia la credencial y re-cifra todo), `rotate`, `check`, `show`, `unlock-check`, `export-kit`, `reset` |
-| `npm run rebuild:sqlite` | Compila `better-sqlite3` en el sitio (obligatorio en Android/Termux) |
-| `npm run repair` / `npm run repair:double-encrypted` | Reparan `auth_key` ilegibles / perfiles cifrados dos veces |
-| `npm run termux` | Todo en uno para Termux: actualiza, instala herramientas, compila y arranca |
-| `npm run tunnel` | Publica el servidor con un túnel de Cloudflare |
-| `npm run dbview` / `npm run sqliteview` | Visores de la base de solo lectura (en `127.0.0.1:3001` / `:3002`) |
-| `npm run generate:emojis` | Regenera los índices JSON de emojis del cliente |
-
-Para arrancar **sin** supervisor (útil para depurar, porque la salida va directa
-a la consola):
-
-```bash
-node server.js
-```
-
-Al arrancar, el servidor imprime las URLs:
-
-```
-✅ Zlapy (SQLite) en el puerto 1820
-
-   Esta PC:   http://localhost:1820
-   Tu red:    http://192.168.x.x:1820
-
-   También por HTTPS (necesario para cámara/micrófono en el móvil):
-               https://localhost:1820
-               https://192.168.x.x:1820   (acepta el aviso de certificado)
-```
-
-> Ejecuta el servidor **en un solo sitio**: dos instancias se pelean el puerto
-> (la segunda muere con «Puerto ocupado» y el supervisor entra en backoff).
-
-### Como servicio en segundo plano
-
-| Entorno | Cómo |
-| --- | --- |
-| **systemd** (Linux) | Unidad de servicio con `ExecStart=/usr/bin/npm start --prefix /ruta/del/proyecto` y `Restart=always` (así se ejecuta también el preflight de dependencias) → [`docs/INSTALACION.md`](docs/INSTALACION.md#51-systemd-linux) |
-| **pm2** | `pm2 start npm --name zlapy -- start && pm2 save && pm2 startup` (pm2 ejecuta el script `start`, que incluye `ensure-deps`) |
-| **Termux:Boot** | Script en `~/.termux/boot/` que lanza `npm start` al arrancar el móvil |
-
----
-
-## Configuración
-
-Los parámetros se leen de `.env` (plantilla en [`.env.example`](.env.example)).
-**El supervisor carga el mismo `.env` que el servidor**, así que `PORT` y todas
-las variables `SUPERVISOR_*` tienen efecto real sobre `npm start`.
-El fichero `.env` no se versiona.
-
-```bash
-cp .env.example .env   # crea tu configuración local
-```
-
-### Aplicación
-
-| Variable | Por defecto | Para qué sirve |
-| --- | ---: | --- |
-| `PORT` | `1820` | Puerto TCP donde escucha (http y https a la vez) |
-| `DATA_DIR` | `data` | Carpeta de las bases y los adjuntos (vacío = `data/` dentro del proyecto) |
-| `DB_USER` | vacío | Usuario del propietario: con `DB_PASSWORD` es la credencial de la que se deriva la llave maestra |
-| `DB_PASSWORD` | vacío | Contraseña del propietario (la llave maestra sale de derivarla con scrypt) |
-| `DB_PASSWORD_FILE` | vacío | Alternativa: la contraseña en un fichero `0600` (manda sobre `DB_PASSWORD`) |
-| `DB_NAME` / `BLOB_DB_NAME` | `zlapy` / `zlapy-blob` | Nombre (o ruta) de las bases; el de adjuntos se deriva del principal (`<DB_NAME>-blob`) si no se fija |
-| `MESSAGE_DIRECT_CHAR_LIMIT` | `10000` | Máx. caracteres por mensaje directo |
-| `MESSAGE_GROUP_CHAR_LIMIT` | `15000` | Máx. caracteres por mensaje de grupo |
-| `STORY_TEXT_CHAR_LIMIT` | `140` | Máx. caracteres del texto de una historia |
-| `PROFILE_DESCRIPTION_CHAR_LIMIT` | `140` | Máx. caracteres de la descripción del perfil |
-| `MESSAGE_RATE_LIMIT` / `MESSAGE_RATE_WINDOW_MS` | `30` / `60000` | Mensajes por cuenta y ventana (ms) |
-| `RATE_LIMIT_API_PER_MINUTE` | `600` | Cota base de la API: peticiones por minuto **por cuenta autenticada** (10/s) |
-| `RATE_LIMIT_PUBLIC_PER_MINUTE` | `300` | Cota base pública: peticiones por minuto **por IP sin sesión** (5/s) |
-| `RATE_LIMIT_AUTH_PER_MINUTE` | `60` | Cota de autenticación (login, registro, cambio y cierre de cuenta), **más estricta** que el resto (1/s por IP) |
-| `RATE_LIMIT_<NOMBRE>_PER_MINUTE` | ver `.env.example` | Cotas específicas de rutas caras: `GIPHY`, `STICKER_CREATE`, `PROFILE`, `KEY_REGEN`, `STORY`, `STORY_VIEW`, `CONTACT`, `GROUP_CREATE`, `CALL_OFFER`, `CHAT_PREFS`, `PASSWORD_CHECK`, `RECEIPT`, `REACTION`, `KEY_UPLOAD` |
-
-Nota: `/healthz` queda **exento** de toda cota. El supervisor lo sondea cada segundo y trata cualquier 4xx como «servicio caído», así que un 429 por límite de frecuencia reiniciaría un servicio que está sano. Los estáticos de `public/` y el paquete de stickers por defecto tampoco se limitan: son lecturas baratas con caché y la pestaña de stickers carga decenas de imágenes de golpe.
-| `MAX_AUDIO_DURATION_MS` | `60000` | Duración máx. de la grabación de audio |
-| `MAX_HTTP_BODY_BYTES` | `33554432` | Tamaño máx. del cuerpo HTTP (32 MiB) |
-| `MAX_MESSAGE_DATA_CHARS` | `24000000` | Tamaño máx. de los datos multimedia de un mensaje |
-| `MAX_GALLERY_ITEMS` / `MAX_GALLERY_ENCODED_CHARS` | `20` / `24000000` | Límites de las galerías |
-| `NOTE_TTL_MS` / `STORY_TTL_MS` | `86400000` | Vigencia de la nota y de las historias (24 h) |
-| `AUTH_SESSION_TTL_MS` | `2592000000` | Vigencia de la sesión (30 días) |
-| `AUTH_PLAIN_SESSION_TTL_MS` | `28800000` | Vigencia de la sesión emitida por HTTP en claro desde otra máquina (8 h) |
-| `CHAT_PAGE_CACHE_MAX` / `CHAT_PAGE_CACHE_TTL_MS` | `20` / `10000` | Caché de páginas de chat (0 desactiva) |
-| `SQLITE_CACHE_SIZE_KB` / `SQLITE_BUSY_TIMEOUT_MS` | `64000` / `5000` | Caché y espera de SQLite |
-| `BBOT_STICKER_PACK_DIR` | `src/bbot-stickers` | Carpeta persistente de los WebP animados bbot generados o recuperados al iniciar |
-| `GIPHY_API_KEY` | vacío | Stickers de Giphy (solo la usa el servidor) |
-| `CLOUDFLARE_TUNNEL_TOKEN` | vacío | Token del túnel de Cloudflare |
-| `SUPERVISOR_*` | ver `.env.example` | Intervalo del health check, backoff, tope de reinicios, fichero de PID, **latido IPC (10 s) y su watchdog (45 s)** e **intentos de instalar dependencias** (exit 79) |
-
-Los valores se **validan al arrancar**: un límite incoherente (por ejemplo,
-`MAX_MESSAGE_DATA_CHARS > MAX_HTTP_BODY_BYTES`) detiene el arranque con un
-error claro en vez de fallar luego en caliente.
-
-### Credencial del propietario
-
-El servidor cifra los datos en reposo con una llave de 32 bytes que **no se
-guarda**: se deriva de la credencial del propietario (`DB_USER` +
-`DB_PASSWORD`) con scrypt (N=32768, r=8, p=1). La base comprueba la credencial
-contra un *keycheck* cifrado en `meta`:
-
-- Base **nueva** (sin datos): el servidor la inicializa con esa credencial.
-- Base **con datos** y credencial que no abre: el arranque aborta con código
-  78. No se deriva ninguna llave nueva sobre datos existentes (eso los volvería
-  ilegibles para siempre).
-- Cambiar la credencial a mano **no** cambia la llave en caliente: hay que
-  migrar, que re-cifra todo lo que dependía de ella.
-
-```bash
-npm run owner -- init --user NOMBRE                     # crea la credencial de una base nueva
-npm run owner -- credential --user NOMBRE --password NUEVA  # cambia la credencial y re-cifra TODO
-npm run owner -- rotate                                 # re-deriva la llave con sal nueva (misma credencial)
-npm run owner -- check                                  # auditoría de integridad (sale 1 si algo no cuadra)
-npm run owner -- show                                   # metadatos de la instalación
-npm run owner -- unlock-check                           # ¿la credencial abre esta base? (salida 0/1)
-npm run owner -- export-kit --out DIR                   # kit de recuperación (credencial + bases)
-npm run owner -- reset --yes                            # borra las bases (instalación limpia)
-```
-
-La migración exige el **servidor parado** (un proceso vivo seguiría
-cifrando con la llave anterior) y escribe el `.env` **al final**: si algo
-falla a mitad, el `.env` conserva la credencial anterior y el arranque falla de
-forma explícita en vez de dejar datos a medias.
-
----
-
-## HTTPS y el móvil
-
-El mismo puerto sirve **http y https**: el dispatcher lee el primer byte de la
-conexión y, si es el handshake de TLS (`0x16`), lo pasa al servidor HTTPS.
-
-Genera los certificados autofirmados (en la raíz del proyecto). **El `subjectAltName`
-es obligatorio**: los navegadores modernos ignoran el `CN` y sin el SAN de tu IP
-te dicen «el certificado no coincide con la dirección»:
-
-```bash
-openssl req -x509 -newkey rsa:2048 -sha256 -days 397 -nodes \
-  -keyout key.pem -out cert.pem -subj "/CN=zlapy" \
-  -addext "subjectAltName=DNS:localhost,IP:127.0.0.1,IP:192.168.100.184" \
-  -addext "basicConstraints=critical,CA:TRUE"
-chmod 600 key.pem cert.pem
-```
-
-Sustituye `192.168.100.184` por la IP actual de la máquina (`ip addr` / `ifconfig`);
-si tu router cambia la IP por DHCP, reserva una fija en el router o repite el
-comando. El `CA:TRUE` permite **instalar el certificado como CA de confianza** en
-el móvil (Ajustes → Seguridad → Cifrado y credenciales → Instalar certificado →
-certificado CA) y que deje de avisar del todo. Reinicia el servidor tras
-regenerarlos (el certificado se lee al arrancar).
-
-> **Las llamadas y el push en el móvil exigen `https`**: los navegadores solo
-> dan cámara/micrófono en un contexto seguro, y Web Push solo funciona sobre
-> HTTPS. Si el navegador avisa del certificado, pulsa «Avanzado / Continuar».
-
-Aunque no configures TLS, el **cuerpo** de las peticiones y de los frames
-WebSocket viaja cifrado por la capa de transporte de la aplicación: el servidor
-publica su clave pública en `/config` y `/healthz`, y el cliente construye un
-sobre con una clave efímera para cada petición. Eso evita que quien escuche la
-red lea las contraseñas o los mensajes en el cuerpo, pero **no sustituye a
-HTTPS**: las cabeceras y las cookies siguen viajando en claro, así que un
-observador puede robar la cookie de sesión y actuar como la cuenta; y un
-atacante activo puede cambiar la clave pública por la suya. Para proteger eso
-está TLS.
-
-Si el puerto 1820 está ocupado: `PORT=3001 npm start` (y ábrelo en el
-firewall).
-
----
-
-## Uso
-
-1. Abre la URL y pulsa **Crear cuenta**: usuario en minúsculas y contraseña de
-   al menos 8 caracteres. El **nombre visible** admite mayúsculas y espacios.
-2. En el otro dispositivo, crea otra cuenta o entra con sus credenciales.
-3. Añade contactos con el **+** de la lista usando su usuario exacto. Los chats
-   y grupos solo aparecen a sus participantes.
-
-Cada cuenta tiene un **UUID permanente** (independiente del usuario, que se
-puede cambiar desde Ajustes). La contraseña se guarda como hash con sal; nunca
-en claro. La sesión viaja en una cookie `HttpOnly` de hasta 30 días y se
-invalida al cerrar sesión, al cambiar la contraseña o al reiniciar el servidor.
-
-### Funciones
-
-**Mensajería**
-- Chats en tiempo real con ticks ✓ / ✓✓ azul (enviado, entregado, leído).
-- Cuentas independientes, con usuario, contraseña y UUID permanente.
-- Contactos por usuario; el servidor solo entrega la lista propia.
-- Notas a uno mismo, respuestas, edición, borrado y compartir.
-- Fotos, vídeo, audio y cualquier archivo, con barra de progreso; las
-  imágenes se convierten a WebP para quitar metadatos; las selecciones
-  múltiples se envían como galería con comentario opcional.
-- Deduplicación de adjuntos por hash SHA-256 en `data/blob.db`.
-- La imagen de respaldo para archivos ausentes se registra en `data/blob.db`
-  al iniciar; las referencias de mensajes y perfiles pueden mostrarla si falta
-  el blob original.
-- Notas de voz con grabación y previsualización.
-- **Ver una vez** (se borra al verlo).
-- Paginación de mensajes antiguos al hacer scroll arriba.
-- Historias de 24 h con vistas, edición y borrado.
-- Perfiles: avatar, nombre, descripción, nota y privacidad.
-- Privacidad por dato (7 funciones: foto, nota, descripción, historias,
-  llamadas, mensajes, compartir) con modos **Servidor**, **Contactos**,
-  **Nadie**, **Solo…** y **Excepto…**.
-- Política de contacto por cuenta: directa, por solicitud (con aceptación
-  mutua) o desactivada.
-- Grupos con foto, descripción, visibilidad pública o privada, unión directa o
-  por solicitud, administración compartida y permisos separados para
-  escritura, archivos, fotos, vídeos, audio y stickers.
-- Menciones `@usuario` y `@all` / `@todos` con autorización configurable.
-- Compartir grupos por enlace dentro de los chats; los administradores pueden
-  aprobar entradas, promover administradores y administrar integrantes.
-- Bloquear contactos: las cuentas bloqueadas no ven presencia, perfil,
-  historias ni conversaciones directas.
-- Eliminar chat (para mí), eliminar mensajes (el autor borra de verdad; el
-  destinatario los oculta para sí) y eliminar la cuenta con borrado en cascada
-  (la interfaz pide la contraseña actual).
-- Regenerar la clave de cifrado de la cuenta desde **Ajustes → Cuenta**:
-  re-cifra el contenido y conserva el historial.
-- Historial de ventanas coherente: **Atrás** cierra primero Perfil, luego
-  Ajustes y al final vuelve al inicio; dentro de Ajustes, cada sección vuelve
-  a su menú antes de cerrar la hoja.
-- Búsqueda, PWA instalable y diseño responsive.
-
-**Llamadas (WebRTC P2P)**
-- Voz y vídeo, con señalización por el WebSocket del servidor y medios
-  **directos entre dispositivos**.
-- Pantalla de llamada entrante con timbre, atender y rechazar.
-- En llamada: silenciar micrófono, apagar cámara, cronómetro y colgar.
-- Registro de llamadas: perdidas, rechazadas, canceladas y en curso.
-
-**Notificaciones push**
-- Avisos de mensajes y llamadas aunque la pestaña no esté visible; se pueden
-  probar y activar desde Ajustes.
-- Requieren un navegador con Push API, permiso de notificaciones y una URL
-  HTTPS. La entrega con el navegador cerrado depende del servicio push del
-  navegador y de que el sistema operativo no limite su actividad en segundo
-  plano.
-
----
-
-## Interfaz y accesibilidad
-
-Reglas del cliente web. Se comprueban con medidas de contraste reales (WCAG AA: 4.5:1 para texto, 3:1 para bordes de componentes), no a ojo.
-
-**Jerarquía de botones: cuatro categorías, ni una más** (definidas en `public/css/theme.css`).
-
-| Categoría | Clase | Aspecto | Cuándo |
-| --- | --- | --- | --- |
-| Primaria | `.ok` | Relleno del color del acento, tinta que contraste | La acción que hace avanzar: «Añadir», «Guardar», «Aplicar» |
-| Secundaria | `.sec` | Gris del resto de la interfaz (`--surface-raised`), borde fino | Acciones reales que no son la principal: «Cambiar contraseña», «Reintentar», «Quitar foto» |
-| Cancelar | *(sin clase)* | Borde fino, sin relleno | Cancelar, cerrar, atrás |
-| Eliminar | `.peligro` | Fondo rojo y borde rojo | Destructivo: «Eliminar cuenta», «Borrar para todos» |
-
-**El acento se respeta.** La primaria usa el color del acento TAL CUAL cuando el tema elegido es claro (Coral, `#f4a58c`); solo cuando el acento es tan oscuro como el fondo (el bosque por defecto, `#25483c`, daría 1.9:1: un botón invisible) se aclara hacia blanco y la tinta pasa a oscura. Quien lo decide es `public/js/button-theme.js` por **luminancia** (límite 0.3), que recalcula `--ok-fill`, `--ok-ink` y `--ok-edge` en cada cambio de tema; `theme.css` deja el bosque por defecto para el primer pintado sin parpadeo. La secundaria NO se mezcla con el acento: con uno oscuro quedaba a 1.09:1 del fondo, así que es el gris del resto de la interfacia.
-
-Medidas sobre el fondo de la app (`--page`/`--surface`): primaria 8.8:1 en Coral (5.8:1 con su tinta `#5b2d18`) y 7.5:1 en bosque · secundaria 14.8:1 de texto · eliminar 5.9:1 de texto y 4.7:1 de borde · cancelar 14.8:1 · anillo de foco 11:1.
-
-Reglas que las acompañan:
-
-- **Un botón por pantalla lleva `.ok`.** Dos primarias compiten y ninguna lo es.
-- **Todos los botones de una misma familia miden lo mismo** (46 px de alto, radio 15 px, relleno según la categoría). Los que comparten fila se reparten el ancho con `flex`; los que van solos ocupan la columna. Un "chip" de 38 px al lado de uno de 46 px rompe la lectura de la fila.
-- **El contenido de un panel nunca mide más que su panel.** `#contactPanel` y `#groupPanel` recortan panel e interior (`.cpInner` / `.gpInner`) en la **misma** banda de ancho: si una regla de un medio `min-width` devuelve el ancho completo al interior, entre 769 y 1024 px el panel mide 320 px y su contenido 400 px, y se desborda 80 px. Lo cubre `test/client/info-panel-width.test.js`.
-- **El destructivo es el único rojo.** Si todo se marca, nada se marca.
-- **No se distingue una acción solo por el color:** todas llevan texto (o `aria-label` cuando son solo icono).
-- **Objetivo táctil ≥ 44 px.** Los botones de estas familias miden 46 px de alto.
-- **Foco visible siempre:** anillo de 2 px en `--focus` (11:1 contra el fondo). Se pintó con `--accent` hasta ahora, que es casi del mismo tono que el fondo y no se veía.
-- **Desactivado:** opacidad .45, `cursor: default` y sin cambio de color al pasar el ratón, para que no parezca pulsable.
-- **Variedades por página:** si una página necesita botones propios, se parte de estas clases en vez de redefinir colores. Un selector con ID (p. ej. `#settingsMain .mBtn`) tiene más especificidad que `.mBtn.ok` y vuelve a dejar los botones iguales: por eso las reglas locales llevan `:not(.ok, .sec, .peligro)`.
-
----
-
-## Arquitectura
-
-```
-                 navegador / PWA  ──HTTP/HTTPS──┐
-                 navegador / PWA  ──WebSocket──┤
-                                              ▼
-  ┌───────────────────────────────────────────────────────────┐
-  │ server.js  (punto de entrada)                             │
-  │   comprueba la versión de cifrado · carga la base · arranca│
-  └───────────────┬───────────────────────────────────────────┘
-                  ▼
-  src/http/router.js ──► rutas por dominio (src/auth, src/chat, src/groups…)
-        │                    │
-        │                    ├─► src/db/*     (SQLite + adjuntos por hash)
-        │                    ├─► src/crypto/* (llave maestra, MTProto 2.0)
-        │                    └─► src/realtime/* (WebSocket, presencia, push)
-        ▼
-  src/state.js  (estado en memoria: cuentas, grupos, historias, sesiones, caché)
-```
-
-- **`server.js`** es solo el punto de entrada: comprueba que la base use el
-  formato de cifrado actual, hidrata los datos en memoria y arranca los
-  servidores.
-- **El enrutador** (`src/http/router.js`) resuelve cada petición a la ruta que le
-  corresponde, respetando el orden de comprobaciones: primero las rutas
-  públicas, después la sesión, y por último las mutaciones (que exigen origen
-  válido).
-- **Los módulos de dominio** (`src/auth/`, `src/chat/`, `src/groups/`…) son
-  funciones puras por ruta: reciben `(req, res, url, data, actor)` y devuelven
-  la respuesta.
-- **El estado en memoria** (`src/state.js`) acelera las lecturas; la base de
-  datos sigue siendo la fuente de verdad.
-- **Las llamadas no pasan por el servidor**: solo la señalización; el audio y
-  el vídeo van directos entre dispositivos.
-
-Detalle completo (flujo de una petición, caché, paginación, privacidad,
-borrados, WebSocket, grupos): [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md).
-
----
-
-## Cifrado
-
-El modelo es el de **nube multi-dispositivo de MTProto 2.0** (el de Telegram
-para los chats normales, **no** el de los chats secretos de extremo a extremo).
-
-- **Cada cuenta tiene su propia `auth_key`** de 2048 bits, aleatoria y **no
-  derivada de la llave maestra**, con su identificador (`auth_key_id`: los 64
-  bits bajos del SHA-1 de la clave) y su sal, que se rota cada 30 minutos. El
-  servidor la guarda cifrada con su llave maestra.
-- **Cada mensaje se cifra con una clave propia**, derivada como en MTProto:
-  `msg_key` = los 128 bits centrales del SHA-256 del mensaje (con relleno
-  aleatorio de 12 a 27 bytes) precedido por 32 bytes de la `auth_key`, y de ahí
-  `aes_key` y `aes_iv`.
-- El mensaje lleva dentro una **cabecera interna** cifrada (sal, sesión,
-  `msg_id` monotónico y longitud) y, en claro, su `auth_key_id` y su `msg_key`:
-  al leerlo se **recalcula el `msg_key` y se comprueba que coincide** (la regla
-  de MTProto). La ventana anti-repetición de MTProto (300 s hacia atrás, 30 s
-  hacia delante) está implementada y probada, pero no se aplica al historial
-  almacenado —un mensaje de hace una hora quedaría fuera de ella—: la
-  protección real la dan el recálculo del `msg_key` y el **contexto
-  autenticado**, que impiden mover una fila de mensaje a otra conversación.
-- **La llave maestra ya no descifra el contenido de nadie por sí sola**: haría
-  falta además la base de datos.
-- Cada mensaje lleva una **firma Ed25519**; el servidor la verifica al leerlo.
-  Las firmas detectan alteraciones de la base, pero **no prueban autoría** frente
-  a un servidor comprometido (el servidor conoce la clave del usuario).
-- **Todo el contenido sensible se cifra en reposo**: resúmenes de chat, nota
-  personal, bio, nombre visible, registro de llamadas, claves push y la clave
-  privada VAPID. El avatar y los identificadores siguen en claro (son públicos
-  por definición).
-- `POST /account/regenerate-key` regenera la clave **re-cifrando el contenido**,
-  para no perder el historial.
-
-> **Desviación deliberada de MTProto:** allí el cifrado es AES-256 en modo IGE,
-> que **no autentica** el texto cifrado. Aquí se usa la **misma derivación de
-> claves** pero con **AES-256-GCM**, que sí lleva etiqueta de autenticación:
-> es estrictamente más fuerte.
-
-**El servidor NO migra al arrancar**: lee los dos formatos (el antiguo y el
-nuevo) y escribe siempre el nuevo, así que el contenido viejo se re-cifra solo
-a medida que se reescribe — y `POST /account/regenerate-key` re-cifra el
-histórico entero de una vez. No hay ningún paso de migración: arrancar es todo
-lo que hay que hacer.
-
-**Perfiles cifrados dos veces (reparación puntual).** Si el servidor llegó a
-pintar un texto ya cifrado (porque al arrancar leía el perfil con la función
-equivocada) y alguien guardó ese perfil sin tocarlo, el texto quedó cifrado
-dos veces: `PCE3( PCE3( "texto real" ) )`. A simple vista es basura, pero se
-puede desenvolver:
-
-```bash
-node ops/crypto/repair-double-encrypted.js            # simulación: dice lo que haría
-node ops/crypto/repair-double-encrypted.js --apply    # repara (con respaldo previo en backups/)
-```
-
-Conviene **parar el servidor** mientras repara. Es **idempotente** y
-**verifica cada registro** (ida y vuelta) antes de tocarlo.
-
-**Llaves desincronizadas (reparación puntual).** Si la llave maestra se giró
-con el servidor **en marcha**, el proceso viejo siguió escribiendo filas
-(envoltorios de `auth_key`, material de grupos, adjuntos) con la llave
-anterior: esas filas ya no las descifra la del `.env`. Se diagnostica sin
-escribir nada y se repara:
-
-```bash
-npm run owner -- check             # auditoría: qué material NO descifra con la credencial actual
-npm run repair                    # simulación de la reparación
-npm run repair -- --apply         # repara (con respaldo previo de data/zlapy.db)
-```
-
-La reparación borra la `auth_key` ilegible y limpia los campos de perfil
-cifrados con ella: la cuenta vuelve a ser utilizable, pero su contenido
-anterior (mensajes, notas, el nombre que tenía) **no se recupera** con la
-llave actual. Para eso hace falta la llave anterior del respaldo.
-
-Por eso ahora la rotación **exige el servidor parado** (`npm run owner -- credential`
-aborta si detecta un servidor vivo) y el servidor **vigila el `.env`**: si la
-llave cambia con el proceso en marcha, sale con código 75 para que el
-supervisor lo reinicie con la llave correcta.
-
-### Cifrado del canal (HTTP y WebSocket)
-
-El cifrado en reposo protege la base de datos, no el cable. Para las redes
-locales en las que no hay TLS, el servidor deriva de la llave maestra un par de
-claves **X25519** —la privada no se guarda aparte: se recalcula con HKDF-SHA256,
-así que no hay un secreto nuevo que respaldar— y publica la pública en
-`/config` y `/healthz`:
-
-```json
-{
-  "transportAlgorithm": "x25519-chacha20-hmac-v1",
-  "transportPublicKey": "…"
-}
-```
-
-Cada `POST` con cuerpo JSON puede viajar como sobre:
-
-| Cabecera | Contenido |
-| --- | --- |
-| `X-Zlapy-Enc` | `x25519-chacha20-hmac-v1` |
-| `X-Zlapy-Ephemeral` | clave pública efímera del cliente (32 bytes, base64) |
-| `X-Zlapy-Nonce` | nonce aleatorio de 12 bytes (base64) |
-| `X-Zlapy-Time` | milisegundos del cliente (margen de ±60 s) |
-
-El cliente genera un par efímero, calcula con X25519 el secreto compartido y
-deriva de él 64 bytes con HKDF-SHA256 (32 para ChaCha20 y 32 para HMAC). El
-cuerpo va cifrado y autenticado con HMAC-SHA256 (cifrar-y-luego-autenticar); el
-contexto autenticado (AAD) incluye método, ruta y marca de tiempo y, en la
-respuesta, también el código de estado. Así un cuerpo no se puede mover a otra
-ruta ni reutilizar más tarde. La respuesta se cifra con la misma clave y lleva
-`X-Zlapy-Enc` + `X-Zlapy-Resp-Nonce`.
-
-El WebSocket se cifra igual: el cliente envía un saludo en claro
-`{"type":"enc","ephemeral":"…"}`, el servidor responde `enc-ok` y desde ahí cada
-frame es `z1:<base64>`, con contadores de nonce independientes por dirección.
-Los clientes que no mandan el saludo siguen funcionando en claro.
-
-El cliente cifra en JavaScript puro (`public/transport-crypto.js`), no con
-`crypto.subtle`: esa API solo existe en contextos seguros (HTTPS o `localhost`)
-y el objetivo es precisamente proteger el acceso por HTTP a la LAN. Si la clave
-pública no está disponible o algo falla, el cliente vuelve al envío en claro
-para no romper la aplicación.
-
-> **Límite honesto:** esta capa protege el **cuerpo** frente a quien escucha el
-> tráfico, no las cabeceras: la cookie de sesión viaja en claro, así que un
-> observador puede robarla y usar la API directamente (las respuestas `GET`
-> también van en claro). Tampoco protege frente a un atacante activo que
-> suplante al servidor y entregue su propia clave pública. Para todo eso hace
-> falta HTTPS. El servidor ve el contenido al descifrarlo: no es cifrado de
-> extremo a extremo.
-
-Detalle completo (derivaciones, formatos `PCE`, firmas, ciclo de vida, sobre de
-transporte y modelo de amenazas):
-[`docs/CRIPTOGRAFIA.md`](docs/CRIPTOGRAFIA.md).
-
----
-
-## Base de datos
-
-El esquema es **v3** (tablas normalizadas con índices para las columnas hijas
-de las claves ajenas) y se aplica al arrancar de forma idempotente: si falta
-algo, se crea; si ya está, no se toca nada.
-
-**No hay migraciones**: una base en un formato anterior no es compatible con
-este servidor — restáurala desde un respaldo de `backups/` o arranca con una
-base nueva. El arranque lo comprueba y detiene el proceso con un error claro.
-
-- Cuentas con columnas reales (`users`), perfil, claves, privacidad, colores,
-  notas, stickers y silenciados en tablas propias.
-- Claves ajenas `ON DELETE CASCADE` en todo: **borrar una cuenta lo borra
-  todo** (perfil, contactos en ambos sentidos, mensajes de sus chats 1:1, sus
-  mensajes de grupo, historias, llamadas, sesiones, push…). El grupo sobrevive y
-  la administración pasa a otro miembro.
-- El nombre de usuario queda libre al instante: se puede borrar una cuenta y
-  volver a registrarla **sin reiniciar el servidor**.
-- **Los borrados tienen alcance por usuario**: un mensaje y una conversación se
-  guardan una sola vez para los dos interlocutores. `/msg/delete` borra de
-  verdad si lo pide el **autor**; si lo pide el **destinatario**, el mensaje se
-  oculta solo para él. `/chat/delete` es siempre «borrar para mí»: el otro
-  interlocutor conserva su copia.
-
-Referencia completa (tabla por tabla, con reglas de borrado e invariantes):
-[`docs/ESQUEMA-BD.md`](docs/ESQUEMA-BD.md).
-
-### Caché de páginas de chat
-
-Los mensajes viven en SQLite con el índice `messages(chat, ts, id)`: leer una
-página es una consulta indexada, no un recorrido del historial. Encima, el
-servidor conserva en RAM las últimas páginas descifradas (`CHAT_PAGE_CACHE_MAX`
-páginas, TTL de `CHAT_PAGE_CACHE_TTL_MS`, por defecto 20 páginas / 10 s), que se
-invalida al enviar, editar o borrar mensajes. Los grupos mantienen además un
-resumen por integrante (`group_summaries`: último mensaje + contador de no
-leídos).
-
-> **Privacidad:** la caché temporal conserva mensajes descifrados en memoria.
-> Los blobs no se almacenan en esta caché.
-
----
-
-## API
-
-- HTTP sobre el mismo puerto que el WebSocket.
-- Autenticación por cookie `HttpOnly` de sesión; el cuerpo es JSON.
-- Rutas públicas: `/config`, `/healthz`, `/auth/register`, `/auth/login`,
-  `/auth/logout`, `/auth/switch`, `/avatar/<usuario>.svg`, `/push/vapid` y los
-  ficheros estáticos de `public/`.
-- El resto exige sesión; las mutaciones exigen además origen válido.
-
-Referencia completa (todas las rutas, cuerpos y respuestas, y el protocolo del
-WebSocket): [`docs/API.md`](docs/API.md).
-
----
-
-## Estructura de ficheros
-
-```
-server.js              punto de entrada: comprueba las dependencias y las guardas de proceso primero, luego la base, y arranca
-src/                   el backend, partido por dominios
-  config.js            configuración (fichero .env y valores por defecto)
-  state.js             estado compartido en memoria (cuentas, grupos, sesiones, caché)
-  process-guards.js    errores globales: no fatales se registran y se sigue sirviendo; fatales cierran y salen (exit 1); latido IPC
-  bbot-stickers/        WebP animados del paquete bbot (BBOT_STICKER_PACK_DIR; no se versionan)
-  auth/               sesiones, cookies y rutas de autenticación
-  users/               cuentas, perfiles y privacidad por función
-  profile/             perfil, notas y ajustes de la cuenta
-  contacts/            contactos, solicitudes y bloqueos
-  chat/                mensajes, resúmenes, adjuntos, preferencias y menciones
-  groups/              grupos, claves de grupo y sus rutas
-  stories/             historias
-  calls/               llamadas y su señalización
-  stickers/            catálogo, biblioteca pública y paquete bbot animado pre-renderizado
-  push/                notificaciones push (VAPID)
-  realtime/            WebSocket: framing, cifrado de frames, envío a los clientes y mensajes
-  http/                router, respuestas, cabeceras, sobre cifrado y arranque de los servidores
-  db/                  base de datos: apertura, sentencias, transacciones y esquema
-  crypto/              llave maestra, cifrado en reposo, cifrado en la nube y claves del canal
-  shared/              validaciones, límites, tipos y utilidades puras
-  meta/                configuración pública y health check
-ops/                   scripts de operación, partidos por dominios (se ejecutan a mano)
-  install/             ensure-deps.js (preflight de librerías, npm run deps),
-                       check-native.js (postinstall) y build-sqlite.js (npm run rebuild:sqlite)
-  runtime/supervisor.js   arranca el servidor y lo revive si se cae (npm start)
-  net/tunnel.js        publica el servidor con Cloudflare (npm run tunnel)
-  backup/backup.js     copia consistente de las bases (npm run backup)
-  auth/owner-credentials.js   credencial del propietario (npm run owner: init, credential, rotate, check…)
-  crypto/              reencrypt-master.js (motor de rotación de la llave), repair-unreadable-auth-keys.js
-                       (npm run repair) y repair-double-encrypted.js (npm run repair:double-encrypted)
-  db/                  db-viewer.js + db-viewer/ (npm run dbview, 127.0.0.1:3001) y
-                       sqliteview.js + sqliteview/ (npm run sqliteview, 127.0.0.1:3002)
-  data/                generate-emoji-data.js (npm run generate:emojis) y
-                       generate-animated-bbot-pack.js (pack bbot procedural)
-  config/env-writer.js escritura atómica de secretos del .env
-public/                el cliente web (PWA): las páginas sueltas en la raíz
-                       (index.html, login.html, profile.html, view.html, stories.html,
-                       privacy.html, group-*.html, sticker-creator.html, sw.js y
-                       transport-crypto.js —shims de 1-4 líneas— y manifest.webmanifest)
-  js/                  la lógica: sw.js (service worker real), transport.js y
-                       transport-crypto.js (primitivas), appearance.js, popmenu.js,
-                       autogrow.js, avatar-editor.js, group-create.js,
-                       emoji-picker.js, animated-webp.js, local-data.js,
-                       interaction-guard.js y vendor/ (caras bbot)
-  css/                 theme.css, login.css, popmenu.css, fonts.css, emoji-picker.css,
-                       avatar-editor.css, group-*.css, sticker-editor.css
-                       (liquid-glass.css está vacío)
-  files/               datos de emojis; image/ iconos webp; fonts/ Outfit
-Si faltan stickers bbot o cambia la versión del paquete, el servidor regenera
-al arrancar (usa rasterizador SVG y codificador WebP portables basados en
-WebAssembly, sin depender de programas instalados en el sistema) las 30
-expresiones como WebP animados de
-7 segundos, con miradas, parpadeos y varias reacciones por animación, y guarda
-los resultados como blobs cifrados en la base de datos. El generador procesa
-una expresión a la vez e informa en la terminal el porcentaje de fotogramas
-renderizados y codificados. No se sirven ni se guardan archivos del paquete
-en `public/`; las rutas antiguas de mensajes se resuelven desde la biblioteca.
-Las fuentes del generador están en `ops/data/generate-animated-bbot-pack.js` (generación procedural con semilla por expresión, sin assets externos).
-docs/                  documentación (ver el índice final)
-test/                  pruebas unitarias y de integración, partidas por dominio
-                         (node --test; 56 ficheros .test.js, 292 casos):
-  auth/  calls/  chat/  client/  crypto/  db/  groups/  http/
-  profile/  push/  runtime/  shared/  stickers/
-  bootstrap.js y helpers.js en la raíz son el arnés común
-.github/workflows/ci.yml        CI: npm ci + npm test
-data/                  persistencia (sobrevive reinicios; no se versiona)
-  zlapy.db             SQLite: usuarios, mensajes, contactos, grupos, historias y llamadas
-  zlapy-blob.db       archivos e imágenes deduplicados por hash SHA-256
-backups/               respaldos manuales (no se versiona)
-cert.pem / key.pem     HTTPS autofirmado (para cámara/micrófono en el móvil)
-.zlapy.pid             PID del servidor hijo mientras corre el supervisor (no se versiona)
-```
-
-Mapa fichero por fichero (qué hace cada uno, qué exporta, dónde tocar para cada
-tarea): [`docs/FICHEROS.md`](docs/FICHEROS.md).
-
----
-
-## Pruebas y CI
+| `npm start` | Preflight de dependencias y servidor supervisado |
+| `node server.js` | Arranque directo para depurar, sin reinicio automático |
+| `npm run deps` | Comprueba e instala dependencias ausentes o dañadas |
+| `npm run rebuild:sqlite` | Compila el binario nativo de `better-sqlite3` |
+| `npm test` | Ejecuta todas las pruebas |
+| `npm run backup` | Crea un respaldo consistente |
+| `npm run owner -- <comando>` | Gestiona credencial, integridad y recuperación |
+| `npm run tunnel` | Inicia Cloudflare Tunnel con la configuración local |
+| `npm run termux` | Instala toolchain, compila SQLite y arranca en Termux |
+
+El supervisor vigila `/healthz` y los latidos IPC, aplica backoff y cierra el hijo
+de forma ordenada. El código 78 exige corregir la credencial; el 79 activa la
+instalación de dependencias. Los errores globales se registran también en
+`data/log/errors.log`.
+
+El túnel requiere `cloudflared`, `zty.yml` y el token **solo en `.env`**; nunca lo
+pongas en `zty.yml`. Consulta la configuración y las precauciones de exposición en
+[docs/INSTALACION.md](docs/INSTALACION.md#7-cloudflare-tunnel).
+
+## Pruebas
 
 ```bash
 npm test
 ```
 
-La suite (292 casos en 56 ficheros, todos en verde) cubre:
-
-- **Rutas HTTP** sobre instancias aisladas (directorio de datos y puerto
-  temporales): registro, login, contactos, aceptación, mensajes, grupos,
-  historias, llamadas, notas, push y borrados.
-- **WebSocket**: handshake, frames, ensamblado de fragmentos, presencia y
-  señalización de llamadas.
-- **Regresiones de seguridad**: los 45 hallazgos de la auditoría ofensiva del
-  2026-10-19, cada uno con su prueba.
-- **Cifrado en la nube**: derivación de claves, sobres, firmas, ventana
-  anti-repetición y migración.
-- **Cifrado del canal**: primitivas del cliente contra las de Node, sobre HTTP
-  ida y vuelta, rechazo de sobres manipulados o caducados y frames WebSocket
-  cifrados, además de la compatibilidad con clientes en claro.
-- **Supervisor**: arranque, health check y reinicio del hijo.
-
-La CI (`.github/workflows/ci.yml`) ejecuta `npm ci` + `npm test` en cada push
-con Node 22. `package-lock.json` está versionado, así que las instalaciones
-son reproducibles.
-
----
-
-## Copias de seguridad
+Equivale a:
 
 ```bash
-npm run backup                 # → backups/zlapy-backup-<fecha>/
-npm run backup -- /sdcard/copia   # destino a elegir
+node --test --require ./test/bootstrap.js "test/**/*.test.js"
 ```
 
-Copia de forma **consistente** las dos bases (con la API `backup()` de SQLite,
-segura incluso con el servidor corriendo y WAL activo) y la llave maestra, con
-permisos 0600.
+Las pruebas usan puertos libres y directorios temporales, sin utilizar los datos
+de la instalación. CI ejecuta Node 22, `npm ci`, `npm audit --audit-level=high` y
+`npm test`.
 
-> **La credencial y las bases siempre van JUNTAS**: sin `DB_USER` + `DB_PASSWORD`
-> (la línea del `.env`), los mensajes, historias y adjuntos del respaldo son
-> irrecuperables. Guarda una copia del `.env` (o de esa línea) en un lugar
-> distinto al disco de la aplicación.
+## Estructura y documentación
 
-Para **restaurar**:
-
-1. Para el servidor (`Ctrl+C` o `SIGTERM`: cierra ordenado con checkpoint WAL).
-2. Copia `zlapy.db` y `blob.db` del respaldo a la carpeta de datos (`DATA_DIR`,
-   por defecto `data/`) y define la MISMA credencial (`DB_USER` + `DB_PASSWORD`) en el `.env`
-   (la clave del respaldo).
-3. Arranca y comprueba `http://localhost:1820/healthz` → `{"ok":true,...}`.
-
-> Copiar solo el `.db` con el servidor corriendo **no** es un respaldo válido:
-> el WAL queda fuera. Usa siempre `npm run backup` (o `db.backup()`).
-
----
-
-## Operación
-
-- **Health check:** `GET /healthz` responde `{"ok":true,"schema":12,...}`
-  comprobando ambas bases; es público y no expone datos.
-- **Cierre ordenado:** con `SIGTERM`/`SIGINT` (o el mensaje IPC `stop` del
-  supervisor) el servidor deja de aceptar conexiones, cierra los sockets de los
-  clientes, hace *checkpoint* del WAL y cierra las bases antes de salir.
-- **Supervisor:** `npm start` ejecuta antes `ensure-deps` (instala las
-  dependencias que falten) y luego el supervisor (backoff, watchdog de salud,
-  latido y cortacircuito; publica el PID del hijo en `.zlapy.pid`). El
-  supervisor habla con el servidor por un canal IPC: el hijo avisa `ready` al
-  escuchar, `deps-missing` si le falta una librería y latidos cada 10 s; el
-  padre avisa `stop` al apagar. Mientras el hijo está **vivo** nunca se le
-  mata ni se le relanza.
-  Códigos de salida que trata especialmente: **78** (la credencial no abre la
-  base: no reintenta, hace falta intervención), **79** (falta una dependencia:
-  la instala y relanza sin backoff, hasta `SUPERVISOR_DEPS_INSTALL_ATTEMPTS=3`)
-  y **75** (la credencial cambió con el servidor vivo: reinicio limpio).
-  El cortacircuito (`exit 70`) protege solo de los **fallos de arranque**: una
-  caída en caliente se reinicia siempre con backoff topado y una alerta, sin
-  dejar el servicio apagado.
-- **Errores globales:** `src/process-guards.js` registra cualquier excepción
-  no capturada en consola y en `data/log/errors.log` (acotado a 2 MB). Los
-  errores **no fatales** no tumban el servidor; los **fatales** (base corrupta,
-  disco lleno, permisos) cierran las bases y salen con exit 1, y el supervisor
-  levanta un proceso nuevo.
-- **Túnel de Cloudflare:** `npm run tunnel` publica la instancia en internet.
-  Necesita `cloudflared` instalado, `CLOUDFLARE_TUNNEL_TOKEN` en `.env` y
-  `zty.yml` (copiado de `zty.yml.example`) con tu dominio. El token **no**
-  viaja en `argv`: queda en el entorno del proceso.
-- **CI:** ver «Pruebas y CI».
-
----
-
-## Seguridad
-
-Estado tras la auditoría ofensiva del **2026-10-19** (9 agentes, 45 hallazgos
-validados).
-
-**Lo que bloquea el servicio:**
-- Un frame WebSocket malformado solo cierra **esa** conexión: el manejador
-  valida el tipo de los identificadores que llegan del cliente y va dentro de un
-  `try/catch`.
-- El ensamblado de fragmentos WebSocket es **O(1) por fragmento** (contador
-  acumulado) y con tope de fragmentos: un mensaje de 256 KB ya no bloquea el
-  event loop de todos los usuarios.
-- El supervisor distingue fallo de arranque de caída en caliente y **no deja el
-  servicio apagado** por un crash-loop.
-
-**Lo que protege los datos:**
-- Una cita de respuesta se **resuelve en el servidor** contra el mensaje real:
-  si no existe o no es de esa conversación, se descarta. Se acabaron el XSS
-  almacenado (`reply.id` en un `onclick`) y el preview atribuido a otra persona.
-- `/seen` solo destruye los mensajes de **una sola vista**.
-- Referenciar el hash de un adjunto que ya existe exige **tener acceso a él**
-  (mismo control que la galería).
-- Borrar la cuenta **exige la contraseña actual**; la interfaz la pide antes
-  de enviar la solicitud.
-- El bloqueo de intentos de login se guarda por **cuenta e IP**.
-- Los resúmenes, notas, bios, llamadas, claves push y la clave VAPID se
-  cifran en reposo; los mensajes se cifran en la nube con clave por cuenta.
-- El cuerpo de los `POST` y los frames WebSocket se cifran con una clave de
-  sesión X25519 aunque el servidor se sirva por HTTP; el sobre se ata a método,
-  ruta, marca de tiempo y estado, y la clave privada del servidor se deriva de
-  la llave maestra (no hay un secreto nuevo que custodiar).
-- Las cabeceras de respuesta incluyen CSP por petición, HSTS (cuando la
-  conexión va cifrada), `Permissions-Policy`, COOP y CORP.
-
-**Lo que se ha endurecido en el cliente:** los `onclick` usan un saneador propio
-para cadenas JS (`jsArg`), el cierre de sesión borra la identidad de la cuenta
-anterior del almacenamiento local, los stickers remotos solo se cargan desde
-hosts permitidos y el overlay de depuración no se activa con `?dbg`.
-
-**Lo que sigue abierto (no es un bug del código):** el túnel de Cloudflare
-expone la instancia a internet y el producto está diseñado para una red de
-confianza local; conviene revisar las reglas de la cuenta de Cloudflare
-(`Access`/WAF) antes de dejarlo abierto.
-
----
-
-## Resolución de problemas
-
-| Síntoma | Causa habitual | Solución |
-| --- | --- | --- |
-| «Puerto ocupado» | Ya hay una instancia en el mismo puerto | `PORT=3001 npm start`, o para el supervisor: mata la otra instancia |
-| `Cannot find module 'better-sqlite3'` | Falta el binario nativo | Compílalo en el sitio: `cd node_modules/better-sqlite3 && npm exec -- node-gyp rebuild --release --force_build=1` (`npm rebuild better-sqlite3` **no** compila: el paquete no trae script `install`) |
-| «Database crypto version is incompatible» | La base es de un formato anterior | Restaura desde un respaldo de `backups/` o empieza con una base nueva (no hay migraciones) |
-| «falta la credencial del propietario» | `DB_USER`/`DB_PASSWORD` no están en el `.env` (o no abren esta base) | Recupera la credencial del kit de recuperación y ponla en el `.env`; **no** la pierdas: sin ella los datos son irrecuperables |
-| El móvil no abre la cámara | Contexto no seguro | Usa la dirección `https://` y acepta el certificado |
-| «Marca de tiempo fuera de rango» al enviar | El reloj del dispositivo se desvía más de 60 s | Activa la hora automática en el dispositivo y recarga |
-| Las notificaciones push no llegan | El navegador exige HTTPS o permiso | Sirve por `https://`, concede el permiso y prueba con el botón de Ajustes |
-| El interruptor de push no se activa y el diagnóstico dice «rechazó el servicio de push» | Chromium no consigue token de FCM: sin Google Play services (o microG sin registrar), red/VPN/DNS que bloquea los hosts de registro de Google, o push desactivado en el navegador (Brave) | La línea de diagnóstico ahora dice cuál es. Con la app abierta los avisos entran igual por la conexión en tiempo real; para push con la app cerrada prueba Firefox o quita el filtro de red |
-| El supervisor se reinicia en bucle | Fallo de arranque (p. ej. puerto ocupado) | Arranca `node server.js` a mano para ver el error real |
-| El cliente no carga | Ficheros estáticos bloqueados por un proxy | Comprueba que el proxy sirve `/` y `/sw.js` |
-
-Guía completa: [`docs/INSTALACION.md`](docs/INSTALACION.md#10-diagnóstico).
-
----
-
-## Documentación
+```text
+server.js          entrada del servidor
+src/               backend por dominios
+public/            cliente web y PWA
+ops/               instalación, supervisor, credenciales y mantenimiento
+test/              pruebas unitarias y de integración
+data/              bases y logs; no se versiona
+backups/           respaldos; no se versiona
+docs/              referencias técnicas
+```
 
 | Documento | Contenido |
 | --- | --- |
-| [`docs/INSTALACION.md`](docs/INSTALACION.md) | Instalación en Linux, Termux, Windows y macOS; arranque; systemd, pm2 y Termux:Boot; configuración; certificados; respaldos; diagnóstico |
-| [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md) | Componentes, arranque, ciclo de una petición, estado en memoria, algoritmos (privacidad, paginación, caché, límites, borrados, grupos, historias), WebSocket, llamadas y operación |
-| [`docs/CRIPTOGRAFIA.md`](docs/CRIPTOGRAFIA.md) | Llave maestra, cifrado en reposo (`PCE1`/`PCE2`/`PCE3`), derivación MTProto 2.0, firmas Ed25519, rotación, migración y modelo de amenazas |
-| [`docs/ESQUEMA-BD.md`](docs/ESQUEMA-BD.md) | Esquema v3 tabla por tabla, índices, cascadas de borrado, base de adjuntos e invariantes |
-| [`docs/API.md`](docs/API.md) | Todas las rutas HTTP (método, autenticación, cuerpo y respuesta) y el protocolo del WebSocket |
-| [`docs/FICHEROS.md`](docs/FICHEROS.md) | Mapa fichero por fichero: qué hace cada uno, qué exporta y dónde tocar para cada tarea |
+| [Instalación y operación](docs/INSTALACION.md) | Plataformas, servicios, TLS, túnel, restauración y diagnóstico |
+| [Arquitectura](docs/ARQUITECTURA.md) | Componentes y flujo de peticiones |
+| [Criptografía](docs/CRIPTOGRAFIA.md) | Llaves, formatos y límites del modelo de seguridad |
+| [Esquema de BD](docs/ESQUEMA-BD.md) | Tablas, índices y reglas de borrado |
+| [API](docs/API.md) | Rutas HTTP y protocolo WebSocket |
+| [Mapa de archivos](docs/FICHEROS.md) | Organización del código |
+
+## Diagnóstico rápido
+
+| Síntoma | Acción |
+| --- | --- |
+| Puerto ocupado | Detén la otra instancia o usa otro `PORT` |
+| Falla `better-sqlite3` | Instala el toolchain y ejecuta `npm run rebuild:sqlite` |
+| Salida 78 | Restaura la credencial que corresponde a la base |
+| Cámara o push no funcionan | Usa HTTPS y concede los permisos del navegador |
+| Reinicios repetidos | Ejecuta `node server.js` para ver el error de arranque |
+| Error de hora en el cliente | Activa la hora automática y recarga |
+
+Más causas y soluciones: [docs/INSTALACION.md](docs/INSTALACION.md#9-diagnóstico).

@@ -30,6 +30,17 @@ const { Stmt } = require('../db/statements.js');
 
 const MAX_STICKER_BYTES = 8 * 1024 * 1024;
 const STICKER_DATA_RE = /^data:(image\/(?:webp|gif));base64,([a-z0-9+/]+={0,2})$/i;
+const GIPHY_FETCH_TIMEOUT_MS = 8000;
+
+/* Una conexión upstream colgada no puede dejar la respuesta del proxy abierta
+ * para siempre. La MISMA señal cubre fetch y la lectura posterior del cuerpo. */
+async function fetchGiphy(endpoint, params) {
+    const upstream = await fetch(`${endpoint}?${params}`, {
+        signal: AbortSignal.timeout(GIPHY_FETCH_TIMEOUT_MS)
+    });
+    const body = await upstream.text();
+    return { upstream, body };
+}
 
 function stickerDimensions(mime, bytes) {
     if (mime === 'image/gif') {
@@ -211,15 +222,11 @@ async function getGiphySearch(req, res, url, data, actor) {
     if (limit !== null && /^\d{1,3}$/.test(limit)) params.set('limit', limit);
     if (query) params.set('q', query);
     const endpoint = query ? 'https://api.giphy.com/v1/gifs/search' : 'https://api.giphy.com/v1/gifs/trending';
-    (async () => {
     try {
-    const upstream = await fetch(`${endpoint}?${params}`);
-    const body = await upstream.text();
-    res.writeHead(upstream.ok ? 200 : 502, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...securityHeaders });
-    res.end(body);
+        const { upstream, body } = await fetchGiphy(endpoint, params);
+        res.writeHead(upstream.ok ? 200 : 502, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...securityHeaders });
+        res.end(body);
     } catch { json(res, 502, { error: 'Giphy no disponible.' }); }
-    })();
-    return;
 }
 
 function getStickers(req, res, url, data, actor) {
@@ -317,6 +324,7 @@ function postStickers(req, res, url, data, actor) {
 
 
 module.exports = {
+    fetchGiphy,
     getGiphySearch,
     getStickerDiscover,
     getStickers,

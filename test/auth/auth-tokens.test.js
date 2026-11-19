@@ -208,11 +208,11 @@ test('V-10: cambiar de cuenta NO revoca los tokens de otros dispositivos', async
         const jarB = jarFrom(betoRes.setCookie);
 
         const jar = {
-            chatlocal_session: jarA.chatlocal_session,
-            [`chatlocal_account_${anaId}`]: jarA[`chatlocal_account_${anaId}`],
-            [`chatlocal_account_${betoId}`]: jarB[`chatlocal_account_${betoId}`]
+            zlapy_session: jarA.zlapy_session,
+            [`zlapy_account_${anaId}`]: jarA[`zlapy_account_${anaId}`],
+            [`zlapy_account_${betoId}`]: jarB[`zlapy_account_${betoId}`]
         };
-        const tokenAnaOriginal = jar.chatlocal_session;
+        const tokenAnaOriginal = jar.zlapy_session;
 
         // Cambio a beto: NO se toca el rid de ana.
         const ida = await fetchWithCookies(srv.base, '/auth/switch', jar, { accountId: betoId });
@@ -228,7 +228,7 @@ test('V-10: cambiar de cuenta NO revoca los tokens de otros dispositivos', async
         // Ana sigue conectada en este navegador: su cookie de cuenta fue
         // re-emitida con el rid ya rotado, así que se puede VOLVER sin
         // contraseña.
-        assert.notEqual(jar[`chatlocal_account_${anaId}`], jarA[`chatlocal_account_${anaId}`],
+        assert.notEqual(jar[`zlapy_account_${anaId}`], jarA[`zlapy_account_${anaId}`],
             'la cookie de la cuenta abandonada se renueva');
         const vuelta = await fetchWithCookies(srv.base, '/auth/switch', jar, { accountId: anaId });
         assert.equal(vuelta.status, 200, 'volver a la cuenta abandonada funciona sin contraseña');

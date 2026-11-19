@@ -252,18 +252,30 @@ function loadFromDb() {
 // perder el historial, el contenido del usuario se RE-CIFRA con la clave
 // nueva y solo despues se sustituye la anterior.
 function regenerateAuthKey(userId) {
-    /* Una sola transacción para toda la operación. Antes la clave nueva se
-       instalaba y el contenido se re-cifra fila a fila con `run` sueltos: un
-       fallo a medias (disco lleno, SQLITE_BUSY) dejaba parte del historial
-       cifrado con la clave anterior y la nueva a la vez, es decir ilegible
-       para siempre y sin vuelta atrás. Ahora, o se hace todo o no se hace
-       nada. */
-    return db.transaction(() => regenerateAuthKeyInner(userId))();
+    /* La transacción y la caché comparten el mismo resultado: la clave vieja
+       solo se olvida DESPUÉS del commit. Si algo falla, SQLite y la caché
+       vuelven a la clave anterior y se poda cualquier contador de la nueva. */
+    const previous = authKeyRecord(userId);
+    const newKey = mtproto.generateAuthKey();
+    let result;
+    try {
+        result = db.transaction(() => regenerateAuthKeyInner(userId, previous, newKey))();
+    } catch (error) {
+        // Este catch es SOLO para rollback de la transacción. La limpieza de la
+        // clave nueva es best-effort y no puede enmascarar el error original.
+        if (previous) authKeys.cacheAuthKey(userId, previous);
+        else authKeys.authKeyCache.delete(userId);
+        mtproto.forgetSession(newKey);
+        messageCrypto.forgetSigningKey(userId);
+        throw error;
+    }
+    // Después del commit jamás se restaura previous: SQLite y RAM conservan la
+    // nueva aunque la poda del volcado falle.
+    if (previous) mtproto.forgetSession(previous.key);
+    return result;
 }
 
-function regenerateAuthKeyInner(userId) {
-    const oldRec = authKeyRecord(userId);
-    const newKey = mtproto.generateAuthKey();
+function regenerateAuthKeyInner(userId, oldRec, newKey) {
     const newKeyId = mtproto.authKeyId(newKey);
     const now = Date.now();
     let reencrypted = 0;
@@ -271,8 +283,12 @@ function regenerateAuthKeyInner(userId) {
     // La clave nueva se instala ANTES de re-cifrar: asi las firmas se rehacen
     // con la clave nueva (si se re-cifrara antes, los mensajes quedarian
     // firmados con la clave vieja y dejarian de verificarse).
-    Stmt.replaceAuthKey.run(encryptAtRest(newKey.toString('hex'), aadAuthKey(userId)), newKeyId, now, userId);
-    authKeys.authKeyCache.delete(userId);
+    // UPSERT: una reparación pudo eliminar la fila ilegible. UPDATE a secas
+    // dejaría una clave solo en RAM que dejaría de existir al reiniciar.
+    Stmt.upsertAuthKey.run(userId, encryptAtRest(newKey.toString('hex'), aadAuthKey(userId)), newKeyId, now, now);
+    // Las firmas y lecturas durante la rotación usan la nueva clave; la sesión
+    // de la anterior sigue disponible hasta que el wrapper confirme el commit.
+    authKeys.cacheAuthKey(userId, { key: newKey, keyId: newKeyId });
     messageCrypto.forgetSigningKey(userId);
 
     /* M1: el re-cifrado conserva (y añade) el contexto de cada pieza, así que
@@ -283,7 +299,7 @@ function regenerateAuthKeyInner(userId) {
         const blob = mtproto.encrypt(newKey, plain, context).blob;
         return context ? PCE3A_PREFIX + blob.slice('PCE3:'.length) : blob;
     };
-    /* Descifra con la clave ANTERIOR. La replaceAuthKey ya instaló la nueva,
+    /* Descifra con la clave ANTERIOR. El upsert ya instaló la nueva,
        así que `decryptForUser` solo conocería la nueva: las tablas que la
        usaran quedarían cifradas con la clave vieja PARA SIEMPRE. Ese fue el
        fallo que dejaba los resúmenes (y notas, perfil, llamadas, push e
@@ -460,6 +476,8 @@ function accountByName(name) {
    `removedGroups` son los grupos que desaparecieron con la cuenta: sus claves
    'group:<gid>' también se quitan de los silenciados de los demás. */
 function purgeUserFromMemory(id, username, removedGroups = []) {
+    // La auth_key y sus contadores MTProto no sobreviven a la cuenta en RAM.
+    authKeys.forgetAuthKey(id);
     const acc = users.get(id);
     if (acc) for (const s of [...(acc.sockets || [])]) { try { s.destroy(); } catch { } }
     users.delete(id);
@@ -599,13 +617,9 @@ function writeUserRows(user) {
             profile.alwaysPush === true ? 1 : 0, now
         );
     }
-    // Chats silenciados
-    Stmt.deleteMutedPeers.run(user.id);
-    for (const peer of Array.isArray(profile.mutedChatPeers) ? profile.mutedChatPeers : []) {
-        if (typeof peer !== 'string' || !peer) continue;
-        Stmt.insertMutedPeer.run(user.id, byName(peer)?.id || null,
-            encField('user_muted_peers.peer_name', peer));
-    }
+    // Chats silenciados: mismo guardado que la vía quirúrgica, sin duplicar el
+    // filtrado/cifrado en dos bucles que podían divergir.
+    saveMutedPeers(user, profile);
     // Nota personal (estado)
     // La nota personal se cifra en reposo.
     if (note && typeof note === 'object') Stmt.upsertUserNote.run(user.id, encryptForUser(user.id, JSON.stringify(note), ctxUserNote(user.id)), note.ts || 0);

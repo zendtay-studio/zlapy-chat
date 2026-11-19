@@ -30,9 +30,11 @@ test('las plantillas de entorno y túnel apuntan al mismo puerto', () => {
 });
 
 test('la documentación de instalación no anuncia 3000 como puerto actual', () => {
-    assert.match(leer('README.md'), /\| `PORT` \| `1820` \|/);
-    assert.match(leer('docs/INSTALACION.md'), /\| `PORT` \| `1820` \|/);
-    assert.match(leer('docs/API.md'), /por defecto `1820`/);
-    assert.doesNotMatch(leer('README.md'), /puerto 3000|localhost:3000/);
-    assert.doesNotMatch(leer('docs/INSTALACION.md'), /puerto 3000|Puerto 3000|localhost:3000/);
+    // Comprueba el dato, no un formato de tabla que impediría simplificar los
+    // documentos o reorganizar sus secciones.
+    for (const archivo of ['README.md', 'docs/INSTALACION.md', 'docs/API.md']) {
+        assert.match(leer(archivo), /1820/, `${archivo} debe documentar el puerto actual`);
+        assert.doesNotMatch(leer(archivo), /puerto 3000|localhost:3000/i,
+            `${archivo} no debe anunciar el puerto viejo`);
+    }
 });

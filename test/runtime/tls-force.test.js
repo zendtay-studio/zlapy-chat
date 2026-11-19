@@ -53,7 +53,7 @@ test('sin certificados y FORCE_TLS por defecto: arranca en claro y avisa', async
         const login = await api(srv.base, 'POST', '/auth/login',
             { username: 'anasincert', password: 'pruebachat1' });
         assert.equal(login.status, 200);
-        assert.match(login.setCookie, /chatlocal_session=/);
+        assert.match(login.setCookie, /zlapy_session=/);
         assert.ok(!/Secure/i.test(login.setCookie),
             'la cookie no debe llevar Secure cuando no hay HTTPS');
     } finally { await stop(srv); }

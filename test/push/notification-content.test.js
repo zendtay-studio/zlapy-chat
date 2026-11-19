@@ -49,7 +49,7 @@ test('el avatar de push es público y el normal exige sesión', async () => {
         assert.equal(normal.status, 401);
 
         // Con sesión, la normal sí sirve (no cambió su comportamiento).
-        const conSesion = await fetch(srv.base + '/avatar/ana.svg', { headers: { Cookie: 'chatlocal_session=' + ana.cookie } });
+        const conSesion = await fetch(srv.base + '/avatar/ana.svg', { headers: { Cookie: 'zlapy_session=' + ana.cookie } });
         assert.equal(conSesion.status, 200);
     } finally {
         await stop(srv);

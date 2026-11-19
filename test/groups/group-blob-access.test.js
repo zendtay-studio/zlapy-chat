@@ -14,7 +14,7 @@ function adjunto(texto) {
     return { hash, data: `data:image/png;base64,${buf.toString('base64')}` };
 }
 const descargar = (base, cookie, hash) => fetch(`${base}/blob/${hash}`, {
-    headers: { Cookie: `chatlocal_session=${encodeURIComponent(cookie)}` }
+    headers: { Cookie: `zlapy_session=${encodeURIComponent(cookie)}` }
 });
 
 test('quien entra en un grupo público no lee los adjuntos anteriores', async () => {
