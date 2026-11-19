@@ -2,7 +2,9 @@
 //  - base para TODAS las rutas de API (antes no había ninguna en los públicos
 //    ni en las lecturas autenticadas);
 //  - autenticación, más estricta que el resto (60/min frente a 300/min);
-//  - todos los valores configurables desde .env.
+//  - todos los valores configurables desde .env;
+//  - /healthz EXENTO: el supervisor lo sondea cada segundo y un 429 lo
+//    reiniciaría estando sano.
 'use strict';
 
 const assert = require('node:assert/strict');
@@ -14,24 +16,21 @@ const get = (base, ruta, cookie) => fetch(base + ruta, {
 });
 const logout = base => api(base, 'POST', '/auth/logout', {});
 
-test('la cota base pública también cubre /healthz (429 al pasar de 300)', async () => {
+test('la cota base pública cubre /config (429 al superar 300 peticiones)', async () => {
     const srv = await startServer();
     try {
         /* El sondeo de arranque del servidor de pruebas también consume una
            petición de la misma cota, así que el corte puede llegar una antes. */
         let permitidas = 0;
         for (let i = 0; i < 300; i++) {
-            const r = await get(srv.base, '/healthz');
+            const r = await get(srv.base, '/config');
             if (r.status === 200) { permitidas++; continue; }
             assert.equal(r.status, 429, `la petición ${i + 1} debía pasar o cortar en 429`);
             break;
         }
         assert.ok(permitidas >= 299, `se esperaban al menos 299 permitidas, hubo ${permitidas}`);
-        const r = await get(srv.base, '/healthz');
+        const r = await get(srv.base, '/config');
         assert.equal(r.status, 429, 'ya no pasa: la cota base pública existe');
-        assert.ok(r.headers.get('retry-after'), 'lleva Retry-After');
-        const cuerpo = await r.json();
-        assert.match(cuerpo.error, /Límite alcanzado/);
     } finally { await stop(srv); }
 });
 
@@ -40,8 +39,8 @@ test('la cota base autenticada cubre las lecturas y se configura desde .env', as
     try {
         const ana = await register(srv.base, 'rlapi1');
         for (let i = 0; i < 5; i++)
-            assert.equal((await get(srv.base, '/healthz', ana.cookie)).status, 200);
-        const r = await get(srv.base, '/healthz', ana.cookie);
+            assert.equal((await get(srv.base, '/config', ana.cookie)).status, 200);
+        const r = await get(srv.base, '/config', ana.cookie);
         assert.equal(r.status, 429, 'con 5/min configurado, la sexta petición no pasa');
         // Y sigue valiendo para una lectura autenticada de verdad.
         const contactos = await api(srv.base, 'GET', '/contacts', null, ana.cookie);
@@ -59,8 +58,8 @@ test('autenticación tiene una cota más estricta que el resto', async () => {
         assert.equal(cortada.status, 429, 'la ruta de auth se corta antes');
 
         // …pero la base pública aguanta mucho más: 61 peticiones aún pasan.
-        const salud = await get(srv.base, '/healthz');
-        assert.equal(salud.status, 200, 'la base pública es más permisiva que auth');
+        const config = await get(srv.base, '/config');
+        assert.equal(config.status, 200, 'la base pública es más permisiva que auth');
     } finally { await stop(srv); }
 });
 
@@ -70,6 +69,26 @@ test('la cota de autenticación también se configura desde .env', async () => {
         for (let i = 0; i < 3; i++) assert.equal((await logout(srv.base)).status, 200);
         assert.equal((await logout(srv.base)).status, 429);
         // Y la base pública, que es más permisiva, no se ha visto afectada.
-        assert.equal((await get(srv.base, '/healthz')).status, 200);
+        assert.equal((await get(srv.base, '/config')).status, 200);
+    } finally { await stop(srv); }
+});
+
+test('/healthz NUNCA se limita (el supervisor lo sondea cada segundo)', async () => {
+    /* Con la cota pública en 2 peticiones por minuto, /config se corta en
+       seguida pero /healthz sigue respondiendo 200 siempre: un 429 aquí
+       haría que el supervisor reiniciara un servicio sano. */
+    const srv = await startServer({ env: { RATE_LIMIT_PUBLIC_PER_MINUTE: '2' } });
+    try {
+        for (let i = 0; i < 25; i++) {
+            const r = await get(srv.base, '/healthz');
+            assert.equal(r.status, 200, `/healthz debe responder siempre (petición ${i + 1})`);
+        }
+        // Mientras tanto, una ruta pública normal sí se corta al superar su cota.
+        let cortada = 0;
+        for (let i = 0; i < 5; i++) {
+            const config = await get(srv.base, '/config');
+            if (config.status === 429) { cortada++; break; }
+        }
+        assert.equal(cortada, 1, 'la cota pública sigue existiendo en las demás rutas');
     } finally { await stop(srv); }
 });

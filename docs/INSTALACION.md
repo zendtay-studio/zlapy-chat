@@ -365,6 +365,13 @@ cp .env.example .env
 chmod 600 .env          # contiene la credencial del propietario: solo tú debes leerlo
 ```
 
+Al arrancar, `src/config.js` también **completa el `.env` de forma aditiva**
+desde `.env.example`: si la plantilla incorpora variables o comentarios nuevos,
+se añaden solo los que falten en tu archivo. **Tus valores y textos existentes
+no se reemplazan**. La operación es idempotente y también puede ejecutarse a
+mano con `node ops/config/sync-env-example.js` (sin mostrar secretos por
+consola).
+
 Los valores se **validan al arrancar** (`src/config.js`): un valor fuera de
 rango aborta el arranque con un mensaje explícito
 (`PORT must be between 1 and 65535`). **Después de editar el `.env` hay que

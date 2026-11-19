@@ -66,7 +66,10 @@ async function startServer(options = {}) {
             PORT: String(port),
             DATA_DIR: dataDir,
             FORCE_TLS: 'false',
-            BIND_HOST: 'auto',
+            /* Misma interfaz que comprueba freePort(): si el hijo escucha en
+               0.0.0.0, otro test puede ocupar el puerto en loopback (o al
+               revés) y las peticiones acaban en el servidor equivocado. */
+            BIND_HOST: 'loopback',
             /* La llave maestra se DERIVA de la credencial del propietario: el
                servidor de prueba necesita una. En una base nueva la inicializa
                con ella (como haría la instalación real con su .env). */

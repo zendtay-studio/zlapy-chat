@@ -57,13 +57,16 @@ const reactionLimiter = createMessageRateLimiter(RL.reaction || 120, 60 * 1000);
 const keyUploadLimiter = createMessageRateLimiter(RL.keyUpload || 30, 60 * 1000);
 /* Cota BASE para TODAS las rutas de API (no estáticos). Antes las lecturas
    autenticadas y los endpoints públicos no tenían ninguna: cualquiera podía
-   martillear /healthz, /config, /avatar/push o /chats/summary sin tope.
+   martillear /config, /avatar/push o /chats/summary sin tope.
    - autenticado: 600 peticiones/min por cuenta (10/s);
    - sin sesión: 300 peticiones/min por IP (5/s).
    Las rutas de autenticación NO pasan por aquí: tienen sus propios frenos,
    más estrictos (retardo progresivo por cuenta e IP, cortacircuitos por IP
    y tope de registros por hora), así que nunca quedan más sueltas que el
-   resto de la API. */
+   resto de la API.
+   /healthz está EXENTO: el supervisor lo sondea cada segundo y cuenta
+   cualquier 4xx como «servicio caído», así que un 429 por cuota
+   reiniciaría un servicio que está sano. */
 const apiLimiter = createMessageRateLimiter(RL.api || 600, 60 * 1000);
 const publicApiLimiter = createMessageRateLimiter(RL.public || 300, 60 * 1000);
 /* Autenticación: cota más estricta que la base (60/min por IP, configurable

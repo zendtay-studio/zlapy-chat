@@ -112,8 +112,12 @@ const handleRequest = (req, res) => {
         (req.method === 'POST' && ['/auth/login', '/auth/register', '/auth/logout', '/auth/switch'].includes(url.pathname));
     if (esAuth) {
         if (rejectRateLimited(res, authLimiter, 'ip:' + clientIp(req), CONFIG.rateLimits.auth, 'intentos de autenticación por minuto')) return;
-    } else {
-        const esEstatico = publicPage && !/^\/(avatar|blob|stickers\/blob)\//.test(url.pathname);
+    } else if (url.pathname !== '/healthz') {
+        /* /healthz NUNCA se limita: el supervisor lo sondea cada segundo y
+           cuenta cualquier 4xx como «servicio caído», así que un 429 por
+           cuota reiniciaría un servicio que está sano. */
+        const esEstatico = PUBLIC_EXTENSIONS.has(path.extname(url.pathname).toLowerCase())
+            && !/^\/(avatar|blob|stickers\/blob)\//.test(url.pathname);
         if (!esEstatico) {
             const limiter = authUser ? apiLimiter : publicApiLimiter;
             const clave = authUser ? 'u:' + authUser.id : 'ip:' + clientIp(req);

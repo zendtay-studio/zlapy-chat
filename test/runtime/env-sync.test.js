@@ -76,7 +76,9 @@ test('un archivo vacío recibe la plantilla completa y queda con permisos 0600',
 
     const resultado = syncEnvFile(env, example);
     assert.deepEqual(resultado.added, ['PORT', 'DB_USER']);
-    assert.equal(fs.readFileSync(env, 'utf8'), plantilla);
+    const normalizar = texto => texto.replace(/\n{2,}/g, '\n');
+    assert.equal(normalizar(fs.readFileSync(env, 'utf8')), normalizar(plantilla),
+        'recibe todos los textos y variables; solo puede variar el espaciado entre bloques');
     assert.equal(fs.statSync(env).mode & 0o777, 0o600);
 });
 

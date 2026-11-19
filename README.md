@@ -231,6 +231,8 @@ cp .env.example .env   # crea tu configuración local
 | `RATE_LIMIT_PUBLIC_PER_MINUTE` | `300` | Cota base pública: peticiones por minuto **por IP sin sesión** (5/s) |
 | `RATE_LIMIT_AUTH_PER_MINUTE` | `60` | Cota de autenticación (login, registro, cambio y cierre de cuenta), **más estricta** que el resto (1/s por IP) |
 | `RATE_LIMIT_<NOMBRE>_PER_MINUTE` | ver `.env.example` | Cotas específicas de rutas caras: `GIPHY`, `STICKER_CREATE`, `PROFILE`, `KEY_REGEN`, `STORY`, `STORY_VIEW`, `CONTACT`, `GROUP_CREATE`, `CALL_OFFER`, `CHAT_PREFS`, `PASSWORD_CHECK`, `RECEIPT`, `REACTION`, `KEY_UPLOAD` |
+
+Nota: `/healthz` queda **exento** de toda cota. El supervisor lo sondea cada segundo y trata cualquier 4xx como «servicio caído», así que un 429 por límite de frecuencia reiniciaría un servicio que está sano. Los estáticos de `public/` y el paquete de stickers por defecto tampoco se limitan: son lecturas baratas con caché y la pestaña de stickers carga decenas de imágenes de golpe.
 | `MAX_AUDIO_DURATION_MS` | `60000` | Duración máx. de la grabación de audio |
 | `MAX_HTTP_BODY_BYTES` | `33554432` | Tamaño máx. del cuerpo HTTP (32 MiB) |
 | `MAX_MESSAGE_DATA_CHARS` | `24000000` | Tamaño máx. de los datos multimedia de un mensaje |
