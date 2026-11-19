@@ -358,7 +358,7 @@ Se ejecuta con `npm test` → `node --test --require ./test/bootstrap.js "test/*
 | `test/auth/auth-hardening.test.js` | 167 | Frenos de fuerza bruta por cuenta y por IP, tope de cuerpo en rutas de auth y rechazo de credenciales basura. |
 | `test/auth/account-switch.test.js` | 250 | Cambio de cuenta silencioso: varias sesiones en el mismo navegador, ninguna cuenta desloguea a las demás. |
 | `test/bootstrap.js` | 29 | Arnés común: aparta la base real (`DATA_DIR` temporal por proceso) y aporta la credencial de propietario de prueba. Se carga con `--require`. |
-| `test/helpers.js` | 301 | Utilidad (no es un test): arranca `server.js` como proceso hijo con `DATA_DIR` temporal y puerto libre, y provee `api()`, `register()`, `rawRequest()` y un cliente WebSocket mínimo (`WsClient`) con framing propio, acceso a los textos crudos y envío de texto. |
+| `test/helpers.js` | 304 | Utilidad (no es un test): arranca `server.js` como proceso hijo con `DATA_DIR` temporal y puerto libre, comprobado en `0.0.0.0` para no confundir interfaces ni servidores paralelos, y provee `api()`, `register()`, `rawRequest()` y un cliente WebSocket mínimo (`WsClient`) con framing propio, acceso a los textos crudos y envío de texto. |
 | `test/shared/appearance.test.js` | 90 | Normalización de la apariencia del chat y persistencia del fondo. |
 | `test/auth/auth-tokens.test.js` | 269 | Tokens JWT **stateless** (v10): payload con `checksum` (y sin `ver`), token manipulado/inventado no autentica, rid rotado en la base mata el token, contraseña y cambio de cuenta revocan TODOS los tokens de la cuenta (el logout ya no rota: es local y no mata otras sesiones), cambio de cuenta revoca el token saliente, y el secreto sobrevive al reinicio (el logout tampoco mata el token). |
 | `test/profile/avatar.test.js` | 46 | Identicon SVG estable y determinista. |
@@ -404,7 +404,7 @@ Se ejecuta con `npm test` → `node --test --require ./test/bootstrap.js "test/*
 | `docs/ESQUEMA-BD.md` | 734 | Tablas, columnas, índices y reglas de borrado en cascada. |
 | `docs/ARQUITECTURA.md` | 1547 | Arquitectura del backend: arranque, ciclo HTTP, algoritmos y reglas de negocio. |
 | `docs/CRIPTOGRAFIA.md` | 1893 | El sistema criptográfico completo: llave maestra, PCE1/PCE2/PCE3, firmas y canal de transporte. |
-| `docs/INSTALACION.md` | 1111 | Instalación por plataforma, configuración inicial, permisos y operación. |
+| `docs/INSTALACION.md` | 1124 | Instalación por plataforma, configuración inicial, permisos y operación. |
 | `docs/DECISIONES-AUDITORIA.md` | 264 | Decisiones de diseño tomadas tras las auditorías (V-12, V-18, CSP, SECOA…): qué se decidió no cambiar y por qué, más el estado actual (v9→v12) de las decisiones que parecen fallos sin contexto. |
 | `docs/esquema/esquema.js` | 993 | Datos del visor 2D del esquema de la base (transcritos de `src/db/schema.js`). |
 | `docs/esquema/index.html` | 66 | Página del visor del esquema. |

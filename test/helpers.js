@@ -42,7 +42,10 @@ function freePort() {
     return new Promise((resolve, reject) => {
         const srv = net.createServer();
         srv.on('error', reject);
-        srv.listen(0, '127.0.0.1', () => {
+        /* El servidor de pruebas escucha en 0.0.0.0 (también acepta por la
+           IPv4 de red): el puerto se comprueba en esa MISMA interfaz para no
+           asignar uno que otro hijo ya ocupa en otra dirección. */
+        srv.listen(0, '0.0.0.0', () => {
             const port = srv.address().port;
             srv.close(() => resolve(port));
         });
@@ -66,10 +69,7 @@ async function startServer(options = {}) {
             PORT: String(port),
             DATA_DIR: dataDir,
             FORCE_TLS: 'false',
-            /* Misma interfaz que comprueba freePort(): si el hijo escucha en
-               0.0.0.0, otro test puede ocupar el puerto en loopback (o al
-               revés) y las peticiones acaban en el servidor equivocado. */
-            BIND_HOST: 'loopback',
+            BIND_HOST: 'auto',
             /* La llave maestra se DERIVA de la credencial del propietario: el
                servidor de prueba necesita una. En una base nueva la inicializa
                con ella (como haría la instalación real con su .env). */
