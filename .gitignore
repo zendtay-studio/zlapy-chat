@@ -54,3 +54,6 @@ desktop.ini
 *.swo
 .idea/
 .vscode/
+
+# ── Stickers locales de BBOT ──────────────────────────────────
+/src/bbot-stickers/
